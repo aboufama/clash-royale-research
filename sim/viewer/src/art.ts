@@ -70,7 +70,11 @@ export class ArtWorld implements WorldRenderer {
     // Show the field plus a margin of the stadium, with the art's foreshortening.
     cam.aspectY = art.yScale;
     cam.mirrorX = art.flip; // the blue player's native view runs logic x right-to-left
-    cam.world = { x0: -1200, y0: -2200, x1: 19200, y1: 32800 };
+    // Width: the client's stage is 1024 / min(h/w, 1.77) SC px wide (content scale 0x772a70), i.e.
+    // 578.5 px on any phone taller than 16:9, centred on the battle layer (cloud wrap 0x85751c);
+    // 0.03 px per unit -> +-9642 units around x = 9000. Height: the field plus a stadium margin.
+    const half = 1024 / 1.77 / 2 / 0.03;
+    cam.world = { x0: 9000 - half, y0: -2200, x1: 9000 + half, y1: 32800 };
   }
 
   resize(width: number, height: number, dpr: number): void {

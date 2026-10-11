@@ -137,8 +137,8 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    inline the A* visit loop, keep spatial queries allocation-free.
 5. HUD art (clock, crowns, elixir bar), training bridge (M3) and the fidelity
    pass (M5); see [GOAL.md](GOAL.md).
-6. **Viewer fidelity left:** screen framing (how much stadium a phone shows;
-   the battle layer scale/offset set from the stage size), the arena clip field
+6. **Viewer fidelity left:** the battle layer's vertical placement under the
+   HUD (width framing is ported: 578.5 SC px on tall phones), the arena clip field
    +0x84 used as the 180° turn's ty (768 assumed), how the client picks
    direction frames under the flip, shadow height fade (0x83c0ac), particle
    emitter semantics. Decompiles for the view work are in `work/native/decomp_shadow/`.
