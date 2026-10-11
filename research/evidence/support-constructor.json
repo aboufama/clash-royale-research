@@ -1,0 +1,31 @@
+{
+  "build": "160402020",
+  "input_sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+  "experiment": "support ELF constructor only",
+  "script": "scripts/emulate_support.py",
+  "load_base": "0x20000000",
+  "constructor_returned": true,
+  "constructor_elf_va": "0x65ccf0",
+  "changed_image_bytes_after_relocations": 583618,
+  "metric_limit": "Includes writable data and state; not a count of decoded gameplay bytes.",
+  "runtime_callback_elf_va": "0x19fee0",
+  "runtime_callback_write_pc_elf_va": "0x6692b8",
+  "runtime_callback_slot_elf_va": "0x6c6470",
+  "jni_target_elf_va": "0x64449c",
+  "jni_first_32_bytes_before_sha256": "48910e3ea6886512f60ce71034d369b3ef8eadba4cec7ef1578dae0ea96ba045",
+  "jni_first_32_bytes_after_sha256": "8d3b08bacc5f3d0c1ef64fbcda148557d7abc1f5e6a45e7f669d0d79ef123b53",
+  "jni_first_32_bytes_instruction_count_before": 1,
+  "jni_first_32_bytes_instruction_count_after": 8,
+  "independent_reproduction": true,
+  "full_jni_initialized": false,
+  "runtime_dispatcher_decoded": false,
+  "gameplay_recovered": false,
+  "model_limitations": [
+    "Synthetic libc exports resolve to in-memory stubs.",
+    "Memory permissions are modeled as accessible; mprotect is a no-op.",
+    "Mutex operations are modeled as no-ops in the single-thread constructor.",
+    "Random input is deterministic research data.",
+    "Optional deferred-thread mode does not establish correct threaded initialization."
+  ],
+  "reproduction_command": "python scripts/emulate_support.py --library work/builds/160402020/native/libsupercell_clashroyale.so --out work/builds/160402020/support-constructor"
+}

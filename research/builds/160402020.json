@@ -1,0 +1,45 @@
+{
+  "version": "160402020",
+  "package": "com.supercell.clashroyale",
+  "abi": "arm64-v8a",
+  "retrieved_date": "2026-10-11",
+  "bundle": {
+    "sha256": "89b88338537af9ff29f6d02dc667448b9e89be49f327ebd46ca20f489634c5c3",
+    "bytes": 72343657,
+    "source": "https://www.apkmirror.com/apk/supercell/clash-royale/clash-royale-160402020-release/clash-royale-160402020-android-apk-download/",
+    "listed_upload_date": "2026-10-07",
+    "retrieved_date": "2026-10-11",
+    "latest_scope": "Newest publicly listed version corroborated and downloaded during this inspection; no guarantee against an unlisted or later rollout."
+  },
+  "apks": {
+    "base.apk": {
+      "sha256": "0d0dfed74fdb755b71f5424e70af9234ed25471c029d09863b657fed9057b13e"
+    },
+    "split_config.arm64_v8a.apk": {
+      "sha256": "ff4bebcf863fe24e78a49e73c09d9cc52a412a1bf737d61033290b96fc40dcf8"
+    }
+  },
+  "signing_certificate_sha256": "59ea9ded5f79298a50103d254497ca71ca80332492c749375044879b8f099357",
+  "signature_verification": {
+    "tool": "Android build-tools 37.0.0 apksigner",
+    "apk_signature_v3": true,
+    "source_stamp": true,
+    "verified_files": [
+      "base.apk",
+      "split_config.arm64_v8a.apk"
+    ]
+  },
+  "native": {
+    "libg.so": {
+      "bytes": 28182608,
+      "sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+      "dynamic_symbols": 566
+    },
+    "libsupercell_clashroyale.so": {
+      "bytes": 7071920,
+      "sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+      "dynamic_symbols": 241
+    }
+  },
+  "resource_completeness": "Base and configuration splits only; complete gameplay asset set not acquired."
+}

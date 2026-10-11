@@ -1,0 +1,19 @@
+{
+  "build": "160402020",
+  "experiment": "isolated libg DT_INIT baseline",
+  "returned": false,
+  "stop_pc": "0x681780",
+  "error": "Invalid memory fetch (UC_ERR_FETCH_UNMAPPED)",
+  "requested_paths": [
+    "/proc/self/maps"
+  ],
+  "decoded_loader_configuration": [
+    "/proc/self/maps",
+    "libsupercell_clashroyale.so"
+  ],
+  "support_dispatcher_elf_va": "0x681780",
+  "support_callback_slot_elf_va": "0x6c6470",
+  "gameplay_entry_bytes_changed": false,
+  "interpretation": "Support runtime missing from synthetic mappings. No gameplay code unpacked by this experiment.",
+  "reproduce": "python scripts/emulate_libg.py --workspace work/builds/160402020"
+}

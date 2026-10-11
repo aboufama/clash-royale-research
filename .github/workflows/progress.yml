@@ -1,0 +1,27 @@
+name: Research progress chart
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  progress:
+    if: github.event_name != 'push' || github.event.deleted != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run standard-library tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check public tree contents
+        run: python3 scripts/check_public_tree.py
+      - name: Check chart synchronization
+        run: python3 scripts/progress.py check
+      - name: Require committed chart review on every branch push
+        if: github.event_name == 'push'
+        run: python3 scripts/progress.py check-push --event "$GITHUB_EVENT_PATH"

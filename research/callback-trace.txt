@@ -1,0 +1,91 @@
+CLASH ROYALE 160402020 ARM64: SUPPORT RUNTIME CALLBACK TRACE
+Date: 2026-10-11
+Input: libsupercell_clashroyale.so
+SHA-256: 20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f
+All addresses below are original ELF virtual addresses, before an ASLR load bias.
+Ghidra imported this library at image base 0x100000; subtract that bias from its printed addresses.
+
+CONFIRMED
+1. Dynamic init array has one entry, relocated to constructor 0x65ccf0.
+2. Public runtime dispatcher 0x681780 reads the function pointer at 0x6c6470.
+   If nonzero, it tail-calls that pointer; otherwise it returns -1.
+3. Public JNI_OnLoad at 0x68179c reads a different callback slot, 0x6c6468.
+   The GOT at 0x6ace18 is a relocated pointer to that slot. It calls the
+   nonzero callback with its input arguments, or returns -1.
+4. The RELATIVE relocations prove these fallback callback addresses:
+   GOT 0x6ace10 -> 0x64449c (JNI callback).
+   GOT 0x6ace20 -> 0x19fee0 (runtime dispatcher callback).
+   GOT 0x6ace28 -> 0x6c6470 (runtime callback slot).
+5. Constructor direct callback writes:
+   JNI slot: PCs 0x6692a4, 0x66b5a4 use fallback 0x64449c.
+   Runtime slot: PCs 0x6692b8, 0x66b5b4 use fallback 0x19fee0.
+   JNI slot: PC 0x66c7bc writes a computed callback.
+   Runtime slot: PC 0x66c840 writes a computed callback.
+6. The computed-write paths simplify to the same relocation operation:
+   relocated_callback = (original_callback & 0x00ffffffffffffff)
+                        - anchor_A + anchor_B    [arithmetic modulo 2^64]
+   Here anchor_A = *(uint64_t *)(x19 + 0x178), and
+   anchor_B = *(uint64_t *)(x19 + 0x188) at the writer path.
+   These names describe values, not proved operating-system object types.
+   JNI original callback is first masked/stored at x19+8, PC 0x66971c.
+   Runtime original callback is masked and offset by -0xe3a7e688, then
+   stored at x19+0x30, PC 0x669688. The writer restores +0xe3a7e688.
+   Therefore the constructor can point the wrappers into a remapped region.
+7. Neither raw fallback target contains presently decodable ordinary code:
+   Capstone and Ghidra both stop at target+4 on invalid instruction data.
+   Ghidra's emitted halt_baddata() is an analysis failure, not game logic.
+   No gameplay or troop movement routine is recovered by this static trace.
+
+CONCRETE NEXT ACTIONS
+- Watch both callback slots and the six writer PCs while emulating the constructor.
+- Record anchor_A and anchor_B on the computed-write path, then dump the
+  resulting callback regions; do not assume the original mapping is the result.
+- Re-run disassembly/decompilation on the written callback target regions.
+- Only after the runtime dispatcher itself is decoded, trace its operation
+  selectors and outputs into libg's stage-two loader.
+
+REPRODUCIBILITY
+Run with Python plus pyelftools and capstone:
+  python trace_callback.py /path/to/libsupercell_clashroyale.so --out /path/to/results
+The script reads the ELF only. It does not execute the target, access an account,
+contact the game's services, or modify its input. Its local outputs include
+relocation evidence, direct-reference evidence, and constructor disassembly.
+The scan deliberately discards register tracking across branch instructions:
+reported direct references are useful positive evidence, not an exhaustive xref set.
+Only the script and this factual analysis need to be published. Generated raw
+instruction listings and decompiled material can be kept local to the researcher.
+
+VALIDATION
+- DT_RELA and DT_JMPREL parsed directly from ELF PT_DYNAMIC and PT_LOAD mappings.
+- DT_INIT_ARRAY pointer resolved by its relocation, not its zero file bytes.
+- ARM64 Capstone disassembly located the writer PCs independently of Ghidra.
+- A separate Ghidra project imported original support ELF and attempted the two
+  fallback targets. Both emitted a bad-instruction warning at their second word.
+
+FOLLOW-UP USING RUNTIME AGENT'S SUCCESSFUL CONSTRUCTOR EMULATION
+The runtime agent supplied a post-constructor memory image, loaded at0x20000000.
+Independent disassembly and Ghidra decompilation now confirm JNI callback0x64449c
+is valid ARM64, while runtime callback0x19fee0 remains undecodable. The distinction
+in item7 above is therefore explicitly about original-file bytes, not all stages.
+
+Recovered JNI bootstrap sequence (ELF addresses):
+- callback0x64449c invokes helper0x65440c(vm,reserved).
+- It uses the returned integer as JNI version when calling JavaVM function table
+  byte offset0x30: GetEnv(vm,&env,version).
+- On GetEnv failure it returns-1.
+- On success it calls0x6476dc with callback address0x647398 and returns its result.
+-0x65440c is substantial stage-two bootstrap, not a constant version getter.
+  It invokes native initializer callbacks from array0x6c3a20, then invokes another
+  JNI callback through pointer0x6c4228 and clears that pointer.
+- Post-constructor memory stores0x2029eacc in that second JNI callback pointer.
+  Its target and initial callback-array targets remain encoded at this stage.
+  This gives a concrete next boundary: emulate/recover0x65440c until those callback
+  targets decode. Do not replace this helper with a fabricated JNI version.
+
+The decrypted JNI pseudocode resides locally underlocal static-analysis workspace: decrypted-jni.
+Those files are Ghidra approximations with inferred types and flattened control
+flow. The public factual summary should use the recovered calls/addresses above,
+without claiming complete recovered source or correct gameplay semantics.
+GetEnv identification checked against the bundled OpenJDK21 jni.h: three reserved
+pointer slots, DestroyJavaVM, AttachCurrentThread, DetachCurrentThread, then GetEnv
+(index6, byte offset0x30 on ARM64). This is ABI evidence, not a guessed call name.

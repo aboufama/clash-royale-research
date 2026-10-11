@@ -1,0 +1,5 @@
+#!/bin/sh
+# Validate the exact commits being pushed, not an uncommitted working copy.
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+exec python3 "$repo_root/scripts/progress.py" --root "$repo_root" check-push

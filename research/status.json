@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "build": {
+    "package": "com.supercell.clashroyale",
+    "version": "160402020"
+  },
+  "review": {
+    "sequence": 2,
+    "reviewed_at": "2026-10-11T05:36:42Z",
+    "summary": "Initial public baseline: signatures reverified; constructor decoding and callback assignment independently reproduced; full JNI and gameplay remain unresolved."
+  },
+  "milestones": [
+    {
+      "id": "apk_provenance",
+      "status": "verified",
+      "evidence": [
+        "Base and ARM64 split pass APK v3 and SourceStamp verification; manifest reports 160402020."
+      ]
+    },
+    {
+      "id": "java",
+      "status": "partial",
+      "evidence": [
+        "JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered."
+      ]
+    },
+    {
+      "id": "native_exports",
+      "status": "recovered",
+      "evidence": [
+        "libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad."
+      ]
+    },
+    {
+      "id": "loader_config",
+      "status": "recovered",
+      "evidence": [
+        "Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780."
+      ]
+    },
+    {
+      "id": "support_runtime",
+      "status": "partial",
+      "evidence": [
+        "Constructor returns; 583,618 mapped image bytes change after relocation and JNI startup becomes readable. Full JNI/runtime and gameplay remain incomplete."
+      ]
+    },
+    {
+      "id": "movement",
+      "status": "not_recovered",
+      "evidence": [
+        "No troop movement algorithm has been recovered."
+      ]
+    },
+    {
+      "id": "targeting",
+      "status": "not_recovered",
+      "evidence": [
+        "No target acquisition algorithm has been recovered."
+      ]
+    },
+    {
+      "id": "collision",
+      "status": "not_recovered",
+      "evidence": [
+        "No collision or avoidance algorithm has been recovered."
+      ]
+    },
+    {
+      "id": "combat",
+      "status": "not_recovered",
+      "evidence": [
+        "No attack, damage, or timing algorithm has been recovered."
+      ]
+    },
+    {
+      "id": "equivalence",
+      "status": "not_validated",
+      "evidence": [
+        "No per-tick comparison against the original battle runtime has been run."
+      ]
+    }
+  ]
+}
