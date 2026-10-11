@@ -65,9 +65,11 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 2. Support code, original selector records and `libg` code are recovered from
    original inputs through public tools with explicit runtime models. Complete
    original game initialization without forced success or synthetic battle state.
-3. Original pathfinding and attack-clock functions execute on synthetic fixtures.
-   Follow their original callers, data loaders and native state initialization
-   to exercise movement, attack execution and a complete battle update.
+3. Original world ticks now drive movement and melee on synthetic fixtures;
+   original CSV parsing and game-tag registration execute from pinned bytes.
+   Continue native troop/sequence/global data loading, original deployment,
+   target acquisition, towers and outer match initialization. World-loop
+   execution alone does not supply those missing dependencies.
 4. Build an unmodified-engine reference runner and complete state-capture path.
    Synthetic object layouts and isolated function results do not satisfy it.
 5. Implement the battle adapter and exact comparisons before policy training.

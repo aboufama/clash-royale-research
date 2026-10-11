@@ -1,0 +1,1044 @@
+{
+  "scope": "Original world tick integrating movement-component update with native constructors, tag globals, default observers and team module. Synthetic single-actor state; no battle, troop interaction or match parity claim.",
+  "image_sha256": "13c321bb118c772e3f12ee7198d63901cd7683653e7a6d8bb466eda827ff49be",
+  "library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+  "globals_sha256": "af87c4faf1d965a92a3f3f1b813e683c978c656ed09d041536d0424b0ffd92cd",
+  "native_entries": {
+    "factory": "0x11d8778",
+    "constructor": "0x11d7a98",
+    "search": "0x11d7b58",
+    "heuristic": "0x11d83a0",
+    "cell_cost": "0x11d9304",
+    "actor_constructor": "0xf7df40",
+    "actor_world_setter": "0xf8915c",
+    "movement_constructor": "0xfcc33c",
+    "movement_geometric_step": "0xfcef48",
+    "arena_collision": "0x11d988c",
+    "actor_type": "0xf85ea8",
+    "world_ctor": "0xf961f0",
+    "world_registration": "0xf8c50c",
+    "world_tick": "0xf8cd90",
+    "component_update": "0xfcc578",
+    "attach_component": "0xf89164",
+    "buff_ctor": "0xfc0500",
+    "actor_observer_ctor": "0xfd3f50",
+    "match_observer_ctor": "0x10c94f8",
+    "team_factory": "0xd58a1c"
+  },
+  "assumptions": [
+    "Synthetic zero/default character data except speed=50 native units",
+    "Single actor, no collision-radius neighbors, no active buffs, no target actor",
+    "Native default observers are constructed with original code; no callbacks replaced",
+    "Parsed globals fixture uses pinned CSV; all62 tag masks came from original registration in input image",
+    "Original world ctor, registration and tick; synthetic level/match linkage; original full level/match initialization has not run"
+  ],
+  "cases": [
+    {
+      "world_tick_argument": 0,
+      "update": 1,
+      "before": [
+        750,
+        750
+      ],
+      "after": [
+        785,
+        785
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 1,
+      "update": 2,
+      "before": [
+        785,
+        785
+      ],
+      "after": [
+        820,
+        820
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 2,
+      "update": 3,
+      "before": [
+        820,
+        820
+      ],
+      "after": [
+        855,
+        855
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 3,
+      "update": 4,
+      "before": [
+        855,
+        855
+      ],
+      "after": [
+        890,
+        890
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 4,
+      "update": 5,
+      "before": [
+        890,
+        890
+      ],
+      "after": [
+        925,
+        925
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 5,
+      "update": 6,
+      "before": [
+        925,
+        925
+      ],
+      "after": [
+        960,
+        960
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 6,
+      "update": 7,
+      "before": [
+        960,
+        960
+      ],
+      "after": [
+        995,
+        995
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 7,
+      "update": 8,
+      "before": [
+        995,
+        995
+      ],
+      "after": [
+        1030,
+        1030
+      ],
+      "state": 1,
+      "path": [
+        18
+      ],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 8,
+      "update": 9,
+      "before": [
+        1030,
+        1030
+      ],
+      "after": [
+        1065,
+        1065
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 9,
+      "update": 10,
+      "before": [
+        1065,
+        1065
+      ],
+      "after": [
+        1100,
+        1100
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 10,
+      "update": 11,
+      "before": [
+        1100,
+        1100
+      ],
+      "after": [
+        1135,
+        1135
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 11,
+      "update": 12,
+      "before": [
+        1135,
+        1135
+      ],
+      "after": [
+        1170,
+        1170
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 12,
+      "update": 13,
+      "before": [
+        1170,
+        1170
+      ],
+      "after": [
+        1205,
+        1205
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 13,
+      "update": 14,
+      "before": [
+        1205,
+        1205
+      ],
+      "after": [
+        1240,
+        1240
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 14,
+      "update": 15,
+      "before": [
+        1240,
+        1240
+      ],
+      "after": [
+        1275,
+        1275
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 15,
+      "update": 16,
+      "before": [
+        1275,
+        1275
+      ],
+      "after": [
+        1310,
+        1310
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 16,
+      "update": 17,
+      "before": [
+        1310,
+        1310
+      ],
+      "after": [
+        1345,
+        1345
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 17,
+      "update": 18,
+      "before": [
+        1345,
+        1345
+      ],
+      "after": [
+        1380,
+        1380
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 18,
+      "update": 19,
+      "before": [
+        1380,
+        1380
+      ],
+      "after": [
+        1415,
+        1415
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 19,
+      "update": 20,
+      "before": [
+        1415,
+        1415
+      ],
+      "after": [
+        1450,
+        1450
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 20,
+      "update": 21,
+      "before": [
+        1450,
+        1450
+      ],
+      "after": [
+        1485,
+        1485
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 21,
+      "update": 22,
+      "before": [
+        1485,
+        1485
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 22,
+      "update": 23,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 23,
+      "update": 24,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 24,
+      "update": 25,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 25,
+      "update": 26,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 26,
+      "update": 27,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 27,
+      "update": 28,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 28,
+      "update": 29,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 29,
+      "update": 30,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 30,
+      "update": 31,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 31,
+      "update": 32,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 32,
+      "update": 33,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 33,
+      "update": 34,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 34,
+      "update": 35,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 35,
+      "update": 36,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 36,
+      "update": 37,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 37,
+      "update": 38,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 38,
+      "update": 39,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 39,
+      "update": 40,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 40,
+      "update": 41,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 41,
+      "update": 42,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 42,
+      "update": 43,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 43,
+      "update": 44,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 44,
+      "update": 45,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 45,
+      "update": 46,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 46,
+      "update": 47,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 47,
+      "update": 48,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 48,
+      "update": 49,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 49,
+      "update": 50,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 50,
+      "update": 51,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 51,
+      "update": 52,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 52,
+      "update": 53,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 53,
+      "update": 54,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 54,
+      "update": 55,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 55,
+      "update": 56,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 56,
+      "update": 57,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 57,
+      "update": 58,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 58,
+      "update": 59,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    },
+    {
+      "world_tick_argument": 59,
+      "update": 60,
+      "before": [
+        1520,
+        1520
+      ],
+      "after": [
+        1520,
+        1520
+      ],
+      "state": 1,
+      "path": [],
+      "native_speed": 50,
+      "imports_during_update": 3
+    }
+  ],
+  "native_fixture": {
+    "actor_vtable": "0x11935908",
+    "movement_vtable": "0x1193b6d8",
+    "buff_vtable": "0x1193b4f8",
+    "actor_observer_vtable": "0x1193b8a0",
+    "match_observer_vtable": "0x11944720",
+    "team_vtable": "0x1190e3a8",
+    "team": 0,
+    "component_count": 4,
+    "component_mask": "0xe"
+  },
+  "original_entry_counts": {
+    "world_tick": 60,
+    "movement_update": 60,
+    "request_path": 60,
+    "path_search": 52,
+    "native_actor_observer": 52,
+    "native_match_observer": 52,
+    "movement_main": 60,
+    "neighbor_search": 60,
+    "geometric_step": 60,
+    "arena_collision": 60,
+    "actor_state_update": 60
+  },
+  "pc": "0x70000000",
+  "all_cases_completed": true,
+  "verification": {
+    "independent_harnesses": 2,
+    "selected_tick_records_matched": 60,
+    "reproduction_tool": "Exploratory harness remains private; the public world probe currently exposes the separate melee fixtures."
+  }
+}

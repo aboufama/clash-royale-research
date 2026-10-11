@@ -274,3 +274,65 @@ unknown execution, interrupts or instruction/time limits fail. It is a clock
 slice, not attack execution, hit detection, damage, targeting, tower combat or
 complete state capture. Later native status-tag initialization is still needed
 for broader actor predicates. See [clock evidence](evidence/native-attack-clock.json).
+
+## Native CSV loading and tag initialization
+
+The original CSV static initializer at `0x1289b94`, file constructor at
+`0x1288f2c`, tag registry loader at `0xe16234` and global writer at `0xf72e24`
+now execute on the pinned raw `game_tags.csv` bytes. The native parser produces
+three columns and 62 rows; the registry produces 62 masks. No Python CSV parser
+or replacement parsing algorithm is used on this execution path.
+
+Independent runs match every registered mask, every written tag global and
+the entire resulting image at SHA-256
+`fc3eab1cf3c15e7a73550445829b4ed50fa20913bf1bca2f7f20af0b07033f12`.
+There are 69 changed image bytes: 53 in the tag globals and 16 in three CSV
+static strings. Those strings have inline lengths 1, 1 and 2, so the flat
+image has no missing heap storage for them. Native table/registry objects do
+live on the emulator heap and are deliberately not represented as a complete
+runtime snapshot. Keep the live parser instance for continued table loading.
+
+Owner registry load factors and one-file bundle linkage are explicit fixtures.
+Imports model allocation, bounded memory and ASCII string primitives, a bounded
+prime helper and exit-callback registration. Unknown operations stop execution;
+these models have not been established equivalent across the complete game.
+See [native tag evidence](evidence/native-csv-tags.json).
+
+## Original world-loop integration
+
+Original world constructor `0xf961f0`, event-bus constructor `0xd5a27c`, actor
+registration `0xf8c50c` and world tick `0xf8cd90` now execute. Native component
+registration determines the update order. The loop calls attack updates,
+actor-state updates and damage processing itself; the probe does not manually
+schedule gameplay phases or manually apply damage between world ticks.
+
+Three independent 80-tick synthetic melee fixtures reproduce all 240 selected
+state records. The baseline attacks at zero-based ticks 9, 33 and 57, moving
+target HP from 690 to 611, 532 and 453. A synthetic 100-point shield absorbs the
+first two hits, with HP remaining 690, and the third hit leaves HP 611. Omitting
+only the attack component's native attachment leaves HP 690 through all 80
+ticks, with zero attack or damage invocations. Executable `PT_LOAD` regions
+remain byte-identical before and after every run and are mapped read/execute.
+
+These are fixtures, not complete Knight battles. Selected statistics come from
+the pinned Knight TOML through Python's parser; complete native character and
+sequence loading has not run. The arena is an empty synthetic 5×5 grid, most
+globals are zero, the attack sequence is synthetic and the initial target is
+supplied through the native setter. Only selected fields are captured. Extending
+the exploratory baseline to a lethal hit reaches a native assertion in missing
+battle context; that failure is not bypassed or counted as a working match.
+See [world melee evidence](evidence/native-world-melee.json).
+
+A separate integration experiment executes 60 world ticks through the original
+movement update `0xfcc578`, path request/search, geometric movement `0xfcef48`,
+arena collision `0x11d988c` and actor-state update `0xf800bc`. All selected
+records match independent runs. The synthetic actor moves from `(750,750)` to
+`(1520,1520)` and empties its path under the original cell rules; no guessed
+arrival at the requested `(1750,1750)` is imposed. This does not test original
+troop deployment, moving neighbors or real arena geometry. Its exploratory
+harness remains private; [summarized movement evidence](evidence/native-world-movement.json)
+records the fixture, entry points and observed trace.
+
+The next missing layer is original battle initialization: full data tables,
+deployment and target acquisition, towers, outer match rules and complete state
+capture. None of these finite fixture results establishes full-match parity.

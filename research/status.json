@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 5,
-    "reviewed_at": "2026-10-11T06:42:51Z",
-    "summary": "Public support recovery now generates parent/child IPC and code images from the original ELF without private prerequisites. Root independently reproduced the canonical image, 160/160 checksums and all 4,860,456 cipher bytes; complete original battle initialization remains open."
+    "sequence": 6,
+    "reviewed_at": "2026-10-11T06:57:41Z",
+    "summary": "Original CSV parsing loads 62 tags; independent world-loop fixtures match 60 movement ticks and 240 melee tick records, including shield and no-attack controls. Published native parser and combat probes remain explicitly synthetic and do not establish full-match equivalence."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Public tools recover support image, 416 selector records and libg code directly from pinned original inputs; independent cipher/checksum/image checks pass. Parent/child OS behavior and selector delivery remain explicitly modeled; full native/Android initialization is incomplete."
+        "Public tools recover support, 416 selectors and libg from pinned inputs. Original CSV parsing and tag registration now load 62 tags with identical independent image output. Full native/Android and battle-data initialization remain incomplete."
       ]
     },
     {
@@ -63,7 +63,7 @@
       "id": "movement",
       "status": "partial",
       "evidence": [
-        "Original factory/search executes 12 synthetic grids/queries; independent runs match paths, costs and statuses. Null actors and synthetic arena fields limit this to pathfinding; full troop movement and battle ticks remain unvalidated."
+        "Original movement and actor state updates execute for 60 native world ticks on a synthetic single-actor arena; all recorded fields match independent runs. Real arenas, complete troop state and full-match equivalence remain unvalidated."
       ]
     },
     {
@@ -75,16 +75,16 @@
     },
     {
       "id": "collision",
-      "status": "not_recovered",
+      "status": "partial",
       "evidence": [
-        "Complete troop collision and avoidance behavior remains unvalidated; no full actor-interaction comparison has been run."
+        "Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated."
       ]
     },
     {
       "id": "combat",
       "status": "partial",
       "evidence": [
-        "Original attack-clock routine executes 14 synthetic fixtures with exact independent component-state/hash matches, no imports or gameplay stubs. Attack execution, projectiles and damage remain unvalidated."
+        "Original world loop executes three 80-tick melee fixtures, scheduling attacks and damage itself. All 240 selected tick records match independent runs, including shield and no-attack controls; synthetic setup, projectiles and full-match parity remain open."
       ]
     },
     {

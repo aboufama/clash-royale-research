@@ -6,8 +6,9 @@ reinforcement learning.
 
 The target is behavioral equivalence for a specific build and asset set.
 Extracted card statistics and plausible-looking movement do not establish that
-equivalence. Original native pathfinding and attack-clock routines now execute
-on synthetic fixtures; a complete battle environment is still unavailable.
+equivalence. The original native world loop now drives movement and melee
+combat on synthetic fixtures, and the original CSV parser loads game tags.
+A complete battle environment is still unavailable.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
 towers. No approximation counts as success.** The [active goal and acceptance
@@ -27,16 +28,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Public tools recover support image, 416 selector records and libg code directly from pinned original inputs; independent cipher/checksum/image checks pass. Parent/child OS behavior and selector delivery remain explicitly modeled; full native/Android initialization is incomplete. |
+| Supporting native runtime | Partial | Public tools recover support, 416 selectors and libg from pinned inputs. Original CSV parsing and tag registration now load 62 tags with identical independent image output. Full native/Android and battle-data initialization remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Partial | Original factory/search executes 12 synthetic grids/queries; independent runs match paths, costs and statuses. Null actors and synthetic arena fields limit this to pathfinding; full troop movement and battle ticks remain unvalidated. |
+| Troop movement | Partial | Original movement and actor state updates execute for 60 native world ticks on a synthetic single-actor arena; all recorded fields match independent runs. Real arenas, complete troop state and full-match equivalence remain unvalidated. |
 | Target acquisition | Not recovered | No target acquisition algorithm has been recovered. |
-| Collision and avoidance | Not recovered | Complete troop collision and avoidance behavior remains unvalidated; no full actor-interaction comparison has been run. |
-| Combat interactions | Partial | Original attack-clock routine executes 14 synthetic fixtures with exact independent component-state/hash matches, no imports or gameplay stubs. Attack execution, projectiles and damage remain unvalidated. |
+| Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
+| Combat interactions | Partial | Original world loop executes three 80-tick melee fixtures, scheduling attacks and damage itself. All 240 selected tick records match independent runs, including shield and no-attack controls; synthetic setup, projectiles and full-match parity remain open. |
 | Tower interactions | Not recovered | Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated. |
 | Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
 
-Review **5** · **2026-10-11T06:42:51Z** · Public support recovery now generates parent/child IPC and code images from the original ELF without private prerequisites. Root independently reproduced the canonical image, 160/160 checksums and all 4,860,456 cipher bytes; complete original battle initialization remains open.
+Review **6** · **2026-10-11T06:57:41Z** · Original CSV parsing loads 62 tags; independent world-loop fixtures match 60 movement ticks and 240 melee tick records, including shield and no-attack controls. Published native parser and combat probes remain explicitly synthetic and do not establish full-match equivalence.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -80,9 +81,22 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   remains unchanged. Null actors and synthetic arena fields limit the result.
 - Executed the original attack-clock routine on **14 synthetic fixtures**,
   reproducing every recorded component state and its 256-byte hash. The clock
-  calls no imports and uses no gameplay stubs. Damage and attacks are not run.
-- Full native/Android initialization, complete battle state, troop interactions,
-  towers and per-tick equivalence remain unvalidated.
+  calls no imports and uses no gameplay stubs; that probe isolates the clock.
+- Executed the original CSV parser and tag registry on pinned raw bytes: **62
+  tags** load without a replacement CSV parser. Independent runs reproduce
+  every tag mask and the complete resulting code/data image. Owner registry
+  and file-bundle linkage remain explicit fixtures.
+- Executed **60 original world ticks** driving a movement component and actor
+  state updates on a synthetic single-actor arena. All recorded movement
+  fields match independent execution.
+- Executed **80 original world ticks in each of three melee fixtures**. The
+  original loop schedules attacks, enqueues damage and applies health changes.
+  The baseline produces three hits, taking HP from 690 to 453. A synthetic
+  shield case ends at 611 HP; omitting attack-component attachment produces no
+  damage. All **240 selected tick records** match independent execution, with
+  original executable regions unchanged.
+- Native troop-data loading, deployment, autonomous target acquisition, towers,
+  complete match rules and complete per-tick equivalence remain unvalidated.
 
 See [the build record](research/builds/160402020.json) and
 [the investigation notes](research/findings.md). Findings distinguish direct
@@ -235,6 +249,43 @@ controller flag is a synthetic override whose relationship to the shipped
 setting is unresolved. The clock uses synthetic actor/component/buff layouts
 and two pinned Knight parameters. These are reproducible function executions,
 not a substitute for original data loading or complete battle initialization.
+
+The original tag parser and world-loop melee probes can now be reproduced from
+that same extraction chain:
+
+```sh
+python scripts/initialize_original_tags.py \
+  --image work/libg-recovered/libg-memory.bin \
+  --library work/builds/160402020/native/libg.so \
+  --raw-tags work/decoded-assets/csv_logic/game_tags.csv \
+  --out work/original-tags
+python scripts/probe_original_world_melee.py \
+  --image work/original-tags/runtime-memory.bin \
+  --library work/builds/160402020/native/libg.so \
+  --knight-data work/decoded-assets/csv_logic/characters/knight.toml \
+  --globals work/decoded-assets/csv_logic/globals.csv \
+  --scenario baseline --out work/world-melee-baseline
+```
+
+Repeat the world probe with `--scenario shield` or `--scenario unattached_attack`
+and a separate output directory for the other fixtures. These runs use original
+constructors, actor registration, component ordering and damage processing.
+They still supply a first target, selected character fields, a synthetic attack
+sequence and a 5×5 arena. They are evidence of native integration, not a Knight
+match or a complete simulator. Only selected state fields are recorded.
+
+The tag command executes the original CSV static initializer, file parser,
+registry loader and global writer. Its flat image retains 53 changed tag-mask
+bytes and 16 inline CSV-static-string bytes; it does not serialize table or
+registry heap objects. The melee fixture needs these image globals only.
+For further native data loading, reuse the live `ParserProbe` and
+`initialize_tags` API to retain original heap objects.
+
+See [native CSV/tag evidence](research/evidence/native-csv-tags.json),
+[world-loop melee evidence](research/evidence/native-world-melee.json) and
+[world-loop movement evidence](research/evidence/native-world-movement.json).
+The movement integration experiment is independently verified; its exploratory
+harness is not yet included in the public command set.
 
 See [support-chain evidence](research/evidence/support-recovery-chain.json),
 [metadata evidence](research/evidence/selector-metadata.json),

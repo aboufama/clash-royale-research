@@ -1,0 +1,289 @@
+{
+  "scope": "Original raw CSV bytes to native table and native tag masks; owner registry and file-bundle linkage remain explicit fixtures.",
+  "input_image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+  "library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+  "decoded_tags_sha256": "88e657c9a71b4039467794f6acfc11ccf775dae78c0aeb1412dcb831a6ba02ff",
+  "output_image_sha256": "fc3eab1cf3c15e7a73550445829b4ed50fa20913bf1bca2f7f20af0b07033f12",
+  "text_unchanged": true,
+  "native_columns": 3,
+  "native_rows": 62,
+  "native_tags": 62,
+  "csv_static_initializer": "0x1289b94",
+  "native_csv_constructor": "0x1288f2c",
+  "native_tag_registry_loader": "0xe16234",
+  "native_tag_global_writer": "0xf72e24",
+  "changed_image_bytes": 69,
+  "changed_image_intervals": [
+    {
+      "elf_va": "0x1a65f68",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65f70",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65f78",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65f80",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65f88",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65f90",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65f98",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fa0",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fa9",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fb1",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fb9",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fc1",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fc9",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fd1",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fd9",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fe1",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65fea",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65ff2",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a65ffa",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66002",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6600a",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66012",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6601a",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66023",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6602b",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66033",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6603b",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66043",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6604b",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66053",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6605b",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66064",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6606c",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66074",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6607c",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66084",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6608d",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66095",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6609d",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660a5",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660ad",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660b6",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660be",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660c6",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660ce",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660d6",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660de",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660e6",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660ef",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660f7",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a660ff",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a66107",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a6610f",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a90af0",
+      "bytes": 5
+    },
+    {
+      "elf_va": "0x1a90af8",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a90b00",
+      "bytes": 5
+    },
+    {
+      "elf_va": "0x1a90b08",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a90b10",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a90b14",
+      "bytes": 1
+    },
+    {
+      "elf_va": "0x1a90b18",
+      "bytes": 2
+    }
+  ],
+  "csv_static_string_lengths": [
+    1,
+    1,
+    2
+  ],
+  "csv_static_strings_inline": true,
+  "imports": {
+    "_Znam": 457,
+    "memcpy": 606,
+    "_ZdaPv": 197,
+    "_Znwm": 207,
+    "memset": 2,
+    "_ZdlPv": 11,
+    "strlen": 254,
+    "__cxa_atexit": 3,
+    "memcmp": 293,
+    "_ZNSt6__ndk112__next_primeEm": 11,
+    "strncasecmp": 3
+  },
+  "models": [
+    "Bounded bump allocator with no reclamation; standard memory/string routines",
+    "ASCII-only strncasecmp/strcasecmp; bounded prime primitive; atexit records only",
+    "Registry owner zeroed with standard hash-table load factors 1.0; one-file bundle fixture",
+    "No Python CSV parsing in native execution; no game code patches or OS forwarding"
+  ],
+  "runtime_reuse": "Prefer ParserProbe + initialize_tags in the same emulator to preserve native heap objects. Flat image omits native table/registry heap.",
+  "verification": {
+    "independently_reproduced": true,
+    "all_62_tag_masks_match_prior_independent_native_registry_run": true,
+    "complete_output_image_matches": true
+  }
+}
