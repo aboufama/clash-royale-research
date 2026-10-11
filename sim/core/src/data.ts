@@ -208,6 +208,13 @@ export interface UnitDef {
   /** Periodic spawner (Witch, Tombstone, huts). Times in ms. */
   spawn: { unit: UnitDef; number: number; pauseTime: number; interval: number; startTime: number; radius: number; angleShift: number } | null;
   jumpEnabled: boolean;
+  /** Hovering (crosses water in path costs, 0xf827c0). */
+  hovering: boolean;
+  /** Fly straight at the target instead of following the path (FlyDirectPaths). */
+  flyDirectPaths: boolean;
+  /** Stop-and-go walking: StopMovementAfterMS / WaitMS (movement +0x1f0). */
+  stopMoveMs: number;
+  waitMs: number;
   jumpSpeed: number;
   /** Charge: distance (A: data value x10 game units) of uninterrupted travel, speed %, first-hit damage. */
   chargeRange: number;
@@ -282,7 +289,7 @@ const UNIT_FIELDS_OK = new Set([
   'ClonedVersion', 'IgnoreBuff', 'IgnoreResurrect', 'IgnoreClone', 'CustomSpawnFilter', 'LifeTime',
   'DeathAreaEffect', 'DeathSpawnCharacter', 'DeathSpawnCount', 'DeathSpawnRadius', 'DeathSpawnDeployTime',
   'DeathSpawnPushback', 'SpawnCharacter', 'SpawnNumber', 'SpawnPauseTime', 'SpawnInterval', 'SpawnStartTime',
-  'ShieldHitpoints', 'JumpEnabled', 'JumpHeight', 'JumpSpeed', 'ChargeRange', 'ChargeSpeedMultiplier', 'DamageSpecial',
+  'ShieldHitpoints', 'JumpEnabled', 'Hovering', 'FlyDirectPaths', 'JumpHeight', 'JumpSpeed', 'ChargeRange', 'ChargeSpeedMultiplier', 'DamageSpecial',
   'AttackShakeTime', 'ManaOnDeathForOpponent', 'ManaCollectAmount', 'ManaGenerateTimeMs', 'ManaOnDeath',
   'VariableDamage2', 'VariableDamage3', 'VariableDamageTime1', 'VariableDamageTime2', 'VisualHitSpeed', 'MultipleTargets',
   'AllTargetsHit', 'BuffOnDamage', 'BuffOnDamageTime', 'HidesWhenNotAttacking', 'HideTimeMs', 'UpTimeMs', 'SpawnPathfindSpeed',
@@ -545,6 +552,10 @@ export class Defs {
       deathSpawn,
       spawn,
       jumpEnabled: bool(r, 'JumpEnabled'),
+      hovering: bool(r, 'Hovering'),
+      flyDirectPaths: bool(r, 'FlyDirectPaths'),
+      stopMoveMs: num(r, 'StopMovementAfterMS'),
+      waitMs: num(r, 'WaitMS'),
       jumpSpeed: num(r, 'JumpSpeed'),
       chargeRange: num(r, 'ChargeRange') * 10,
       chargeSpeedMul: num(r, 'ChargeSpeedMultiplier'),
@@ -647,6 +658,10 @@ export class Defs {
       deathSpawn: null,
       spawn: null,
       jumpEnabled: false,
+      hovering: false,
+      flyDirectPaths: false,
+      stopMoveMs: 0,
+      waitMs: 0,
       jumpSpeed: 0,
       chargeRange: 0,
       chargeSpeedMul: 0,

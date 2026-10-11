@@ -10,7 +10,7 @@
 //   5. frame counter increments
 // Each function below says where its behaviour comes from; see docs/FIDELITY.md.
 
-import { Arena, ARENA_H, ARENA_W, CELL, GRID_W } from './arena.ts';
+import { Arena, ARENA_H, ARENA_W, CELL, F_BLOCKED, F_OCCLUDER, F_WATER, PATH_CROSS, PATH_WALK } from './arena.ts';
 import { SpatialGrid } from './grid.ts';
 import {
   type AreaEffectDef, type BuffDef, Defs, ELIXIR_ONE, type CardDef, type FilterDef, type GameData, type ProjectileDef, TICK_MS,
@@ -71,9 +71,6 @@ export type PlayError =
 export const COMMAND_DELAY_TICKS = 20;
 
 const MAX_ELIXIR_DEFAULT = 10;
-/** Collision push constants fitted to the native trace (see separate()). */
-const PUSH_CAP = 90;
-const PUSH_SPEED = 150;
 
 export class Battle {
   readonly data: GameData;
@@ -92,6 +89,9 @@ export class Battle {
   readonly fixture: boolean;
   readonly boundW: number;
   readonly boundH: number;
+  readonly maxPushback: number;
+  readonly avoidBuildings: boolean;
+  readonly flyingNoWater: boolean;
 
   tick = 0;
   units: Unit[] = [];
@@ -122,7 +122,7 @@ export class Battle {
   constructor(data: GameData, cfg: BattleConfig) {
     this.data = data;
     this.defs = new Defs(data);
-    this.arena = new Arena(data);
+    this.arena = new Arena(data, cfg.fixture);
     this.rng = new Rng(cfg.seed ?? 1);
     this.timeline = data.timelines[cfg.timeline ?? 'Default'];
     const lv = cfg.level ?? 11;
@@ -137,6 +137,9 @@ export class Battle {
     this.overtimeTicks = (secs[1]?.lengthSec ?? 0) * 1000 / TICK_MS;
     this.keepTargetExt = typeof G.LOGIC_RANGE_EXTENSION_TO_KEEP_TARGET === 'number' ? G.LOGIC_RANGE_EXTENSION_TO_KEEP_TARGET : 25;
     this.extraSightCrownTowers = typeof G.EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS === 'number' ? G.EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS : 0;
+    this.maxPushback = typeof G.MAX_PUSHBACK_LENGTH === 'number' ? G.MAX_PUSHBACK_LENGTH : 40000;
+    this.avoidBuildings = G.KS_POS_TO_TARGET_GROUND_AVOID_BUILDINGS !== false;
+    this.flyingNoWater = G.KS_POS_TO_TARGET_FLYING_NO_WATER !== false;
 
     const mk = (team: number): Player => {
       const deckNames = cfg.decks[team];
@@ -190,6 +193,7 @@ export class Battle {
         const y0 = o.y * CELL;
         const y = team === 0 ? y0 : ARENA_H - y0;
         const u = new Unit(this.nextId++, def, '', team, x, y, 0);
+        u.lane = this.laneOf(x, y);
         u.state = ST_ACTIVE;
         u.tower = kind === 'king' ? TOWER_KING : TOWER_PRINCESS;
         // King starts INACTIVE until damaged or a Princess tower falls [DATA king_tower.toml].
@@ -197,7 +201,6 @@ export class Battle {
         if (kind === 'king') p.king = u;
         else p.princess[pi++] = u;
         this.units.push(u);
-        if (kind === 'princess') this.arena.setOcclusion(team, x, y, u.radius, true);
       }
       // order princesses left, right
       if (p.princess[0].x > p.princess[1].x) p.princess = [p.princess[1], p.princess[0]];
@@ -332,8 +335,7 @@ export class Battle {
     this.regenElixir();
     this.fireSpellWaves();
     const units = this.units;
-    // The native grid (rebuilt pre-tick) only decides query order; target search and push scan the
-    // list directly and reproduce that order where it matters (see gridBefore).
+    this.preTick();
     for (let i = 0; i < units.length; i++) this.attackUpdate(units[i]); // all attack components
     for (let i = 0; i < units.length; i++) this.movementUpdate(units[i]); // all movement components
     for (let i = 0; i < units.length; i++) if (units[i].buffs.length) this.updateBuffs(units[i]); // buff components
@@ -347,6 +349,49 @@ export class Battle {
   }
 
   /** Advance n ticks (stops at the end of the match). */
+  /**
+   * World pre-tick 0xf967a4 [STAT]: the spatial grid is rebuilt from the world list (here: each
+   * actor's tick-start position is recorded; queries scan the list and reproduce the grid's
+   * membership and order), then the dynamic occlusion grid (0x11d8d9c): every building stamps its
+   * square and feeds its team's occluder hash.
+   */
+  private preTick(): void {
+    const A = this.arena;
+    const units = this.units;
+    const sig = this.occSig;
+    let n = 0;
+    let same = true;
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      u.gx = u.x;
+      u.gy = u.y;
+      u.inGrid = u.state !== ST_DEAD;
+      if (u.isBuilding && u.state !== ST_DEAD) {
+        if (same && (sig[n] !== u.id || sig[n + 1] !== u.x || sig[n + 2] !== u.y || sig[n + 3] !== u.radius)) same = false;
+        sig[n] = u.id; sig[n + 1] = u.x; sig[n + 2] = u.y; sig[n + 3] = u.radius;
+        n += 4;
+      }
+    }
+    if (same && n === this.occSigLen && this.tick > 0) { A.keepOcclusion(); return; }
+    this.occSigLen = n;
+    sig.length = n;
+    A.beginOcclusion();
+    let h0 = 0;
+    let h1 = 0;
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      if (u.isBuilding && u.state !== ST_DEAD) {
+        A.stampOccluder(u.x, u.y, u.radius, u.radius);
+        if (u.team === 0) h0 = ((h0 >>> 31 | h0 << 1) + u.id + 9) | 0;
+        else h1 = ((h1 >>> 31 | h1 << 1) + u.id + 9) | 0;
+      }
+    }
+    A.endOcclusion(h0, h1);
+  }
+
+  private occSig: number[] = [];
+  private occSigLen = -1;
+
   run(n: number): void {
     for (let i = 0; i < n && !this.result; i++) this.step();
   }
@@ -471,10 +516,10 @@ export class Battle {
   /** Create an actor; it joins the live list at the end of this tick. */
   private createUnit(team: number, card: string, def: UnitDef, x: number, y: number, deployTicks: number): Unit {
     const u = new Unit(this.nextId++, def, card, team, x, y, this.tick + 1);
+    u.lane = this.laneOf(x, y);
     u.deployTicks = deployTicks;
     u.deployTotal = deployTicks;
     this.newUnits.push(u);
-    if (u.isBuilding) this.arena.setOcclusion(team, x, y, u.radius, true);
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'spawn', team, x, y, name: def.name, id: u.id });
     return u;
   }
@@ -701,8 +746,14 @@ export class Battle {
       }
     }
     if (best) { this.setTarget(u, best, false, true); return; }
-    let cand: Unit | null = u.isBuilding || u.tower !== TOWER_NONE ? null : this.defaultTarget(u);
-    if (!this.isValidTarget(u, cand, true)) cand = null;
+    // Nothing in sight: keep the current target while the path to it runs "backwards"
+    // (LOGIC_PATHFIND_BACKWARDS_TRY_KEEP_TARGET), else the default target; an invalid choice leaves
+    // the current target unchanged [STAT 0xfc4c38 tail]. Buildings take no default target (A).
+    let cand: Unit | null;
+    if (u.target && this.mobile(u) && u.pathBack && this.isValidTarget(u, u.target, true)) cand = u.target;
+    else cand = u.isBuilding || u.tower !== TOWER_NONE ? null : this.defaultTarget(u);
+    if (cand === null) { if (u.isBuilding || u.tower !== TOWER_NONE) this.setTarget(u, null, false, true); return; }
+    if (!this.isValidTarget(u, cand, true)) return;
     this.setTarget(u, cand, false, true);
   }
 
@@ -738,17 +789,56 @@ export class Battle {
     return (cx - qx0) * (qy1 - qy0 + 1) + (cy - qy0);
   }
 
+  /**
+   * AttackComp_findDefaultTarget 0xfc5398 with LOGIC_XPOS_BASED_TOWER_TARGETING and
+   * LOGIC_PRINCESS_TOWERS_ALWAYS_AS_DEFAULT_TARGET [STAT]: the enemy princess tower on the unit's
+   * lane with the smallest |dx|, if it is nearer than the enemy King (and valid), else the King.
+   */
   private defaultTarget(u: Unit): Unit | null {
     if (this.fixture) return null;
     const enemy = this.players[1 - u.team];
-    const left = u.x < 9000;
-    const lane = enemy.princess[left ? 0 : 1];
-    if (lane.alive && this.canAttack(u, lane)) return lane;
-    if (enemy.king.alive && this.canAttack(u, enemy.king)) return enemy.king;
-    const other = enemy.princess[left ? 1 : 0];
-    if (other.alive && this.canAttack(u, other)) return other;
-    return null;
+    const K = enemy.king.alive ? enemy.king : null;
+    let dK = 0x7fffffff;
+    if (K) { const dx = K.x - u.x; const dy = K.y - u.y; dK = dx * dx + dy * dy; }
+    let best: Unit | null = null;
+    let bx = 0x7fffffff;
+    for (const t of enemy.princess) {
+      if (!t.alive || t.lane !== u.lane) continue;
+      const ax = t.x > u.x ? t.x - u.x : u.x - t.x;
+      if (ax < bx) { best = t; bx = ax; }
+    }
+    if (best) {
+      const dx = best.x - u.x;
+      const dy = best.y - u.y;
+      const L = isqrt(dx * dx + dy * dy);
+      if (L * L < dK) return this.isValidTarget(u, best, true) ? best : K;
+    }
+    return K;
   }
+
+  /** Lane id at spawn (0xd38d9c with no hint) [STAT]: lane bits of the nearest road cell (first in x-outer scan). */
+  laneOf(x: number, y: number): number {
+    const A = this.arena;
+    const x0 = trunc(x / CELL);
+    const y0 = trunc(y / CELL);
+    const key = x0 * 65536 + y0;
+    const hit = this.laneCache.get(key);
+    if (hit !== undefined) return hit;
+    let best = 0x7fffffff;
+    let lane = 0;
+    for (let cx = 0; cx < A.w; cx++) {
+      for (let cy = 0; cy < A.h; cy++) {
+        const v = A.flags[cx + A.w * cy] & 3;
+        if (v <= 0) continue;
+        const d = (cx - x0) * (cx - x0) + (cy - y0) * (cy - y0);
+        if (d < best) { best = d; lane = v; }
+      }
+    }
+    this.laneCache.set(key, lane);
+    return lane;
+  }
+
+  private laneCache = new Map<number, number>();
 
   /** resetAttack(): timer 0, hit/loaded/finish flags cleared [STAT]. */
   private resetAttack(u: Unit): void {
@@ -769,9 +859,8 @@ export class Battle {
     }
     // new target in range: timer kept [OBS: native Knight retargeted at tick 3, hit at tick 9]
     u.rampMs = 0;
-    // re-path on every target change
-    u.path = EMPTY_PATH;
-    u.pathGoal = -1;
+    // every target change requests a path (0xfc3cb4 -> 0xfcca18) unless an attack is finishing
+    if (u.finishMs === 0 && this.mobile(u) && u.state !== ST_DEAD) this.requestPath(u);
     void fromSearch;
   }
 
@@ -812,7 +901,7 @@ export class Battle {
     if (dt <= 0) { u.loaded = false; return; }
     const HS = u.def.hitSpeed;
     let t = u.atkTimer;
-    if (t === 0) {
+    if (t === 0 && !u.chargeHit) {
       if (u.atkDelay > 0) { u.atkDelay = Math.max(u.atkDelay, 50) - 50; u.loaded = false; return; }
       const LT = u.def.loadTime;
       if (HS < LT) {
@@ -827,7 +916,13 @@ export class Battle {
         else if (u.target) u.loaded = true;
       }
     }
-    u.atkTimer = t + dt;
+    if (u.chargeHit) {
+      // charged: the swing completes at once (attack+0x3f) [STAT 0xfc90b0]
+      u.atkTimer = HS + Math.floor(t / HS) * HS;
+      u.chargeHit = false;
+    } else {
+      u.atkTimer = t + dt;
+    }
   }
 
   /** AttackComp_update 0xfc7e20 (ordinary attack path) [STAT]. Runs for every actor before movement. */
@@ -855,6 +950,7 @@ export class Battle {
       if (u.retargetCd === 0 && u.finishMs === 0) this.findTarget(u);
       if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
     }
+    if (u.jumping) { this.resetAttack(u); u.locked = false; return; } // states 3/5: no attack
     const t = u.target;
     if (!t && !u.loaded) {
       if (u.finishMs > 0) {
@@ -872,9 +968,15 @@ export class Battle {
     const t0 = u.atkTimer;
     const inR = t ? this.inRange(u, t, 0) : false;
     const hitStarted = u.atkTimer % HS > 50;
-    const doSwing = inR || hitStarted;
-    u.locked = doSwing;
-    if (!doSwing) return;
+    // no swing while knocked back (m+0x1fc); otherwise in range or mid-swing
+    const doSwing = !u.kbActive && (inR || hitStarted);
+    if (!doSwing) {
+      // not swinging: the attack resets and the unit resumes walking [STAT 0xfc7e20 LAB_00fc8b54]
+      this.resetAttack(u);
+      u.locked = false;
+      return;
+    }
+    u.locked = true;
     const q0 = Math.floor(t0 / HS);
     if (t) { u.dirX = t.x - u.x; u.dirY = t.y - u.y; }
     const before = u.atkTimer;
@@ -1027,15 +1129,7 @@ export class Battle {
       if (t.maxHp <= 0 || t.hidden || t.tunneling) continue;
       this.queueDamage(t, damage, towerDamage, pct);
       if (buff) this.applyBuff(t, buff, buffTime, sourceId);
-      if (pushback > 0 && !t.isBuilding && (pushAll || !t.def.ignorePushback)) {
-        const d = isqrt(d2);
-        // Knockback spread over 4 ticks (A).
-        const px = d > 0 ? idiv(dx * pushback, d) : 0;
-        const py = d > 0 ? idiv(dy * pushback, d) : (t.team === 0 ? -pushback : pushback);
-        t.pushX = px;
-        t.pushY = py;
-        t.pushTicks = 4;
-      }
+      if (pushback > 0) this.applyPushback(t, x, y, pushback, pushAll); // World_areaDamage 0xf97be8
     }
   }
 
@@ -1069,80 +1163,362 @@ export class Battle {
     if (u.isBuilding && u.def.lifeTime > 0) this.decay(u);
   }
 
+  /** Native actor state for the movement predicates (actor+0x11c): 4 deploying, 2 attacking, 1 walking. */
+  private nativeState(u: Unit): number {
+    return u.state === ST_DEPLOYING ? 4 : u.jumping ? 5 : u.locked ? 2 : 1;
+  }
+
+  /** Has a movement component (Speed > 0 characters). */
+  private mobile(u: Unit): boolean {
+    return !u.isBuilding && u.def.speed > 0;
+  }
+
   /**
-   * MovementComp_update 0xfcc578 (walking path) [STAT]: knockback phase; collision push
-   * accumulation; speed 0 while attacking; path waypoints in sub-steps of at most 250 units,
-   * a waypoint consumed when the remaining distance along its direction is < 1001; with no
-   * path, one step toward the target. Path requests (0xfcca18) and Arena_collision (0x11d988c)
-   * are approximated (A).
+   * MovementComp_update 0xfcc578 [STAT]: knockback phase; path request while walking (0xfcca18);
+   * avoidance sidestep (0xfce42c) and its decay; collision push (0xfce900); speed (vtb8, 0 unless
+   * walking) with stop-and-go (StopMovementAfterMS/WaitMS); path waypoints in sub-steps of at most
+   * 250 units, each through geometricStep; without a path one step toward getWaypoint (0xfcedb0).
    */
   private movementUpdate(u: Unit): void {
-    if (u.state !== ST_ACTIVE || u.isBuilding || u.def.speed <= 0 || u.tunneling) return;
-    if (u.pushTicks > 0) { this.applyPush(u); return; }
-    const stunned = u.buffs.length > 0 && this.clockDelta(u) === 0;
-    if (!stunned) this.collidePush(u);
-    const t = u.target;
-    const attacking = u.locked || u.hitStarted;
-    const speed = attacking || stunned ? 0 : this.moveSpeed(u);
+    if (u.state === ST_DEAD || u.tunneling || !this.mobile(u)) return;
+    if (u.kbActive) { this.knockbackStep(u); return; }
+    const st = this.nativeState(u);
+    if (st === 5) { this.jumpStep(u); return; }
+    if (st === 1) this.requestPath(u);
+    if (st !== 2) this.avoidSidestep(u); // vtd0: not in states 0,2,3,5..8,10,12,13
+    const s = u.sidestep;
+    u.sidestep = s < 1 ? (s > -11 ? 0 : s + 10) : (s < 11 ? 0 : s - 10);
+    this.collidePush(u); // vtd8: every state here
+    let speed = st === 1 ? this.moveSpeed(u) : 0;
+    const facing = st === 1; // vtc8
     u.moving = false;
-    if (!t || speed === 0) {
-      // geometric step with zero speed still applies the push
-      if (u.pushCount > 0) this.geometricStep(u, u.x, u.y, 0, false);
-      if (!attacking && u.charge > 0 && u.charge < 10000) u.charge = 0;
-      return;
-    }
-    let gx = t.x;
-    let gy = t.y;
-    if (!u.isAir && !this.fixture) {
-      const cell = Arena.cellOf(u.x, u.y);
-      const goal = Arena.cellOf(t.x, t.y);
-      // Re-path on a new target, when the target's cell moved more than one cell from the path goal,
-      // or when the arena changed (A: 0xfcca18 not decoded). An exhausted path walks straight on.
-      const g0 = u.pathGoal;
-      const far = g0 < 0 || Math.abs((g0 % GRID_W) - (goal % GRID_W)) > 1 || Math.abs(Math.floor(g0 / GRID_W) - Math.floor(goal / GRID_W)) > 1;
-      if (far || u.pathVersion !== this.arena.version) {
-        u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
-        u.pathIdx = 0;
-        u.pathGoal = goal;
-        u.pathVersion = this.arena.version;
-        if (u.path.length) this.setWaypointDir(u);
+    if (speed > 0) {
+      // stop-and-go walking clock (movement +0x1f0) [STAT]
+      u.walkMs += u.buffs.length ? idiv(this.speedScale(u, 100), 2) : 50;
+      const sma = u.def.stopMoveMs;
+      if (sma > 0 && u.walkMs > sma) {
+        const cycle = sma + u.def.waitMs;
+        if (cycle <= u.walkMs) u.walkMs -= cycle;
+        else speed = 0;
       }
-      if (u.pathIdx < u.path.length) {
-        const n = Math.floor(speed / 250);
-        let rem = speed;
-        for (let i = 0; ; i++) {
-          const wp = u.path[u.pathIdx];
-          const step = speed >= 250 ? Math.min(rem, 250) : rem;
-          rem -= step;
-          const reached = this.geometricStep(u, Arena.cellCenterX(wp), Arena.cellCenterY(wp), step, true);
-          if (reached) {
-            u.pathIdx++;
-            if (u.pathIdx < u.path.length) this.setWaypointDir(u);
-          }
-          if (i >= n || u.pathIdx >= u.path.length || rem <= 0) break;
+    }
+    if (u.pathIdx < u.path.length && !(u.def.flyDirectPaths && u.isAir && u.target)) {
+      if (speed < -249) return;
+      const n = idiv(speed, 250);
+      let rem = speed;
+      for (let i = 0; ; i++) {
+        const wp = u.path[u.pathIdx];
+        const step = speed >= 250 ? (rem > 249 ? 250 : rem) : rem;
+        const reached = this.geometricStep(u, this.cellX(wp), this.cellY(wp), step, facing, false);
+        if (reached) {
+          u.pathIdx++;
+          this.advancePath(u);
+          if (u.def.jumpEnabled && u.path.length - u.pathIdx > 1) this.maybeJump(u);
         }
-        return;
+        if (n <= i) return;
+        rem -= 250;
+        if (u.pathIdx >= u.path.length) return;
       }
     }
-    this.geometricStep(u, gx, gy, Math.min(speed, 250), true);
-  }
-
-  /** Unit direction x256 toward the current waypoint (movement +0x30/+0x34). */
-  private setWaypointDir(u: Unit): void {
-    const wp = u.path[u.pathIdx];
-    const dx = Arena.cellCenterX(wp) - u.x;
-    const dy = Arena.cellCenterY(wp) - u.y;
-    const l = isqrt(dx * dx + dy * dy);
-    u.wpDirX = l ? idiv(dx * 256, l) : 0;
-    u.wpDirY = l ? idiv(dy * 256, l) : 0;
+    this.waypoint(u);
+    this.geometricStep(u, this.wpX, this.wpY, speed, facing, false);
   }
 
   /**
-   * Movement_geometricStep 0xfcef48 [STAT]: velocity quantised to 1/256, step <= 250, plus the
-   * averaged collision push (capped at length 150), then arena collision. Returns "reached"
-   * (remaining distance along the waypoint direction < 1001). Charge accrues step*1000/ChargeRange.
+   * River jump start (0xfcc578 after a reached waypoint, 0xfcf594) [STAT]: when the next path cell is
+   * water, jump to the first non-water cell further along the path (or the goal); state 5.
    */
-  private geometricStep(u: Unit, tx: number, ty: number, stepIn: number, setFacing: boolean): boolean {
+  private maybeJump(u: Unit): void {
+    const A = this.arena;
+    const W = A.w;
+    const next = u.path[u.pathIdx];
+    if (!A.waterCell(next % W, Math.floor(next / W))) return;
+    let land = u.path[u.path.length - 1];
+    for (let i = u.pathIdx + 1; i < u.path.length; i++) {
+      const c = u.path[i];
+      if (!A.waterCell(c % W, Math.floor(c / W))) { land = c; break; }
+    }
+    u.path = Int32Array.of(land);
+    u.pathIdx = 0;
+    this.advancePath(u);
+    const dx = this.cellX(land) - u.x;
+    const dy = this.cellY(land) - u.y;
+    u.jumpTotal = isqrt(dx * dx + dy * dy);
+    u.jumping = true;
+  }
+
+  /** Jump state 5 of 0xfcc578 [STAT]: JumpSpeed steps toward the landing cell; ends when < 2 steps remain. */
+  private jumpStep(u: Unit): void {
+    const speed = u.def.jumpSpeed;
+    if (speed === 0) return;
+    let wx = u.x;
+    let wy = u.y;
+    if (u.pathIdx < u.path.length) { wx = this.cellX(u.path[u.pathIdx]); wy = this.cellY(u.path[u.pathIdx]); }
+    this.geometricStep(u, wx, wy, speed, true, false);
+    u.moving = true;
+    const dx = wx - u.x;
+    const dy = wy - u.y;
+    if (idiv(isqrt(dx * dx + dy * dy), speed) < 2) u.jumping = false;
+  }
+
+  private cellX(c: number): number {
+    return (c % this.arena.w) * CELL + (CELL >> 1);
+  }
+
+  private cellY(c: number): number {
+    return Math.floor(c / this.arena.w) * CELL + (CELL >> 1);
+  }
+
+  /** Buff speed scale 0xfc26d4: haste/slow over active buffs, integer truncation [STAT]. */
+  private speedScale(u: Unit, v: number): number {
+    let haste = 100;
+    let slow = 0;
+    for (const b of u.buffs) {
+      const m = b.def.speedMul;
+      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+    }
+    return idiv(idiv(v * haste, 100) * clamp(100 + slow, 0, 100), 100);
+  }
+
+  private wpX = 0;
+  private wpY = 0;
+
+  /**
+   * Movement_getWaypoint 0xfcedb0 without a path [STAT]: no target, or the target already in range:
+   * stand (own position); else the approach point target + (self - target) scaled to the approach
+   * distance (vt128 = Range + own radius).
+   */
+  private waypoint(u: Unit): void {
+    const t = u.target;
+    if (!t || (!(u.def.flyDirectPaths && u.isAir) && this.inRange(u, t, 0))) {
+      this.wpX = u.x;
+      this.wpY = u.y;
+      return;
+    }
+    let vx = u.x - t.x;
+    let vy = u.y - t.y;
+    if (isqrt(vx * vx + vy * vy) === 0) vy = 1;
+    const l = isqrt(vx * vx + vy * vy);
+    const R = this.getRange(u);
+    if (l !== 0) { vx = idiv(vx * R, l); vy = idiv(vy * R, l); }
+    this.wpX = t.x + vx;
+    this.wpY = t.y + vy;
+  }
+
+  /**
+   * Movement_requestPath 0xfcca18 [STAT]: goal cell from 0xfcdefc (or, if none, the target's raw
+   * coordinates, as natively); keep the current path while its goal cell is unchanged, unless the
+   * friendly occlusion changed (ground units); flyers get the goal cell alone; ground units run
+   * A* (keeping the old path when the occlusion change touches neither path), then the path flag
+   * 0xfcf680 and advancePath 0xfcddb8. Without a target the default lane goal (0xd43a4c) is not
+   * ported: the path is kept (A).
+   */
+  private requestPath(u: Unit): void {
+    const t = u.target;
+    if (!t) return;
+    const A = this.arena;
+    const W = A.w;
+    let gx: number;
+    let gy: number;
+    const g = this.goalCell(u, t, this.getRange(u));
+    if (g >= 0) { gx = g >> 16; gy = g & 0xffff; } else { gx = t.x; gy = t.y; }
+    const ground = !u.isAir;
+    let fresh = true;
+    if (u.pathIdx < u.path.length) {
+      const goal = u.path[u.path.length - 1];
+      if (gx === goal % W && gy === Math.floor(goal / W)) {
+        if (!(A.occlusionChanged(u.team) && ground)) return;
+        fresh = false;
+      }
+    }
+    if (!ground) {
+      u.path = Int32Array.of(gx + W * gy);
+      u.pathIdx = 0;
+    } else {
+      const oldPath = u.path;
+      const oldIdx = u.pathIdx;
+      u.path = A.findPath(trunc(u.x / CELL), trunc(u.y / CELL), gx, gy, this.pathClass(u));
+      u.pathIdx = 0;
+      if (!fresh && !A.pathTouchedByOcclusion(oldPath, oldIdx, u.path)) {
+        u.path = oldPath;
+        u.pathIdx = oldIdx;
+      }
+      u.pathBack = this.pathBackwards(u, t);
+    }
+    if (u.pathIdx < u.path.length) this.advancePath(u);
+  }
+
+  private pathClass(u: Unit): number {
+    return u.def.jumpEnabled || u.def.hovering ? PATH_CROSS : PATH_WALK;
+  }
+
+  /**
+   * 0xfcdefc [STAT]: the cell to path to for reaching `t` at approach distance R. Cells within
+   * R/500+1 of the target's cell, rows ascending, columns from the end nearer the arena's left half
+   * (left end when self.x < W*250); a cell qualifies when its centre is within R of the target.
+   * Class 2 (ground: not water and not building-occluded; flyers: any) beats class 1; within a class
+   * the first strictly nearest centre to self wins. Returns cy | cx << 16, or -1.
+   */
+  private goalCell(u: Unit, t: Unit, R: number): number {
+    const A = this.arena;
+    const W = A.w;
+    const H = A.h;
+    const tx = trunc(t.x / CELL);
+    const ty = trunc(t.y / CELL);
+    const k = trunc(R / CELL) + 1;
+    const cx1 = tx + k >= W - 1 ? W - 1 : tx + k;
+    const cy1 = ty + k >= H - 1 ? H - 1 : ty + k;
+    const cy0 = ty - k < 0 ? 0 : ty - k;
+    const cx0 = tx - k < 0 ? 0 : tx - k;
+    if (cy0 > cy1 || cx0 > cx1) return -1;
+    const ground = !u.isAir;
+    const avoid = ground && this.avoidBuildings;
+    const classify = ground || !this.flyingNoWater;
+    const fromRight = W * 250 <= u.x;
+    const R2 = R * R;
+    // Exact fast path: the native result is the class-2 cell with the smallest dist2 to self, ties
+    // to the earlier row, then the earlier column in scan order. Per row the qualifying columns form
+    // an interval; visit them by increasing distance to self.x (ties in scan order) and stop at the
+    // first class-2 cell. Rows are taken in ascending order and only a strictly smaller dist2 wins.
+    let bestD = 0x7fffffff;
+    let best = -1;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      const py = cy * CELL + 250;
+      const dty = py - t.y;
+      const m = R2 - dty * dty;
+      if (m < 0) continue;
+      const sq = isqrt(m);
+      let a = ceilDiv(t.x - sq - 250, CELL);
+      let b = floorDiv(t.x + sq - 250, CELL);
+      if (a < cx0) a = cx0;
+      if (b > cx1) b = cx1;
+      if (a > b) continue;
+      const dsy = py - u.y;
+      const dsy2 = dsy * dsy;
+      if (dsy2 >= bestD) continue;
+      // L walks left from the last column whose centre is <= self.x, Rr walks right from the next
+      let L = floorDiv(u.x - 250, CELL);
+      let Rr = L + 1;
+      if (L > b) { L = b; Rr = b + 1; }
+      if (Rr < a) { Rr = a; L = a - 1; }
+      for (;;) {
+        const okL = L >= a;
+        const okR = Rr <= b;
+        if (!okL && !okR) break;
+        let c: number;
+        if (okL && okR) {
+          const dl = u.x - (L * CELL + 250);
+          const dr = (Rr * CELL + 250) - u.x;
+          const dlA = dl < 0 ? -dl : dl;
+          const drA = dr < 0 ? -dr : dr;
+          if (dlA < drA || (dlA === drA && !fromRight)) c = L--; else c = Rr++;
+        } else if (okL) c = L--; else c = Rr++;
+        const dsx = c * CELL + 250 - u.x;
+        const d = dsx * dsx + dsy2;
+        if (d >= bestD) break; // farther columns cannot win
+        if (classify && (A.waterCell(c, cy) || (avoid && A.dynOccluded(c, cy)))) continue;
+        bestD = d;
+        best = cy | (c << 16);
+        break;
+      }
+    }
+    if (best >= 0) return best;
+    // No class-2 cell: the native scan, where class-1 cells qualify.
+    let bestC = 0;
+    bestD = 0x7fffffff;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      const py = cy * CELL + 250;
+      const dty = py - t.y;
+      const dsy = py - u.y;
+      for (let i = 0; i <= cx1 - cx0; i++) {
+        const cx = fromRight ? cx1 - i : cx0 + i;
+        const px = cx * CELL + 250;
+        const dtx = px - t.x;
+        if (dtx * dtx + dty * dty > R2) continue;
+        const dsx = px - u.x;
+        const d = dsx * dsx + dsy * dsy;
+        let c = 2;
+        if (classify && (A.waterCell(cx, cy) || (avoid && A.dynOccluded(cx, cy)))) c = 1;
+        if (c > bestC || (c === bestC && d < bestD)) { bestC = c; bestD = d; best = cy | (cx << 16); }
+      }
+    }
+    return best;
+  }
+
+  /** Reference implementation of 0xfcdefc (the plain native scan), for tests. */
+  goalCellReference(u: Unit, t: Unit, R: number): number {
+    const A = this.arena;
+    const W = A.w;
+    const H = A.h;
+    const tx = trunc(t.x / CELL);
+    const ty = trunc(t.y / CELL);
+    const k = trunc(R / CELL) + 1;
+    const cx1 = tx + k >= W - 1 ? W - 1 : tx + k;
+    const cy1 = ty + k >= H - 1 ? H - 1 : ty + k;
+    const cy0 = ty - k < 0 ? 0 : ty - k;
+    const cx0 = tx - k < 0 ? 0 : tx - k;
+    if (cy0 > cy1 || cx0 > cx1) return -1;
+    const ground = !u.isAir;
+    const avoid = ground && this.avoidBuildings;
+    const classify = ground || !this.flyingNoWater;
+    const fromRight = W * 250 <= u.x;
+    let bestC = 0;
+    let bestD = 0x7fffffff;
+    let best = -1;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      const py = cy * CELL + 250;
+      for (let i = 0; i <= cx1 - cx0; i++) {
+        const cx = fromRight ? cx1 - i : cx0 + i;
+        const px = cx * CELL + 250;
+        if ((px - t.x) * (px - t.x) + (py - t.y) * (py - t.y) > R * R) continue;
+        const d = (px - u.x) * (px - u.x) + (py - u.y) * (py - u.y);
+        let c = 2;
+        if (classify && (A.waterCell(cx, cy) || (avoid && A.dynOccluded(cx, cy)))) c = 1;
+        if (c > bestC || (c === bestC && d < bestD)) { bestC = c; bestD = d; best = cy | (cx << 16); }
+      }
+    }
+    return best;
+  }
+
+  /** 0xfcf680 [STAT]: some remaining path cell lies farther from the target than self does. */
+  private pathBackwards(u: Unit, t: Unit): boolean {
+    const n = u.path.length - u.pathIdx;
+    if (n < 2) return false;
+    const sx = t.x - u.x;
+    const sy = t.y - u.y;
+    const own = isqrt(sx * sx + sy * sy);
+    for (let i = u.pathIdx; i < u.path.length; i++) {
+      const c = u.path[i];
+      const dx = this.cellX(c) - t.x;
+      const dy = this.cellY(c) - t.y;
+      if (isqrt(dx * dx + dy * dy) > own) return true;
+    }
+    return false;
+  }
+
+  /** 0xfcddb8 [STAT]: unit direction (x256) from the actor to the next waypoint (movement +0x30/+0x34). */
+  private advancePath(u: Unit): void {
+    if (u.pathIdx >= u.path.length) { u.wpDirX = 0; u.wpDirY = 0; return; }
+    const wp = u.path[u.pathIdx];
+    const dx = this.cellX(wp) - u.x;
+    const dy = this.cellY(wp) - u.y;
+    const l = isqrt(dx * dx + dy * dy);
+    if (l !== 0) {
+      u.wpDirX = idiv(dx * 256, l);
+      u.wpDirY = idiv(dy * 256, l);
+    } else {
+      u.wpDirX = dx;
+      u.wpDirY = dy;
+    }
+  }
+
+  /**
+   * Movement_geometricStep 0xfcef48 [STAT]: velocity quantised to 1/256 with step <= 250; facing set
+   * to the step direction (length 256); sidestep rotation; plus the averaged collision push (capped at
+   * length 150); then Arena_collision. Returns "reached": remaining distance along the waypoint
+   * direction < 1001. Charge accrues step*1000/ChargeRange while walking; otherwise it resets.
+   */
+  private geometricStep(u: Unit, tx: number, ty: number, stepIn: number, setFacing: boolean, flag5: boolean): boolean {
     const dx0 = tx - u.x;
     const dy0 = ty - u.y;
     let dist = isqrt(dx0 * dx0 + dy0 * dy0);
@@ -1151,7 +1527,22 @@ export class Battle {
     if (step > 249) step = 250;
     let vx = idiv(idiv(dx0 * 256, dist) * step, 256);
     let vy = idiv(idiv(dy0 * 256, dist) * step, 256);
-    if (setFacing && (dx0 !== 0 || dy0 !== 0) && step > 0) { u.dirX = dx0; u.dirY = dy0; }
+    if (!u.kbActive && setFacing && (dx0 !== 0 || dy0 !== 0)) {
+      const l = isqrt(dx0 * dx0 + dy0 * dy0);
+      u.dirX = idiv(dx0 * 256, l);
+      u.dirY = idiv(dy0 * 256, l);
+    }
+    const s0 = u.sidestep;
+    if (s0 !== 0) {
+      const s = s0 > 255 ? 256 : s0 < -255 ? -256 : s0;
+      const a = s < 0 ? -s : s;
+      let nx = (((256 - a) * vx) >> 8) + ((s * vy) >> 8);
+      let ny = (((256 - a) * vy) >> 8) + ((-(vx * s)) >> 8);
+      const l = isqrt(nx * nx + ny * ny);
+      if (l !== 0) { nx = idiv(nx * step, l); ny = idiv(ny * step, l); }
+      vx = nx;
+      vy = ny;
+    }
     if (u.pushCount >= 1) {
       let px = idiv(u.pushAccX, u.pushCount);
       let py = idiv(u.pushAccY, u.pushCount);
@@ -1166,42 +1557,198 @@ export class Battle {
       vx += px;
       vy += py;
     }
-    if (vx !== 0 || vy !== 0) {
-      const moved = this.tryMove(u, vx, vy);
-      if (step > 0) u.moving = moved;
-    }
+    const ox = u.x;
+    const oy = u.y;
+    this.arenaCollide(u, vx, vy, false);
+    if (step > 0 && setFacing && (u.x !== ox || u.y !== oy)) u.moving = true;
     const remaining = idiv(u.wpDirX * (tx - u.x), 256) + idiv(u.wpDirY * (ty - u.y), 256);
     const cr = u.def.chargeRange / 10; // data ChargeRange
-    if (cr > 0 && step > 0 && u.charge < 10000) {
-      u.charge += idiv(step * 1000, cr);
+    if (cr > 0) {
+      const st = this.nativeState(u);
+      if (step < 1 || st !== 1) {
+        if (!flag5 && st !== 5) { u.charge = 0; u.chargeHit = false; }
+      } else if (u.charge < 10000) {
+        u.charge += idiv(step * 1000, cr);
+      } else {
+        u.chargeHit = true;
+      }
     }
     return remaining < 1001;
   }
 
   /**
+   * Arena_collision 0x11d988c with the character override [STAT]: blocking (bit-32 water tiles) is
+   * the caller's flag, or for characters (state == deploying && ground). Fixture mode clamps to its
+   * bounds the same way the grid edge does.
+   */
+  private arenaCollide(u: Unit, vx: number, vy: number, block: boolean): void {
+    if (!block && u.state === ST_DEPLOYING && !u.isAir) block = true;
+    this.arena.collide(u.x, u.y, vx, vy, block, this.colOut);
+    u.x = this.colOut.x;
+    u.y = this.colOut.y;
+  }
+
+  private colOut = { x: 0, y: 0 };
+
+  /**
+   * Movement_avoidSidestep 0xfce42c [STAT]: look one facing vector ahead (query radius min(r, 500));
+   * a static blocker (no movement component) whose circle covers the next waypoint drops that
+   * waypoint; static blockers decide the side by the cross product with the facing, moving ones
+   * (not heading the same way, not lighter than a charging self) by theirs or their sidestep.
+   * A new sidestep is +-200; with static blockers an existing one is nudged by +-20 (clamped).
+   */
+  private avoidSidestep(u: Unit): void {
+    const fx = u.dirX;
+    const fy = u.dirY;
+    const qx = u.x + fx;
+    const qy = u.y + fy;
+    const rq = u.radius < 500 ? u.radius : 500;
+    const list = this.gridQuery(qx, qy, rq, u);
+    let nStatic = 0;
+    let nMoving = 0;
+    let sideStatic = 1;
+    let sideMoving = 1;
+    for (let i = 0; i < list.length; i++) {
+      const o = list[i];
+      if (o === u || o.isAir !== u.isAir) continue;
+      if (!this.avoidsAgainst(o)) continue;
+      const cross = fy * (o.x - u.x) + fx * (u.y - o.y);
+      if (!this.mobile(o)) {
+        const n = u.path.length - u.pathIdx;
+        if (n > 1) {
+          const wp = u.path[u.pathIdx];
+          const ex = this.cellX(wp) - o.x;
+          const ey = this.cellY(wp) - o.y;
+          if (ex * ex + ey * ey < o.radius * o.radius) u.pathIdx++;
+        }
+        sideStatic = cross < 0 ? 1 : 0;
+        nStatic++;
+      } else {
+        let dot = o.dirX * fx + o.dirY * fy;
+        const ost = this.nativeState(o);
+        if (ost === 2) dot = 0; // states 0, 2, 8, 10
+        if ((u.charge < 10000 || o.mass >= u.mass) && dot < 1) {
+          nMoving++;
+          sideMoving = o.sidestep === 0 ? (cross < 0 ? 1 : 0) : (o.sidestep > 0 ? 1 : 0);
+        }
+      }
+    }
+    const side = nStatic < 1 ? sideMoving : sideStatic;
+    if (nStatic + nMoving > 0) {
+      if (u.sidestep === 0) u.sidestep = side ? 200 : -200;
+      else if (nStatic >= 1) {
+        const v = u.sidestep + (sideStatic ? 20 : -20);
+        u.sidestep = v > 199 ? 200 : v < -199 ? -200 : v;
+      }
+    }
+  }
+
+  /** vte8 -> vte0(other, 1) canCollide for avoidance [STAT]: not attached/dashing/jumping. */
+  private avoidsAgainst(o: Unit): boolean {
+    return o.state !== ST_DEAD && !o.tunneling && !o.jumping;
+  }
+
+  /**
+   * Grid_queryCircleXY 0xf9b008 [STAT]: actors with a collision radius whose tick-start cells
+   * (1024-unit cells of the square radius, +250 when mobile) meet the query's cells, in scan order
+   * (cells x-outer, y-inner; list order within a cell), passing dist2 < (r + R)^2 at their live
+   * positions. Returns a shared scratch array.
+   */
+  private gridQuery(qx: number, qy: number, R: number, self: Unit): Unit[] {
+    const out = this.scratch;
+    out.length = 0;
+    const keys = this.scratchKeys;
+    keys.length = 0;
+    const gw = this.grid.w;
+    const gh = this.grid.h;
+    let qx0 = (qx - R) >> 10;
+    let qy0 = (qy - R) >> 10;
+    let qx1 = (qx + R) >> 10;
+    let qy1 = (qy + R) >> 10;
+    if (qx0 < 0) qx0 = 0;
+    if (qy0 < 0) qy0 = 0;
+    if (qx1 >= gw) qx1 = gw - 1;
+    if (qy1 >= gh) qy1 = gh - 1;
+    const units = this.units;
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i];
+      if (a.radius <= 0 || a.state === ST_DEAD || !a.inGrid) continue;
+      const dx = a.x - qx;
+      const dy = a.y - qy;
+      const rr = a.radius + R;
+      if (dx >= rr || dx <= -rr || dy >= rr || dy <= -rr || dx * dx + dy * dy >= rr * rr) continue;
+      const r = a.radius + (this.mobile(a) ? 250 : 0);
+      let ax0 = (a.gx - r) >> 10;
+      let ay0 = (a.gy - r) >> 10;
+      const ax1 = (a.gx + r) >> 10;
+      const ay1 = (a.gy + r) >> 10;
+      if (ax0 < 0) ax0 = 0;
+      if (ay0 < 0) ay0 = 0;
+      if (ax0 > qx1 || ax1 < qx0 || ay0 > qy1 || ay1 < qy0) continue;
+      const cx = ax0 > qx0 ? ax0 : qx0;
+      const cy = ay0 > qy0 ? ay0 : qy0;
+      out.push(a);
+      keys.push(((cx - qx0) * (qy1 - qy0 + 1) + (cy - qy0)) * 65536 + i);
+    }
+    void self;
+    if (out.length > 1) {
+      // sort by (first cell in scan order, list index)
+      const idx = this.scratchIdx;
+      idx.length = 0;
+      for (let i = 0; i < out.length; i++) idx.push(i);
+      idx.sort((p, q) => keys[p] - keys[q]);
+      const copy = this.scratch2;
+      copy.length = 0;
+      for (let i = 0; i < idx.length; i++) copy.push(out[idx[i]]);
+      out.length = 0;
+      for (let i = 0; i < copy.length; i++) out.push(copy[i]);
+    }
+    return out;
+  }
+
+  private scratchKeys: number[] = [];
+  private scratchIdx: number[] = [];
+
+  /**
    * Movement_collidePush 0xfce900 [STAT, arithmetic as decompiled]: neighbours from the grid
    * within radius+20, same layer; penetration min(R - len, 300) x m_other / m_self, at most 299;
    * push += (pen+1) x d / len per neighbour; static neighbours count self radius at most 500.
+   * The accumulated push is an integer sum, so the neighbour order does not matter.
    */
   private collidePush(u: Unit): void {
     const r = u.radius;
-    if (r === 0) return;
-    // The native neighbour list comes from the grid (radius + 20); the accumulated push is an
-    // integer sum, so iteration order does not matter and a direct scan is exact.
+    if (r === 0 || u.jumping) return;
     const list = this.units;
     const rCap = r < 500 ? r : 500;
     const qr = r + 20;
+    const gw = this.grid.w;
+    const gh = this.grid.h;
+    let qx0 = (u.x - qr) >> 10;
+    let qy0 = (u.y - qr) >> 10;
+    let qx1 = (u.x + qr) >> 10;
+    let qy1 = (u.y + qr) >> 10;
+    if (qx0 < 0) qx0 = 0;
+    if (qy0 < 0) qy0 = 0;
+    if (qx1 >= gw) qx1 = gw - 1;
+    if (qy1 >= gh) qy1 = gh - 1;
     for (let i = 0; i < list.length; i++) {
       const o = list[i];
       if (o === u || o.state === ST_DEAD || o.isAir !== u.isAir || o.tunneling || o.radius <= 0) continue;
+      if (!o.inGrid || o.jumping) continue; // not in this tick's grid; jumpers do not collide (vte0)
       {
         const qx = o.x - u.x;
         const qy = o.y - u.y;
         const rr = o.radius + qr;
         if (qx >= rr || qx <= -rr || qy >= rr || qy <= -rr || qx * qx + qy * qy >= rr * rr) continue; // grid query test
+        const gr = o.radius + (this.mobile(o) ? 250 : 0);
+        let ax0 = (o.gx - gr) >> 10;
+        let ay0 = (o.gy - gr) >> 10;
+        if (ax0 < 0) ax0 = 0;
+        if (ay0 < 0) ay0 = 0;
+        if (ax0 > qx1 || ((o.gx + gr) >> 10) < qx0 || ay0 > qy1 || ((o.gy + gr) >> 10) < qy0) continue;
       }
       const mo = o.mass;
-      const hasMove = o.def.speed > 0 && !o.isBuilding;
+      const hasMove = this.mobile(o);
       const rs = hasMove ? r : rCap;
       let dx = u.x - o.x;
       let dy = u.y - o.y;
@@ -1224,8 +1771,102 @@ export class Battle {
     }
   }
 
-  private jumpable(x: number, y: number): boolean {
-    return x >= 0 && y >= 0 && x < ARENA_W && y < ARENA_H && this.arena.isWaterAt(x, y);
+  // ---------------------------------------------------------------- knockback
+
+  /**
+   * Movement_applyPushback 0xfcfac4 + startPushback 0xfcfbd4 [STAT]: refused while already knocked
+   * back, for IgnorePushback units (unless `ignoreImmune`), or without a movement component. The
+   * destination is pos + (pos - origin) scaled to min(amount, MAX_PUSHBACK_LENGTH); the step speed
+   * starts at the smallest 25n with 25(1+..+n) >= distance and drops by 25 per tick.
+   */
+  private applyPushback(t: Unit, ox: number, oy: number, amount: number, ignoreImmune: boolean): void {
+    if (!this.mobile(t) || t.state === ST_DEAD || t.tunneling) return;
+    if (t.kbActive) return;
+    if (t.def.ignorePushback && !ignoreImmune) return;
+    let dx = t.x - ox;
+    const dy = t.y - oy;
+    let len = isqrt(dx * dx + dy * dy);
+    if (len === 0) { len = 1; dx = t.id & 1 ? -1 : 1; }
+    const dist = amount < this.maxPushback ? amount : this.maxPushback;
+    t.kbIgnore = ignoreImmune;
+    t.kbX = t.x;
+    t.kbY = t.y;
+    if (len < 1 || dist < 1) { t.kbActive = false; t.kbIgnore = false; return; }
+    let s = 0;
+    let acc = 0;
+    do { s += 25; acc += s; } while (acc < dist);
+    t.kbStep = s;
+    t.kbX += idiv(dist * dx, len);
+    t.kbY += idiv(dist * dy, len);
+    t.kbActive = true;
+  }
+
+  /** Knockback phase of 0xfcc578 [STAT]: push + dry-land snap while stepping, step -= 25 (ends after -25). */
+  private knockbackStep(u: Unit): void {
+    if (u.kbStep > 0) {
+      this.collidePush(u);
+      if (!u.isAir && !u.def.hovering && this.wetOrPad(u.x, u.y)) {
+        const p = this.nearestDry(u.x, u.y, -1);
+        u.x = p & 0xffff;
+        u.y = p >> 16;
+      }
+    }
+    u.kbStep -= 25;
+    this.geometricStep(u, u.kbX, u.kbY, u.kbStep, true, u.kbIgnore);
+    if (u.kbStep < 0) {
+      u.kbActive = false;
+      u.pathIdx = u.path.length;
+      u.pathBack = false;
+    }
+  }
+
+  /** 0x11d96c8: outside the arena, a no-deploy/static-building tile (bits 16|64), or water. */
+  private wetOrPad(x: number, y: number): boolean {
+    const A = this.arena;
+    if (x < 0 || y < 0 || x >= A.w * CELL || y >= A.h * CELL) return true;
+    return (A.flags[trunc(x / CELL) + A.w * trunc(y / CELL)] & (F_BLOCKED | F_OCCLUDER | F_WATER)) !== 0;
+  }
+
+  /**
+   * 0xd392c8 [STAT]: clamp into [250, size-250]; if on water, the nearest dry candidate among
+   * x + (-2250..2750 step 500), y + 500k + 250 (k = -5..5, or one side when preferY is given).
+   * Returns x | y << 16.
+   */
+  private nearestDry(x: number, y: number, preferY: number): number {
+    const A = this.arena;
+    const xm = A.w * CELL - 250;
+    const ym = A.h * CELL - 250;
+    if (x < 251) x = 250;
+    if (xm <= x) x = xm;
+    if (y < 251) y = 250;
+    if (ym <= y) y = ym;
+    if (!A.waterCell(trunc(x / CELL), trunc(y / CELL))) return x | (y << 16);
+    let k0 = -5;
+    let k1 = 5;
+    if (preferY !== -1) {
+      if (preferY <= y) k1 = y <= preferY ? 5 : 0;
+      else k0 = 1;
+    }
+    let best = 0x7fffffff;
+    let bx = x;
+    let by = y;
+    for (let k = k0; ; k++) {
+      const cy = y + k * CELL;
+      if (cy > -251) {
+        const ny = cy + 250;
+        for (let j = -5500; j !== 0; j += 500) {
+          const nx = x + j + 3250;
+          if (nx > -1 && nx < A.w * CELL && ny < A.h * CELL && !A.waterCell(trunc(nx / CELL), trunc(ny / CELL))) {
+            const ex = j + 3250;
+            const ey = ny - y;
+            const l = isqrt(ex * ex + ey * ey);
+            if (l < best) { best = l; bx = nx; by = ny; }
+          }
+        }
+      }
+      if (k === k1) break;
+    }
+    return bx | (by << 16);
   }
 
   /** Tunnel at SpawnPathfindSpeed in a straight line, then start deploying (A: straight path). */
@@ -1277,30 +1918,6 @@ export class Battle {
       u.hp -= step;
       if (u.hp <= 0) this.kill(u);
     }
-  }
-
-  private applyPush(u: Unit): void {
-    const n = u.pushTicks;
-    const sx = idiv(u.pushX, n);
-    const sy = idiv(u.pushY, n);
-    u.pushX -= sx;
-    u.pushY -= sy;
-    u.pushTicks--;
-    this.tryMove(u, sx, sy);
-  }
-
-  /** Move with arena bounds and (for ground units) water/blocked cells as walls. */
-  private tryMove(u: Unit, mx: number, my: number): boolean {
-    const nx = clamp(u.x + mx, 0, this.boundW - 1);
-    const ny = clamp(u.y + my, 0, this.boundH - 1);
-    if (u.isAir || this.fixture || this.arena.walkableAt(nx, ny) || (u.def.jumpEnabled && this.jumpable(nx, ny))) {
-      u.x = nx;
-      u.y = ny;
-      return true;
-    }
-    if (mx !== 0 && this.arena.walkableAt(nx, u.y)) { u.x = nx; return true; }
-    if (my !== 0 && this.arena.walkableAt(u.x, ny)) { u.y = ny; return true; }
-    return false;
   }
 
   // ---------------------------------------------------------------- buffs & area effects
@@ -1493,10 +2110,12 @@ export class Battle {
       p.hitIds.push(t.id);
       this.queueDamage(t, p.damage, p.towerDamage, p.crownPct);
       if (def.targetBuff) this.applyBuff(t, def.targetBuff, def.buffTime, p.id);
-      if (def.pushback > 0 && !t.isBuilding && (def.pushbackAll || !t.def.ignorePushback)) {
-        t.pushX = idiv(p.dirX * def.pushback, 1000);
-        t.pushY = idiv(p.dirY * def.pushback, 1000);
-        t.pushTicks = 4;
+      if (def.pushback > 0) {
+        // directional pushback 0xfcfe18: origin 100 units behind the target along the flight direction
+        const l = isqrt(p.dirX * p.dirX + p.dirY * p.dirY);
+        const bx = l ? idiv(p.dirX * 100, l) : p.dirX;
+        const by = l ? idiv(p.dirY * 100, l) : p.dirY;
+        this.applyPushback(t, t.x - bx, t.y - by, def.pushback, def.pushbackAll);
       }
     }
     if (!p.returning && p.rangeLeft <= 0) {
@@ -1625,7 +2244,6 @@ export class Battle {
     if (t.state === ST_DEAD) return;
     t.state = ST_DEAD;
     if (this.recordEvents) this.events.push({ tick: this.tick, type: t.tower ? 'tower' : 'death', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id });
-    if (t.isBuilding) this.arena.setOcclusion(t.team, t.x, t.y, t.radius, false);
     if (t.def.deathAreaEffect) this.spawnAreaEffect(t.team, t.def.deathAreaEffect, t.x, t.y);
     if (t.def.deathSpawn) this.deathSpawn(t);
     if (t.def.manaOnDeath > 0 && !this.fixture) {
@@ -1708,7 +2326,7 @@ export class Battle {
     for (const u of this.units) {
       h.add(u.id); h.add(u.x); h.add(u.y); h.add(u.hp); h.add(u.shield); h.add(u.state);
       h.add(u.deployTicks); h.add(u.atkTimer); h.add(u.atkDelay); h.add(u.target ? u.target.id : -1);
-      h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.pushTicks);
+      h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.kbActive ? u.kbStep : -1000);
       h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.charge); h.add(u.load); h.add(u.retargetCd);
       h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
       h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaTimer); h.add(u.hidden ? 1 : 0);
@@ -1726,4 +2344,14 @@ export class Battle {
   }
 }
 
-const EMPTY_PATH = new Int32Array(0);
+function floorDiv(a: number, b: number): number {
+  return Math.floor(a / b);
+}
+
+function ceilDiv(a: number, b: number): number {
+  return Math.ceil(a / b);
+}
+
+function trunc(v: number): number {
+  return v < 0 ? Math.ceil(v) : Math.floor(v);
+}

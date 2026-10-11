@@ -1,16 +1,24 @@
-// Arena geometry, tile flags, path costs and A* search on the 36x64 path grid.
+// Arena geometry, tile flags, path cell costs, the dynamic building-occlusion grid and
+// the native arena collision, on the 36x64 path grid of 500-unit cells.
 //
-// Sources (docs/MECHANICS_BRIEF.md §2, §4; globals.csv):
-// - grid of 500-unit cells from assets/tilemaps/tilemap.csv; row r covers y 500r..500r+500 (blue at y=0)
-// - flags: 1/2 lane road, 16 blocked, 32 water [DATA]
-// - step cost 10 (straight) / 14 (diagonal) x destination cell cost; costs default 8, road 5,
-//   water 7, blocked 50, building 50 [DATA + native fixture costs 448/280/406/496]
-// - neighbour order N, S, W, E, NW, SW, SE, NE; octile heuristic x PATHFINDING_DEFAULTHEURISTIC_COST;
-//   open nodes refreshed, closed nodes never reopened; path returned without the start cell [STAT]
-// Approximations (A): water is impassable for non-jumping ground units (the 7 cost is assumed to
-// serve river-jumping units); heap tie-breaking order is not the native one.
+// Sources: tilemap.csv [DATA]; libg 160402020 decompilation [STAT]:
+// - tile bits: 1|2 lane road (0xe8b560), 32 "blocked" tile = river water (0xe8b6e0), 64 static
+//   building tile (0xe8b734). Bit 16 marks no-deploy cells and plays no part in pathing or collision.
+// - Path_cellCost 0x11d9304: -1 outside the grid; bit 32: water cost for Hovering/JumpEnabled actors,
+//   else the blocked cost; bit 64: blocked cost; actor states 6/7/15: default cost; else road cost
+//   on a lane cell (matching-road cost on the actor's own lane) or default cost; then, with dynamic
+//   occlusions, max(cost, dynamic grid).
+// - dynamic grid (0x11d8d9c each pre-tick): every building in world-list order stamps the building
+//   cost (PATHFINDING_BUILDING_COST) over the cells of a square of half-size CollisionRadius around the
+//   cell corner at or above its position (0x11d8f10); per-team hashes of the occluder ids flag
+//   "friendly occlusion changed" for re-pathing. The previous tick's grid is kept for comparing paths.
+// - Arena_collision 0x11d988c: the move is applied, then per axis a crossing into a neighbour cell
+//   is undone (clamped to the cell edge) if that cell is outside the grid, or if blocking is on and
+//   the cell is a bit-32 tile. Blocking is the caller's flag; for characters it is forced to
+//   (state == deploying && ground) unless the caller set it.
 
 import type { GameData } from './data.ts';
+import { EMPTY, PathSearch } from './path.ts';
 
 export const CELL = 500;
 export const GRID_W = 36;
@@ -22,62 +30,72 @@ export const RIVER_Y1 = 17000;
 
 export const F_ROAD_L = 1;
 export const F_ROAD_R = 2;
+/** No-deploy tile (tower pads, back corners, river banks). Not used by pathing or collision. */
 export const F_BLOCKED = 16;
+/** Native "blocked" tile bit 0xe8b6e0: the river. */
 export const F_WATER = 32;
+/** Native static building tile bit 0xe8b734 (absent from the standard map). */
+export const F_OCCLUDER = 64;
 
-// Neighbour order N, S, W, E, NW, SW, SE, NE. "N" is taken as -y (row index decreasing).
-const NB_DX = [0, 0, -1, 1, -1, -1, 1, 1];
-const NB_DY = [-1, 1, 0, 0, -1, 1, 1, -1];
-const NB_STEP = [10, 10, 10, 10, 14, 14, 14, 14];
+/** Path cost classes: bit 0 = crosses water (Hovering/JumpEnabled), bit 1 = state 6/7/15 costs. */
+export const PATH_WALK = 0;
+export const PATH_CROSS = 1;
+export const PATH_SPAWN = 2;
 
 export class Arena {
+  /** Grid size in cells (36x64; a synthetic fixture grid in fixture mode). */
+  readonly w: number;
+  readonly h: number;
   readonly flags: Uint16Array;
-  /** Base cell cost from the tilemap. */
-  readonly baseCost: Uint8Array;
-  /** Dynamic building occlusion per team (PATHFINDING_FRIENDLYONLY_OCCLUSIONS): count of buildings. */
-  readonly occluded: [Uint8Array, Uint8Array];
-  readonly costDefault: number;
-  readonly costRoad: number;
   readonly costWater: number;
   readonly costBlocked: number;
   readonly costBuilding: number;
+  readonly costDefault: number;
+  readonly costRoad: number;
+  readonly costMatchingRoad: number;
   readonly heuristicCost: number;
-  /** Bumped whenever occlusion changes; invalidates cached paths. */
+  readonly dynamicOcclusions: boolean;
+  readonly friendlyOnlyOcclusions: boolean;
+  /** Dynamic occlusion grid of the current tick and of the previous tick. */
+  dyn: Int32Array;
+  dynPrev: Int32Array;
+  /** Per-team occluder hash and "changed this tick" flags (0x11d8d9c). */
+  readonly teamHash: [number, number] = [0, 0];
+  readonly teamChanged: [boolean, boolean] = [false, false];
+  /** Bumped whenever the dynamic grid's contents change; invalidates cached paths. */
   version = 0;
 
-  // A* scratch (reused, no per-search allocation)
-  private g = new Int32Array(GRID_W * GRID_H);
-  private parent = new Int32Array(GRID_W * GRID_H);
-  private openGen = new Uint32Array(GRID_W * GRID_H);
-  private closedGen = new Uint32Array(GRID_W * GRID_H);
-  private heapPos = new Int32Array(GRID_W * GRID_H);
-  private heap = new Int32Array(GRID_W * GRID_H);
-  private heapF = new Int32Array(GRID_W * GRID_H);
-  private heapN = 0;
-  private gen = 0;
+  private search: PathSearch;
+  private costs: Int32Array[] = [];
+  private costsVersion = -1;
   private pathCache = new Map<number, Int32Array>();
 
-  constructor(data: GameData) {
+  /** `fixture`: a synthetic grid of that many units with no tile flags (native fixture arenas). */
+  constructor(data: GameData, fixture?: { width: number; height: number }) {
     const t = data.tilemap;
     if (t.width !== GRID_W || t.height !== GRID_H) throw new Error('unexpected tilemap size');
+    this.w = fixture ? Math.ceil(fixture.width / CELL) : GRID_W;
+    this.h = fixture ? Math.ceil(fixture.height / CELL) : GRID_H;
     const G = data.globals;
     const gi = (k: string, d: number) => (typeof G[k] === 'number' ? (G[k] as number) : d);
-    this.costDefault = gi('PATHFINDING_DEFAULT_COST', 8);
-    this.costRoad = gi('PATHFINDING_ROAD_COST', 5);
+    const gb = (k: string, d: boolean) => (typeof G[k] === 'boolean' ? (G[k] as boolean) : d);
     this.costWater = gi('PATHFINDING_WATER_COST', 7);
     this.costBlocked = gi('PATHFINDING_BLOCKED_COST', 50);
     this.costBuilding = gi('PATHFINDING_BUILDING_COST', 50);
+    this.costDefault = gi('PATHFINDING_DEFAULT_COST', 8);
+    this.costRoad = gi('PATHFINDING_ROAD_COST', 5);
+    this.costMatchingRoad = gi('PATHFINDING_MATCHINGROAD_COST', 5);
     this.heuristicCost = gi('PATHFINDING_DEFAULTHEURISTIC_COST', 5);
-    this.flags = Uint16Array.from(t.grid);
-    this.baseCost = new Uint8Array(GRID_W * GRID_H);
-    for (let i = 0; i < this.flags.length; i++) {
-      const f = this.flags[i];
-      this.baseCost[i] = f & F_BLOCKED ? this.costBlocked
-        : f & F_WATER ? this.costWater
-          : f & (F_ROAD_L | F_ROAD_R) ? this.costRoad
-            : this.costDefault;
-    }
-    this.occluded = [new Uint8Array(GRID_W * GRID_H), new Uint8Array(GRID_W * GRID_H)];
+    this.dynamicOcclusions = gb('PATHFINDING_DYNAMIC_OCCLUSIONS', true);
+    this.friendlyOnlyOcclusions = gb('PATHFINDING_FRIENDLYONLY_OCCLUSIONS', true);
+    // Actor lanes (actor+0x158) are not modelled: with this build's equal road and matching-road
+    // costs the lane never changes a cost.
+    if (this.costRoad !== this.costMatchingRoad) throw new Error('matching-road cost differs from road cost: actor lanes needed');
+    if (gi('PATHFINDING_HEURISTIC_METHOD', 1) !== 1) throw new Error('only heuristic method 1 is ported');
+    this.flags = fixture ? new Uint16Array(this.w * this.h) : Uint16Array.from(t.grid);
+    this.dyn = new Int32Array(this.w * this.h);
+    this.dynPrev = new Int32Array(this.w * this.h);
+    this.search = new PathSearch(this.w, this.h, this.heuristicCost);
   }
 
   static cellOf(x: number, y: number): number {
@@ -100,179 +118,206 @@ export class Arena {
     return (this.flags[Arena.cellOf(x, y)] & F_WATER) !== 0;
   }
 
-  /** Ground units may stand on this point (not water, not blocked). */
+  /** Deployable ground (not water, not a no-deploy tile). */
   walkableAt(x: number, y: number): boolean {
     if (x < 0 || y < 0 || x >= ARENA_W || y >= ARENA_H) return false;
     return (this.flags[Arena.cellOf(x, y)] & (F_WATER | F_BLOCKED)) === 0;
   }
 
-  /** Mark/unmark the cells a building covers as occluded for its team's pathing. */
-  setOcclusion(team: number, x: number, y: number, radius: number, add: boolean): void {
-    const occ = this.occluded[team];
-    const r = radius + (CELL >> 1);
-    const x0 = Math.max(0, Math.floor((x - r) / CELL));
-    const x1 = Math.min(GRID_W - 1, Math.floor((x + r) / CELL));
-    const y0 = Math.max(0, Math.floor((y - r) / CELL));
-    const y1 = Math.min(GRID_H - 1, Math.floor((y + r) / CELL));
-    for (let cy = y0; cy <= y1; cy++) {
-      for (let cx = x0; cx <= x1; cx++) {
-        const dx = cx * CELL + (CELL >> 1) - x;
-        const dy = cy * CELL + (CELL >> 1) - y;
-        if (dx * dx + dy * dy <= r * r) {
-          const i = cy * GRID_W + cx;
-          occ[i] = add ? occ[i] + 1 : Math.max(0, occ[i] - 1);
-        }
+  /** Bit-32 ("blocked") tile test 0xe8b6e0 on cell coordinates. */
+  waterCell(cx: number, cy: number): boolean {
+    return (this.flags[cx + this.w * cy] & F_WATER) !== 0;
+  }
+
+  /** 0x11d9674: the dynamic grid marks the cell as building-occluded. */
+  dynOccluded(cx: number, cy: number): boolean {
+    if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h || !this.dynamicOcclusions) return false;
+    return this.dyn[cx + this.w * cy] >= this.costBuilding;
+  }
+
+  // ---------------------------------------------------------------- dynamic occlusion
+
+  /** dynPrev already equals dyn (the grid did not change last tick). */
+  private prevEqual = false;
+
+  /**
+   * A tick whose occluders are exactly last tick's (same buildings, positions, radii, order): the
+   * grid is unchanged, so only the previous-tick copy needs to catch up. Same result as a rebuild.
+   */
+  keepOcclusion(): void {
+    if (!this.prevEqual) { this.dynPrev.set(this.dyn); this.prevEqual = true; }
+    this.teamChanged[0] = false;
+    this.teamChanged[1] = false;
+  }
+
+  /** Start a tick's occlusion pass: the current grid becomes the previous one; the new one is empty. */
+  beginOcclusion(): void {
+    const t = this.dynPrev;
+    this.dynPrev = this.dyn;
+    this.dyn = t;
+    t.fill(0);
+  }
+
+  /** 0x11d8f10: stamp `cost` over the square of half-size (rx, ry) around the cell corner at/above (x, y). */
+  stampOccluder(x: number, y: number, rx: number, ry: number): void {
+    const bx = trunc((x - 1) / CELL) * CELL + CELL;
+    const left = bx - rx;
+    if (left < 0) return;
+    const by = trunc((y - 1) / CELL) * CELL + CELL;
+    const bottom = by - ry;
+    if (bottom < 0) return;
+    const right = bx + rx;
+    if (right >= this.w * CELL) return;
+    const top = by + ry;
+    if (top >= this.h * CELL) return;
+    const cx0 = trunc(left / CELL);
+    const cx1 = trunc((right - 1) / CELL);
+    const cy0 = trunc(bottom / CELL);
+    const cy1 = trunc((top - 1) / CELL);
+    const v = this.costBuilding;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const i = cx + this.w * cy;
+        if (this.dyn[i] < v) this.dyn[i] = v;
       }
     }
-    this.version++;
-    this.pathCache.clear();
   }
 
-  private cellCost(i: number, team: number): number {
-    if (this.occluded[team][i] > 0) return this.costBuilding;
-    return this.baseCost[i];
-  }
-
-  private heapPush(node: number, f: number): void {
-    let i = this.heapN++;
-    // sift up (strictly smaller f moves up: equal f keeps insertion order bias)
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (this.heapF[p] <= f) break;
-      this.heap[i] = this.heap[p];
-      this.heapF[i] = this.heapF[p];
-      this.heapPos[this.heap[i]] = i;
-      i = p;
+  /** Finish the occlusion pass with the per-team occluder hashes. */
+  endOcclusion(h0: number, h1: number): void {
+    this.teamChanged[0] = h0 !== this.teamHash[0];
+    this.teamChanged[1] = h1 !== this.teamHash[1];
+    this.teamHash[0] = h0;
+    this.teamHash[1] = h1;
+    const a = this.dyn;
+    const b = this.dynPrev;
+    let same = true;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) { same = false; this.version++; this.pathCache.clear(); break; }
     }
-    this.heap[i] = node;
-    this.heapF[i] = f;
-    this.heapPos[node] = i;
+    this.prevEqual = same;
   }
 
-  private heapDecrease(node: number, f: number): void {
-    let i = this.heapPos[node];
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (this.heapF[p] <= f) break;
-      this.heap[i] = this.heap[p];
-      this.heapF[i] = this.heapF[p];
-      this.heapPos[this.heap[i]] = i;
-      i = p;
-    }
-    this.heap[i] = node;
-    this.heapF[i] = f;
-    this.heapPos[node] = i;
-  }
-
-  private heapPop(): number {
-    const top = this.heap[0];
-    const n = --this.heapN;
-    if (n > 0) {
-      const node = this.heap[n];
-      const f = this.heapF[n];
-      let i = 0;
-      for (;;) {
-        const l = 2 * i + 1;
-        if (l >= n) break;
-        const r = l + 1;
-        const c = r < n && this.heapF[r] < this.heapF[l] ? r : l;
-        if (this.heapF[c] >= f) break;
-        this.heap[i] = this.heap[c];
-        this.heapF[i] = this.heapF[c];
-        this.heapPos[this.heap[i]] = i;
-        i = c;
-      }
-      this.heap[i] = node;
-      this.heapF[i] = f;
-      this.heapPos[node] = i;
-    }
-    return top;
-  }
-
-  private heuristic(a: number, b: number): number {
-    const dx = Math.abs((a % GRID_W) - (b % GRID_W));
-    const dy = Math.abs(Math.floor(a / GRID_W) - Math.floor(b / GRID_W));
-    const mn = dx < dy ? dx : dy;
-    const mx = dx < dy ? dy : dx;
-    return (10 * mx + 4 * mn) * this.heuristicCost;
+  /** The re-path trigger 0x11d921c / 0x11d9204 for a team. */
+  occlusionChanged(team: number): boolean {
+    return this.friendlyOnlyOcclusions ? this.teamChanged[team] : this.teamChanged[0] || this.teamChanged[1];
   }
 
   /**
-   * A* from start cell to goal cell for a ground unit of `team`. Returns the path in walking
-   * order without the start cell (empty if start == goal or unreachable). Cached per
-   * (team, start, goal) until occlusion changes. The returned array must not be mutated.
+   * 0x11d9c2c: does the occlusion change between the previous and the current tick touch either
+   * path (a cell of the old path newly occluded, or a cell of the new path newly freed)?
    */
-  findPath(start: number, goal: number, team: number, canCrossWater: boolean): Int32Array {
-    if (start === goal) return EMPTY;
-    const key = ((team * 2 + (canCrossWater ? 1 : 0)) * 4096 + start) * 4096 + goal;
-    const cached = this.pathCache.get(key);
-    if (cached) return cached;
-    const path = this.search(start, goal, team, canCrossWater);
-    if (this.pathCache.size > 20000) this.pathCache.clear();
-    this.pathCache.set(key, path);
+  pathTouchedByOcclusion(oldPath: Int32Array, oldFrom: number, newPath: Int32Array): boolean {
+    if (oldPath.length - oldFrom === 0 || newPath.length === 0) return true;
+    const cur = this.dyn;
+    const prev = this.dynPrev;
+    for (let i = oldFrom; i < oldPath.length; i++) {
+      const c = oldPath[i];
+      if (prev[c] === 0 && cur[c] > 0) return true;
+    }
+    for (let i = 0; i < newPath.length; i++) {
+      const c = newPath[i];
+      if (prev[c] > 0 && cur[c] === 0) return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------- path costs and search
+
+  /** Path_cellCost 0x11d9304 for an actor of cost class `cls`, at an in-grid cell. */
+  cellCost(cx: number, cy: number, cls: number): number {
+    if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return -1;
+    const i = cx + this.w * cy;
+    const f = this.flags[i];
+    if (f & F_WATER) return cls & PATH_CROSS ? this.costWater : this.costBlocked;
+    if (f & F_OCCLUDER) return this.costBlocked;
+    if (cls & PATH_SPAWN) return this.costDefault;
+    const c = f & 3 ? this.costRoad : this.costDefault;
+    if (this.dynamicOcclusions) {
+      const d = this.dyn[i];
+      return d > c ? d : c;
+    }
+    return c;
+  }
+
+  private costTable(cls: number): Int32Array {
+    if (this.costsVersion !== this.version) {
+      this.costs = [];
+      this.costsVersion = this.version;
+    }
+    let t = this.costs[cls];
+    if (!t) {
+      t = new Int32Array(this.w * this.h);
+      for (let cy = 0; cy < this.h; cy++) for (let cx = 0; cx < this.w; cx++) t[cx + this.w * cy] = this.cellCost(cx, cy, cls);
+      this.costs[cls] = t;
+    }
+    return t;
+  }
+
+  /**
+   * Native A* (path.ts) from cell (sx, sy) to (gx, gy) — the goal may lie outside the grid (native
+   * fallback goal). Returns the cells in WALKING order (first step first, goal last), start excluded.
+   * Cached per (class, start, goal) until the dynamic grid changes. Must not be mutated.
+   */
+  findPath(sx: number, sy: number, gx: number, gy: number, cls: number): Int32Array {
+    const inGrid = gx >= 0 && gy >= 0 && gx < this.w && gy < this.h;
+    const key = inGrid ? ((cls * 4096 + sx + this.w * sy) * 4096 + gx + this.w * gy) : -1;
+    if (inGrid) {
+      const cached = this.pathCache.get(key);
+      if (cached) return cached;
+    }
+    this.search.cost = this.costTable(cls);
+    const rev = this.search.search(sx, sy, gx, gy);
+    let path = EMPTY;
+    if (rev.length) {
+      path = new Int32Array(rev.length);
+      for (let i = 0; i < rev.length; i++) path[i] = rev[rev.length - 1 - i];
+    }
+    if (inGrid) {
+      if (this.pathCache.size > 50000) this.pathCache.clear();
+      this.pathCache.set(key, path);
+    }
     return path;
   }
 
-  private search(start: number, goal: number, team: number, canCrossWater: boolean): Int32Array {
-    const gen = ++this.gen;
-    this.heapN = 0;
-    this.g[start] = 0;
-    this.parent[start] = -1;
-    this.openGen[start] = gen;
-    this.heapPush(start, this.heuristic(start, goal));
-    let found = false;
-    while (this.heapN > 0) {
-      const node = this.heapPop();
-      if (node === goal) { found = true; break; }
-      this.closedGen[node] = gen;
-      const nx = node % GRID_W;
-      const ny = (node - nx) / GRID_W;
-      const gn = this.g[node];
-      for (let k = 0; k < 8; k++) {
-        const ax = nx + NB_DX[k];
-        const ay = ny + NB_DY[k];
-        if (ax < 0 || ay < 0 || ax >= GRID_W || ay >= GRID_H) continue;
-        const nb = ay * GRID_W + ax;
-        if (this.closedGen[nb] === gen) continue;
-        if (!canCrossWater && nb !== goal && (this.flags[nb] & F_WATER) !== 0) continue;
-        if (k >= 4 && !canCrossWater) {
-          // no diagonal corner cutting across water (A)
-          if ((this.flags[ny * GRID_W + ax] & F_WATER) !== 0 || (this.flags[ay * GRID_W + nx] & F_WATER) !== 0) continue;
-        }
-        const ng = gn + NB_STEP[k] * this.cellCost(nb, team);
-        if (this.openGen[nb] === gen) {
-          if (ng >= this.g[nb]) continue;
-          this.g[nb] = ng;
-          this.parent[nb] = node;
-          this.heapDecrease(nb, ng + this.heuristic(nb, goal));
-        } else {
-          this.openGen[nb] = gen;
-          this.g[nb] = ng;
-          this.parent[nb] = node;
-          this.heapPush(nb, ng + this.heuristic(nb, goal));
-        }
+  /**
+   * Arena_collision 0x11d988c: apply (vx, vy) to (x, y); undo per-axis crossings into a cell outside
+   * the grid, or into a bit-32 tile when `block` is set. Returns the new position in `out`.
+   */
+  collide(x: number, y: number, vx: number, vy: number, block: boolean, out: { x: number; y: number }): void {
+    const cx = trunc(x / CELL);
+    const cy = trunc(y / CELL);
+    let nx = x + vx;
+    let ny = y + vy;
+    const mx = x - cx * CELL; // x % 500 (C remainder; positions are non-negative)
+    const my = y - cy * CELL;
+    if (vx < 0) {
+      if (mx + vx < 0) {
+        const n = cx - 1;
+        const inside = n >= 0 && cy >= 0 && cx <= this.w && cy < this.h;
+        if (!inside || (block && this.waterCell(n, cy))) nx = cx * CELL;
       }
+    } else if (vx !== 0 && mx + vx >= CELL) {
+      const n = cx + 1;
+      const inside = n >= 0 && cy >= 0 && n < this.w && cy < this.h;
+      if (!inside || (block && this.waterCell(n, cy))) nx = cx * CELL + CELL - 1;
     }
-    if (!found) return EMPTY;
-    let n = 0;
-    for (let c = goal; c !== start; c = this.parent[c]) n++;
-    const out = new Int32Array(n);
-    let i = n - 1;
-    for (let c = goal; c !== start; c = this.parent[c]) out[i--] = c;
-    return out;
-  }
-
-  /** Cost of a path (for tests against the native fixture costs). */
-  pathCost(start: number, path: Int32Array, team: number): number {
-    let prev = start;
-    let total = 0;
-    for (const c of path) {
-      const diag = prev % GRID_W !== c % GRID_W && Math.floor(prev / GRID_W) !== Math.floor(c / GRID_W);
-      total += (diag ? 14 : 10) * this.cellCost(c, team);
-      prev = c;
+    if (vy < 0) {
+      if (my + vy < 0) {
+        const n = cy - 1;
+        const inside = n >= 0 && cx >= 0 && cx < this.w && cy <= this.h;
+        if (!inside || (block && this.waterCell(cx, n))) ny = cy * CELL;
+      }
+    } else if (vy !== 0 && my + vy >= CELL) {
+      const n = cy + 1;
+      const inside = n >= 0 && cx >= 0 && cx < this.w && n < this.h;
+      if (!inside || (block && this.waterCell(cx, n))) ny = cy * CELL + CELL - 1;
     }
-    return total;
+    out.x = nx;
+    out.y = ny;
   }
 }
 
-const EMPTY = new Int32Array(0);
+function trunc(v: number): number {
+  return v < 0 ? Math.ceil(v) : Math.floor(v);
+}

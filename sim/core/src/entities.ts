@@ -56,25 +56,40 @@ export class Unit {
   atkDelay: number;
   /** Tick of the last hit (for the viewer's attack animation). */
   lastHitTick: number;
+  /** Path cells in walking order; the remaining path is path[pathIdx..] (native m+0x3c, reversed). */
   path: Int32Array;
   pathIdx: number;
-  pathGoal: number;
-  pathVersion: number;
-  /** Facing vector (game units), for the viewer. */
+  /** Path goes "backwards" relative to the target (m+0x215, 0xfcf680). */
+  pathBack: boolean;
+  /** Facing vector (actor+0xf8), length 256 once set by movement or attack. */
   dirX: number;
   dirY: number;
   moving: boolean;
   tower: number;
+  /** Lane id (actor+0x158) assigned at spawn: road bits of the nearest road cell. */
+  lane: number;
   kingState: number;
   kingTicks: number;
   isAir: boolean;
   isBuilding: boolean;
   radius: number;
   mass: number;
-  /** Remaining knockback displacement to apply (game units). */
-  pushX: number;
-  pushY: number;
-  pushTicks: number;
+  /** Knockback (startPushback 0xfcfbd4): active (m+0x1fc), step (m+0x1ec), destination (m+0x1e4/0x1e8). */
+  kbActive: boolean;
+  kbStep: number;
+  kbX: number;
+  kbY: number;
+  /** Knockback ignores immunity (m+0x1fd, PushbackAll): no swing, keeps charge. */
+  kbIgnore: boolean;
+  /** River jump (state 5) and its total distance (m+0x204). */
+  jumping: boolean;
+  jumpTotal: number;
+  /** Stop-and-go walking clock ms (m+0x1f0). */
+  walkMs: number;
+  /** Tick-start position (spatial grid cells) and grid membership for this tick. */
+  gx: number;
+  gy: number;
+  inGrid: boolean;
   spawnTick: number;
   buffs: BuffInst[];
   /** Ticks active and HP already lost to building lifetime decay. */
@@ -121,6 +136,10 @@ export class Unit {
   wpDirY: number;
   /** Charge progress (+0x1e0): += step*1000/ChargeRange; charging at >= 10000. */
   charge: number;
+  /** Charged first hit pending (attack+0x3f): the next swing skips the load and hits at once. */
+  chargeHit: boolean;
+  /** Avoidance sidestep (m+0x1f4): +-200, decays 10 per tick. */
+  sidestep: number;
   gridStamp: number;
 
   constructor(id: number, def: UnitDef, card: string, team: number, x: number, y: number, tick: number) {
@@ -144,21 +163,30 @@ export class Unit {
     this.lastHitTick = -1000;
     this.path = NO_PATH;
     this.pathIdx = 0;
-    this.pathGoal = -1;
-    this.pathVersion = -1;
+    this.pathBack = false;
+    // spawn facing (0xd35ab4): (0, +256) for team 0, (0, -256) for team 1
     this.dirX = 0;
-    this.dirY = team === 0 ? 1 : -1;
+    this.dirY = team === 0 ? 256 : -256;
     this.moving = false;
     this.tower = TOWER_NONE;
+    this.lane = 0;
     this.kingState = KING_ACTIVE;
     this.kingTicks = 0;
     this.isAir = def.flyingHeight > 0;
     this.isBuilding = def.kind === 'building';
     this.radius = def.collisionRadius;
     this.mass = def.mass > 0 ? def.mass : 1;
-    this.pushX = 0;
-    this.pushY = 0;
-    this.pushTicks = 0;
+    this.kbActive = false;
+    this.kbStep = 0;
+    this.kbX = 0;
+    this.kbY = 0;
+    this.kbIgnore = false;
+    this.jumping = false;
+    this.jumpTotal = 0;
+    this.walkMs = 0;
+    this.gx = x;
+    this.gy = y;
+    this.inGrid = false;
     this.spawnTick = tick;
     this.buffs = [];
     this.lifeTicks = 0;
@@ -190,6 +218,8 @@ export class Unit {
     this.wpDirX = 0;
     this.wpDirY = 0;
     this.charge = 0;
+    this.chargeHit = false;
+    this.sidestep = 0;
     this.gridStamp = 0;
     // Native attack timer starts at 0; the first swing starts at LoadTime - load (load 0 for a fresh
     // unit) so the first hit lands HitSpeed - LoadTime later [STAT 0xfc90b0].
