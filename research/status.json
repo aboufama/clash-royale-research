@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 16,
-    "reviewed_at": "2026-10-11T10:08:13Z",
-    "summary": "Reviewed original 421-input finalizer return and first built-in Normal runner tick under explicit modeled platform conditions. Independently reproduced genuine empty Android asset-manager execution and 400-tick actor insertion observations. Published bounded evidence and limitations; full-run replay, legal deployment, complete matches and byte-identical battle equivalence remain pending."
+    "sequence": 17,
+    "reviewed_at": "2026-10-11T10:15:30Z",
+    "summary": "Audited the experimental Android loader: found and fixed indirect-function type handling, independently established zero affected resolver entries on the prior empty-manager path, and reproduced corrected modes 0/2 with fourteen synthetic and two native negative controls. All 3,218 packed relocation tuples match the original AOSP iterator. No full-match or exactness gate advanced."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Original finalizer returns after 763 constructors and all 421 native inputs; built-in Normal runner constructs accounts/players/map and advances one tick under explicit modeled platform conditions. Frozen sources/reports reviewed; full run not independently replayed. Separately, genuine empty Android asset-manager execution is independently reproduced. Legal deployment, full match and Android equivalence remain unvalidated."
+        "Original finalizer returns after 763 constructors and all 421 native inputs; built-in Normal runner constructs accounts/players/map and advances one tick under explicit modeled platform conditions. Full run not independently replayed. Separately, corrected genuine empty Android asset-manager execution is independently reproduced; an indirect-function binding bug was found, bounded and fixed. Legal deployment, full match and Android equivalence remain unvalidated."
       ]
     },
     {

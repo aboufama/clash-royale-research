@@ -760,6 +760,29 @@ TLS is synthetic, global initializers are not run, and unresolved imports or
 TLS accesses stop. This is neither an original Android process nor a configured
 game asset namespace. APK loading and integration are the next prerequisites.
 
+A later independent audit found a symbol-classification error in that private
+loader: pyelftools reports ARM64 indirect functions as `STT_LOOS`, while the
+first version checked only `STT_GNU_IFUNC`. Calling a resolver as an ordinary
+function could silently return a function address as a result. Additional
+read-only watches on all 15 actual resolver entries record zero calls during
+the published empty-manager sequence, so that particular path was unaffected.
+The frozen first version is not used for expanding APK loading.
+
+Version 2 recognizes the actual type aliases, rejects unresolved indirect
+function imports and stops direct resolver entry without an explicit ABI.
+An independent replay reproduces its entire report: the constructor returns,
+lookup modes 0 and 2 both return null, all six executable regions remain
+unchanged and no indirect-function resolver executes. Fourteen synthetic
+controls and two native negative controls pass. The game's separate older
+Bionic adapter already handles `STT_LOOS`; it is not affected by this bug.
+
+Packed relocation decoding was also compared against the unchanged original
+AOSP iterator and SLEB decoder compiled with explicit ELF/log definitions.
+All 3,218 tuples in the actual packed sections match, as does an original-source
+nonzero grouped-addend control. This is a decoder differential, not complete
+dynamic linking or Android state validation. The [audit evidence](evidence/native-android-loader-audit.json)
+preserves the correction, independent reports and remaining limits.
+
 ## Distinguishing queued actors from native insertion
 
 The read-only observer now distinguishes the original request wrapper and

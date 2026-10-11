@@ -30,7 +30,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Original finalizer returns after 763 constructors and all 421 native inputs; built-in Normal runner constructs accounts/players/map and advances one tick under explicit modeled platform conditions. Frozen sources/reports reviewed; full run not independently replayed. Separately, genuine empty Android asset-manager execution is independently reproduced. Legal deployment, full match and Android equivalence remain unvalidated. |
+| Supporting native runtime | Partial | Original finalizer returns after 763 constructors and all 421 native inputs; built-in Normal runner constructs accounts/players/map and advances one tick under explicit modeled platform conditions. Full run not independently replayed. Separately, corrected genuine empty Android asset-manager execution is independently reproduced; an indirect-function binding bug was found, bounded and fixed. Legal deployment, full match and Android equivalence remain unvalidated. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Original TrainingCamp geometry (36x64) is now loaded into the built-in Normal runner, which returns one tick under explicit diagnostic conditions. Full-match movement and original-device comparison remain unvalidated. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -39,7 +39,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **16** · **2026-10-11T10:08:13Z** · Reviewed original 421-input finalizer return and first built-in Normal runner tick under explicit modeled platform conditions. Independently reproduced genuine empty Android asset-manager execution and 400-tick actor insertion observations. Published bounded evidence and limitations; full-run replay, legal deployment, complete matches and byte-identical battle equivalence remain pending.
+Review **17** · **2026-10-11T10:15:30Z** · Audited the experimental Android loader: found and fixed indirect-function type handling, independently established zero affected resolver entries on the prior empty-manager path, and reproduced corrected modes 0/2 with fourteen synthetic and two native negative controls. All 3,218 packed relocation tuples match the original AOSP iterator. No full-match or exactness gate advanced.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -65,6 +65,13 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   the game process remain pending. This is an isolated native slice with
   modeled allocation/memory and synthetic TLS, not full Android startup.
   See [platform evidence and limits](research/evidence/native-android-empty-manager.json).
+- A subsequent [loader audit](research/evidence/native-android-loader-audit.json)
+  caught an indirect-function symbol classification bug. Entry watches show
+  the earlier empty-manager path never reached those resolvers. A corrected
+  loader independently reproduces both lookup modes 0 and 2 and rejects two
+  invalid resolver calls. Separately, all 3,218 packed relocation tuples match
+  the compiled original AOSP iterator. These checks do not establish a full
+  Android runtime.
 - Independent 400-tick fixture runs reproduce **44 returned live actor
   insertions**, distinguishing them from queued actors and registration
   requests. This corrects the event observer; it does not demonstrate legal

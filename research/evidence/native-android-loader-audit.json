@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "classification": "Independent Android native loader audit and corrected empty-manager replay; still not an APK-configured runtime",
+  "correction": {
+    "affected_tool": "Private experimental Android 15 selected-library loader v1",
+    "problem": "pyelftools 0.33 exposes ARM64 GNU indirect functions (ELF symbol type 10) as STT_LOOS. Checking only STT_GNU_IFUNC misbinds non-overridden imports to resolver entries as ordinary functions.",
+    "v1_actual_path_audit": {
+      "private_report_sha256": "8487478e3c35317f4d3e1ee23d2c725ed88cab4bdd9024914777dd126867d6f7",
+      "original_ifunc_resolvers_watched": 15,
+      "observed_resolver_entries": 0,
+      "constructor_and_empty_open_returned": true,
+      "limit": "Read-only entry watches cover only the previously published empty-manager path; expansion required a corrected loader."
+    },
+    "fix": "Version 2 recognizes STT_LOOS, STT_GNU_IFUNC and numeric type 10. Unresolved indirect-function imports stop, direct resolver entries stop unless explicitly handled, and unresolved IRELATIVE relocation data is guarded. Version 1 is frozen and not used for expanded APK work.",
+    "older_game_bionic_adapter_affected": false,
+    "older_game_bionic_reason": "The separate older Bionic adapter already recognizes STT_LOOS and executes original resolvers with its recorded ABI inputs."
+  },
+  "corrected_v2": {
+    "private_report_sha256": "e86e5f9c316bd09fe315d4d1af1196f345d0ba4c7b97a35c4c39baf9aa87e544",
+    "independent_whole_report_sha256_matches": true,
+    "source_manifest_sha256": "0a62004ffb93536d58cddabd4854d5bf87159ede6f092fce4c940e384bd03174",
+    "constructor_returned": true,
+    "manager_sha256": "e5ba39775ef1d6277fbfac91fed759e1fbbe6129814a1631f5f53fece58aab8b",
+    "open_modes_returning_null": [
+      0,
+      2
+    ],
+    "configured_apk_count": 0,
+    "ifunc_resolver_entries": 0,
+    "original_executable_regions_unchanged": 6,
+    "synthetic_controls_passed": 14,
+    "native_negative_controls_passed": 2,
+    "native_negative_report_sha256": "da65b538b5f6bd1865c9c353d01db320c7d5a34dfb4e5df38c5d997187c8ddd8",
+    "native_negative_cases": [
+      {
+        "case": "relocated_import",
+        "rejected": true,
+        "error": "Unsupported import IFUNC:libc.so:strcmp",
+        "resolver_entries": []
+      },
+      {
+        "case": "direct_resolver",
+        "rejected": true,
+        "error": "IFUNC resolver execution requires explicit resolver ABI: libc.so:strcmp",
+        "resolver_entries": [
+          {
+            "symbol": "libc.so:strcmp",
+            "pc": "0x1050c68b0",
+            "lr": "0x72000000"
+          }
+        ]
+      }
+    ]
+  },
+  "original_aosp_iterator_differential": {
+    "private_report_sha256": "96603ce7a9bc701d8c14772fce61bdfeb9349dfbbf93b8178eb5b39cfe4807f1",
+    "independently_reproduced": true,
+    "scope": "Exact original AOSP Android15-r1 packed relocation iterator and SLEB decoder compiled unchanged, with minimal ELF type/log header definitions; all actual packed sections compared tuple-for-tuple. Not a complete linker/startup proof.",
+    "official_source_commit": "361ba86734fb2821a6adcfdf775db8abd04e0de0",
+    "original_headers_sha256": {
+      "linker_reloc_iterators.h": "32741d3e90161e507e2b2c7fbf741c18f6610a276d93219b06381258cdbc6b07",
+      "linker_sleb128.h": "ba008d344462447338da1df9d25c20c4f9648d1afccb2ad91f0782765a530504"
+    },
+    "selected_dsos": [
+      {
+        "name": "libandroid.so",
+        "sha256": "d7674face2379aeb556a6a3e2846662612f73a060bf44fc89e5431893a891640",
+        "has_APS2": true,
+        "bytes": 1413,
+        "relocations": 426,
+        "all_tuples_equal_original_cpp": true,
+        "tuple_text_sha256": "2c79d2419f17b42c777830b211fb34a9c30ee036732265976166e84d056fa910"
+      },
+      {
+        "name": "libandroid_runtime.so",
+        "sha256": "92d438da7bf79d8a4c4bdf2088e6edd8a42db44cf50cc77afbfb752028f82afe",
+        "has_APS2": true,
+        "bytes": 13014,
+        "relocations": 2554,
+        "all_tuples_equal_original_cpp": true,
+        "tuple_text_sha256": "3a132e4fda0ae2c994cbc8e85990a67c0b4b44c209565788f971f0ef861c3579"
+      },
+      {
+        "name": "libandroidfw.so",
+        "sha256": "531aeb9ca7669816dff2d93cb31e3fe1051d3d844b3bc7a389358549ff49bced",
+        "has_APS2": true,
+        "bytes": 1707,
+        "relocations": 213,
+        "all_tuples_equal_original_cpp": true,
+        "tuple_text_sha256": "e7122c8d3ef63b01536403f7e38b7e621962407eb293ad90cd753888609f893e"
+      },
+      {
+        "name": "libutils.so",
+        "sha256": "f231ef8701b9ae7e2571be5d95568228aaf58934fa778f3811b70f204c08e1e5",
+        "has_APS2": true,
+        "bytes": 92,
+        "relocations": 25,
+        "all_tuples_equal_original_cpp": true,
+        "tuple_text_sha256": "7c20fae0f4926136789398fef9ed79ac84dadd0b4e6b56431e1184b4861bf537"
+      },
+      {
+        "name": "libc++.so",
+        "sha256": "794eb8fafd7be35da3725e9ec0b15189c6f4f2544f5b78afd8a647dde5b69195",
+        "has_APS2": false
+      },
+      {
+        "name": "libc.so",
+        "sha256": "1c793885eb53259c0777f235161ca21667cbf57f786ec0a2edd65a3cc535b3c5",
+        "has_APS2": false
+      }
+    ],
+    "actual_packed_relocations_compared": 3218,
+    "synthetic_nonzero_grouped_addend_original_cpp": [
+      [
+        8,
+        1027,
+        7
+      ],
+      [
+        16,
+        1027,
+        7
+      ],
+      [
+        24,
+        1027,
+        7
+      ]
+    ],
+    "synthetic_matches_once_per_group": true
+  },
+  "remaining_limits": [
+    "Only selected native slices are executed; global library initialization, original dynamic linker and full Android process startup are absent.",
+    "Memory primitives/allocation and gettid are modeled; TLS is synthetic.",
+    "An empty manager does not validate the game APK namespace, overlays, framework assets or original-device file state.",
+    "No Android/platform runtime equivalence, full match, complete state/reset or byte-identical battle proof follows from this audit."
+  ],
+  "byte_exact_gate_satisfied": false
+}
