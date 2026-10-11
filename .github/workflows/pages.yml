@@ -1,0 +1,66 @@
+name: Demo (GitHub Pages)
+
+# Builds the browser simulator from the private game files and publishes it with GitHub Pages.
+# The repository stays private; the published site (including the baked original art) is
+# reachable by anyone with the URL. Published at the owner's explicit request.
+on:
+  push:
+    branches: [main, claude/youthful-davinci-1649t7]
+    paths: ['sim/**', 'tools/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Decode the gameplay data (extracted/, not committed)
+        run: |
+          python3 -I tools/data/decode_assets.py
+          python3 -I tools/data/build_json.py
+      - name: Bake the original art for the browser renderer
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r tools/art/requirements.txt
+          .venv/bin/python tools/art/bake_web.py
+      - name: Build the viewer
+        working-directory: sim
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Assemble the site
+        run: |
+          mkdir -p site
+          cp sim/viewer/index.html site/
+          cp -r sim/viewer/dist sim/viewer/assets site/
+          touch site/.nojekyll
+          du -sh site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
