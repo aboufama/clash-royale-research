@@ -99,3 +99,19 @@ test('Ice Spirit freezes what it hits; buildings decay over their lifetime', () 
   c.run(600);
   assert.ok(!c.units.includes(cannon), 'expired after 30 s');
 });
+
+test('Arrows: 3 waves of 10 scattered arrows; a centred target is hit once per wave (0xf9f47c group list)', () => {
+  const b = still();
+  const k = addActive(b, 'Knight', 1, 9000, 22000);
+  b.spawn(0, 'Arrows', 9000, 22000);
+  b.run(21); // commit at tick 20
+  assert.equal(b.projectiles.length, 30);
+  const per = b.defs.projectile('ArrowsSpell', 11).damage;
+  const hits: number[] = [];
+  let last = k.hp;
+  for (let t = 0; t < 120; t++) {
+    b.step();
+    if (k.hp < last) { hits.push(last - k.hp); last = k.hp; }
+  }
+  assert.deepEqual(hits, [per, per, per]);
+});

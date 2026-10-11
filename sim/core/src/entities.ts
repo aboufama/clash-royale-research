@@ -281,6 +281,10 @@ export class Projectile {
   source: Unit | null;
   /** Unit whose pending damage this projectile counts toward. */
   pendingOn: Unit | null;
+  /** Start delay ms (projectile +0x1b0): counts down 50 per update before the projectile moves. */
+  delay: number;
+  /** Ids already hit by the projectile's group (one spell wave shares one list: World_areaDamage ignore list). */
+  group: number[] | null;
 
   constructor(id: number, def: ProjectileDef, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -305,6 +309,8 @@ export class Projectile {
     this.born = tick;
     this.alive = true;
     this.pierce = false;
+    this.delay = 0;
+    this.group = null;
     this.dirX = 0;
     this.dirY = 1000;
     this.rangeLeft = 0;

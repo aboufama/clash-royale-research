@@ -20,8 +20,9 @@ import {
   AreaEffect, type BattleEvent, BuffInst, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, ST_ACTIVE, ST_DEAD,
   ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS, Unit,
 } from './entities.ts';
-import { clamp, Hasher, idiv, isqrt, Rng } from './math.ts';
-import { cos1e6, sin1e6 } from './trig.ts';
+import { clamp, Hasher, idiv, isqrt, NativeRng, Rng } from './math.ts';
+import { formationOffset } from './formation.ts';
+import { cos1e6, rotate1024, sin1e6 } from './trig.ts';
 
 export interface BattleConfig {
   seed?: number;
@@ -77,6 +78,8 @@ export class Battle {
   readonly defs: Defs;
   readonly arena: Arena;
   readonly rng: Rng;
+  /** Battle RNG with the native algorithm (0x1294bb4): spell scatter. Seeded from the config seed (A: native seed source). */
+  readonly nrng: NativeRng;
   readonly timeline: Timeline;
   readonly levels: [number, number];
   readonly towerLevels: [number, number];
@@ -90,6 +93,7 @@ export class Battle {
   readonly boundW: number;
   readonly boundH: number;
   readonly maxPushback: number;
+  readonly laneSeqDeploy: boolean;
   readonly avoidBuildings: boolean;
   readonly flyingNoWater: boolean;
 
@@ -108,7 +112,6 @@ export class Battle {
   private nextProjId = 4000000;
   private nextAeoId = 3000000;
   private newUnits: Unit[] = [];
-  private spellWaves: { tick: number; team: number; card: CardDef; x: number; y: number }[] = [];
   // Damage queue (parallel arrays, reused)
   private dmgTarget: Unit[] = [];
   private dmgAmount: number[] = [];
@@ -124,6 +127,7 @@ export class Battle {
     this.defs = new Defs(data);
     this.arena = new Arena(data, cfg.fixture);
     this.rng = new Rng(cfg.seed ?? 1);
+    this.nrng = new NativeRng(cfg.seed ?? 1);
     this.timeline = data.timelines[cfg.timeline ?? 'Default'];
     const lv = cfg.level ?? 11;
     this.levels = Array.isArray(lv) ? [lv[0], lv[1]] : [lv, lv];
@@ -138,6 +142,7 @@ export class Battle {
     this.keepTargetExt = typeof G.LOGIC_RANGE_EXTENSION_TO_KEEP_TARGET === 'number' ? G.LOGIC_RANGE_EXTENSION_TO_KEEP_TARGET : 25;
     this.extraSightCrownTowers = typeof G.EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS === 'number' ? G.EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS : 0;
     this.maxPushback = typeof G.MAX_PUSHBACK_LENGTH === 'number' ? G.MAX_PUSHBACK_LENGTH : 40000;
+    this.laneSeqDeploy = G.LOGIC_LANE_ID_BASED_DEPLOY_SEQUENCE !== false;
     this.avoidBuildings = G.KS_POS_TO_TARGET_GROUND_AVOID_BUILDINGS !== false;
     this.flyingNoWater = G.KS_POS_TO_TARGET_FLYING_NO_WATER !== false;
 
@@ -333,7 +338,6 @@ export class Battle {
     if (this.recordEvents) this.events.length = 0;
     this.commitCommands();
     this.regenElixir();
-    this.fireSpellWaves();
     const units = this.units;
     this.preTick();
     for (let i = 0; i < units.length; i++) this.attackUpdate(units[i]); // all attack components
@@ -421,62 +425,168 @@ export class Battle {
     }
     const card = c.card;
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: c.x, y: c.y, name: card.name, id: -1 });
-    if (card.areaEffect) {
-      // SpellAsDeploy cards (Ice Wizard, Electro Wizard) cast their area effect on commit, then summon.
-      this.spawnAreaEffect(c.team, card.areaEffect, c.x, c.y);
-      if (card.summon.length === 0) return;
-    }
-    if (card.spellProjectile && card.spellProjectile.pierceRange > 0) {
-      // Rolling spells start at the target point (Log, Barbarian Barrel) (A).
-      this.firePierce(c.team, card.spellProjectile, c.x, c.y, 0, c.team === 0 ? 1000 : -1000, null);
-      return;
-    }
-    if (card.spellProjectile?.spawnProjectile && card.spellProjectile.spawnProjectile.pierceRange > 0) {
-      this.firePierce(c.team, card.spellProjectile.spawnProjectile, c.x, c.y, 0, c.team === 0 ? 1000 : -1000, null);
-      return;
-    }
-    if (card.spellProjectile) {
-      for (let w = 0; w < card.waves; w++) {
-        const t = this.tick + Math.round((w * card.waveInterval) / TICK_MS);
-        this.spellWaves.push({ tick: t, team: c.team, card, x: c.x, y: c.y });
-      }
-      this.fireSpellWaves();
-      return;
-    }
-    this.summonCard(c.team, card, c.x, c.y);
+    this.castSpell(c.team, card, c.x, c.y);
   }
 
   /**
-   * Summon a card's characters: main group (SummonNumber), second group (SummonCharacterSecond),
-   * or a list with explicit offsets and delays (SummonCharactersList). Offsets mirrored for red.
-   * Two-group placement (main at the centre when single, else all on the SummonRadius circle) is A.
+   * Tower_castSpell 0xf9f47c [STAT], called at command commit from the player's King tower:
+   * projectiles first (rolling SpellAsDeploy ones start at the target point), then the summon,
+   * then the area effect object at the target point.
+   */
+  private castSpell(team: number, card: CardDef, x: number, y: number): void {
+    const pd = card.spellProjectile;
+    if (pd && pd.pierceRange > 0) {
+      // Rolling spells start at the target point (Log, Barbarian Barrel) (A: pierce flight model).
+      this.firePierce(team, pd, x, y, 0, team === 0 ? 1000 : -1000, null);
+    } else if (pd?.spawnProjectile && pd.spawnProjectile.pierceRange > 0) {
+      this.firePierce(team, pd.spawnProjectile, x, y, 0, team === 0 ? 1000 : -1000, null);
+    } else if (pd) {
+      this.castProjectiles(team, card, x, y);
+    }
+    if (card.summon.length) this.summonCard(team, card, x, y);
+    if (card.areaEffect) this.spawnAreaEffect(team, card.areaEffect, x, y);
+  }
+
+  /**
+   * Projectile part of 0xf9f47c [STAT]: ProjectileWaves waves of MultipleProjectiles each, delayed
+   * by ProjectileWaveInterval per wave and ProjectileInterval per projectile. With several
+   * projectiles (Arrows) the first aims at the target and the others at a ring of radius
+   * R − 0.6·r (R spell radius, r projectile radius) at 360/(n−1) steps, each jittered by 0.6·r in a
+   * random direction (battle RNG) and kept within 0.9·R; one wave shares a hit list so a target is
+   * hit once per wave. Each starts at the King tower offset by (dx/4, dy) of its aim offset.
+   * The scatter mode is assumed for MultipleProjectiles > 1 (A: spell vt+0x1c0 not decoded).
+   */
+  private castProjectiles(team: number, card: CardDef, x: number, y: number): void {
+    const king = this.players[team].king;
+    const kx = king ? king.x : x;
+    const ky = king ? king.y : y;
+    const R = card.spellRadius;
+    const n = Math.max(card.multipleProjectiles, 1);
+    const waves = Math.max(card.waves, 1);
+    const scatter = n > 1;
+    const len = Math.trunc((R * 90) / 100);
+    const ringStep = n - 1 !== 0 ? Math.trunc(360 / (n - 1)) : 0;
+    const step = Math.trunc(360 / n);
+    let waveDelay = 0;
+    for (let w = 0; w < waves; w++) {
+      let delay = waveDelay;
+      let angle = 0;
+      const group: number[] | null = scatter ? [] : null;
+      for (let k = 0; k < n; k++) {
+        const def = (k === 0 && card.firstProjectile) ? card.firstProjectile : card.spellProjectile!;
+        let ox = 0;
+        let oy = 0;
+        if (scatter) {
+          let bx = 0;
+          let by = 0;
+          if (k > 0) [bx, by] = rotate1024(R - Math.trunc((def.radius * 60) / 100), 0, ringStep * (k - 1));
+          const [jx, jy] = rotate1024(0, Math.trunc((def.radius * 60) / 100), this.nrng.next(359));
+          ox = jx + bx;
+          oy = jy + by;
+          const l2 = ox * ox + oy * oy;
+          if (len * len < l2) {
+            const l = isqrt(l2);
+            if (l !== 0) { ox = idiv(ox * len, l); oy = idiv(oy * len, l); }
+          }
+        } else if (k > 0) {
+          const rr = this.nrng.next(R - (R >> 2)) + (R >> 2);
+          [ox, oy] = rotate1024(rr, 0, angle);
+        }
+        const pr = new Projectile(this.nextProjId++, def, team, kx + (ox >> 2), ky + oy, this.tick);
+        pr.tx = x + ox;
+        pr.ty = y + oy;
+        pr.spell = card.name;
+        pr.delay = delay;
+        pr.group = group;
+        this.projectiles.push(pr);
+        delay += card.projectileInterval;
+        angle += step;
+      }
+      waveDelay += card.waveInterval;
+    }
+  }
+
+  /**
+   * Deploy_summon 0xd423bc [STAT]: summon index i = 0..total-1 over SummonCharacter (SummonNumber),
+   * SummonCharacterSecond (its count) and SummonCharactersList. Circle-group members take
+   * Deploy_formationOffset 0xd42ce0 (ring of the first character's radius, line for SummonWidth,
+   * authored for the top side and negated for team 0, mirrored by lane); list members take
+   * SummonCharactersOffsetsX/Y (negated for team 0, Spell_summonOffset 0xe7e8f8). Ground units are
+   * clamped into the deploy zone's y range (A: own half and pockets). Deploy delays: the delay list
+   * for list members, else SummonDeployDelay·i (buildings: SummonDeployDelay each), the second
+   * group SummonDeployDelaySecond·(1 + i − SummonNumber); then DeployTime.
    */
   private summonCard(team: number, card: CardDef, x: number, y: number): void {
-    const s = team === 0 ? 1 : -1;
-    const second = card.summon.find((e) => e.role === 'second');
-    for (const e of card.summon) {
-      if (e.offsets) {
-        const [ox, oy] = e.offsets[0];
-        const ux = clamp(x + s * ox, 0, this.boundW - 1);
-        const uy = clamp(y + s * oy, 0, this.boundH - 1);
-        const delay = e.delays ? e.delays[0] : 0;
-        const dt = e.deployTime >= 0 ? e.deployTime : e.unit.deployTime;
-        this.createUnit(team, card.name, e.unit, ux, uy, Math.round(dt / TICK_MS) + Math.round(delay / TICK_MS));
+    const sp = card.spec;
+    const n1 = sp.main ? sp.number : 0;
+    const n2 = sp.second ? sp.secondCount : 0;
+    const nCircle = n1 + n2;
+    const total = nCircle + sp.list.length;
+    if (total === 0) return;
+    const unitAt = (i: number): UnitDef => {
+      const k = i - nCircle;
+      if (k >= 0 && k < sp.list.length) return sp.list[k];
+      return (i >= n1 && sp.second ? sp.second : sp.main)!;
+    };
+    const d0 = unitAt(0);
+    const r = sp.radius !== 0 ? sp.radius : d0.spawnRadius !== 0 ? d0.spawnRadius : d0.collisionRadius;
+    const negY = team === 0;
+    const lane = this.laneOf(x, y);
+    const zone = this.summonZone(team, x, card);
+    for (let i = 0; i < total; i++) {
+      const def = unitAt(i);
+      let ox: number;
+      let oy: number;
+      if (i < nCircle) {
+        [ox, oy] = formationOffset(i, sp.number, r, sp.width, negY, lane, d0.spawnAngleShift, sp.secondCount, this.laneSeqDeploy);
+      } else {
+        const k = i - nCircle;
+        const sx = sp.offsetsX[k] ?? 0;
+        const sy = sp.offsetsY[k] ?? 0;
+        ox = negY ? -sx : sx;
+        oy = negY ? -sy : sy;
+      }
+      let ux = x + ox;
+      let uy = y + oy;
+      if (!def.flyingHeight && !this.fixture) uy = clamp(uy, zone[0], zone[1]);
+      ux = clamp(ux, 0, this.boundW - 1);
+      uy = clamp(uy, 0, this.boundH - 1);
+      const entry = card.summon.find((e) => e.unit === def) ?? null;
+      const deployMs = entry && entry.deployTime >= 0 ? entry.deployTime : def.deployTime;
+      if (def.spawnPathfindSpeed > 0 && !this.fixture) {
+        // Miner / drill: tunnel from the King tower, then deploy at the target (D speed; path A).
+        const king = this.players[team].king;
+        const u = this.createUnit(team, card.name, def, king.x, king.y, Math.round(deployMs / TICK_MS));
+        u.tunneling = true;
+        u.tunnelX = ux;
+        u.tunnelY = uy;
         continue;
       }
-      if (second && e.role === 'main' && e.count === 1) {
-        this.summon(team, card.name, e.unit, 1, 0, 0, x, y, e);
-      } else if (e.role === 'second' && card.summon[0].count === 1) {
-        this.summon(team, card.name, e.unit, e.count, Math.max(500, e.radius >> 1), e.deployDelay, x, y, e);
-      } else if (second) {
-        // both groups share one circle: main first, then second
-        const total = card.summon.reduce((a, q) => a + q.count, 0);
-        const first = e.role === 'main' ? 0 : card.summon[0].count;
-        this.summon(team, card.name, e.unit, e.count, e.radius > 0 ? e.radius : 500, e.deployDelay, x, y, e, first, total);
-      } else {
-        this.summon(team, card.name, e.unit, e.count, e.radius, e.deployDelay, x, y, e);
+      let wait = 0;
+      if (deployMs > 0) {
+        const k = i - nCircle;
+        if (k >= 0 && sp.delayList.length >= 1 && sp.delayList[Math.min(k, sp.delayList.length - 1)] >= 1) {
+          wait = sp.delayList[Math.min(k, sp.delayList.length - 1)];
+        } else if (sp.deployDelay >= 1 && d0.kind === 'building') {
+          wait = sp.deployDelay;
+        } else if (i === 0 || sp.deployDelay < 1) {
+          if (sp.deployDelaySecond > 0 && sp.number <= i) wait = sp.deployDelaySecond + sp.deployDelaySecond * (i - sp.number);
+        } else {
+          wait = sp.deployDelay * i;
+        }
       }
+      this.createUnit(team, card.name, def, ux, uy, Math.round(wait / TICK_MS) + Math.round(deployMs / TICK_MS));
     }
+  }
+
+  /** Deploy-zone y range for summoned ground units (0xfa023c; A: own half plus destroyed-tower pockets). */
+  private summonZone(team: number, x: number, card: CardDef): [number, number] {
+    if (card.canDeployOnEnemySide || this.fixture) return [0, ARENA_H - 1];
+    const enemy = this.players[1 - team];
+    const left = x < ARENA_W / 2;
+    const tower = enemy.princess[left ? 0 : 1];
+    if (team === 0) return [0, tower.alive ? 14999 : 24999];
+    return [tower.alive ? 17000 : 7000, ARENA_H - 1];
   }
 
   /**
@@ -608,33 +718,6 @@ export class Battle {
       if (this.infiniteElixir) { p.elixir = this.maxElixir; continue; }
       p.elixir = Math.min(this.maxElixir, p.elixir + add);
     }
-  }
-
-  private fireSpellWaves(): void {
-    const waves = this.spellWaves;
-    if (waves.length === 0) return;
-    let w = 0;
-    for (let i = 0; i < waves.length; i++) {
-      const s = waves[i];
-      if (s.tick <= this.tick) this.castSpellProjectile(s.team, s.card, s.x, s.y);
-      else waves[w++] = s;
-    }
-    waves.length = w;
-  }
-
-  /**
-   * Spell projectiles fly from the caster's King tower to the target point (A: origin assumed).
-   * Damage radius is the card's Radius when set (Arrows 3500), else the projectile's (A).
-   */
-  private castSpellProjectile(team: number, card: CardDef, x: number, y: number): void {
-    const def = card.spellProjectile!;
-    const king = this.players[team].king;
-    const pr = new Projectile(this.nextProjId++, def, team, king.x, king.y, this.tick);
-    pr.tx = x;
-    pr.ty = y;
-    pr.spell = card.name;
-    if (card.spellRadius > 0) pr.radius = card.spellRadius;
-    this.projectiles.push(pr);
   }
 
   // ---------------------------------------------------------------- targeting & attack
@@ -1108,7 +1191,7 @@ export class Battle {
   /** Damage every enemy whose collision circle meets the area (A: edge overlap rule). */
   private areaDamage(team: number, x: number, y: number, radius: number, air: boolean, ground: boolean,
     damage: number, towerDamage: number, pct: number, pushback: number, pushAll: boolean,
-    buff: BuffDef | null = null, buffTime = 0, sourceId = -1): void {
+    buff: BuffDef | null = null, buffTime = 0, sourceId = -1, ignore: number[] | null = null): void {
     const units = this.units;
     for (let i = 0; i < units.length; i++) {
       const t = units[i];
@@ -1128,6 +1211,7 @@ export class Battle {
         if (d2 >= r * r) continue;
       }
       if (t.maxHp <= 0 || t.hidden || t.tunneling) continue;
+      if (ignore) { if (ignore.includes(t.id)) continue; ignore.push(t.id); }
       this.queueDamage(t, damage, towerDamage, pct);
       if (buff) this.applyBuff(t, buff, buffTime, sourceId);
       if (pushback > 0) this.applyPushback(t, x, y, pushback, pushAll); // World_areaDamage 0xf97be8
@@ -2116,7 +2200,10 @@ export class Battle {
     let w = 0;
     for (let i = 0; i < ps.length; i++) {
       const p = ps[i];
-      if (p.born !== this.tick) this.moveProjectile(p);
+      if (p.born !== this.tick) {
+        if (p.delay > 0) p.delay = Math.max(p.delay, 50) - 50; // start delay (0xf90708)
+        else this.moveProjectile(p);
+      }
       if (p.alive) ps[w++] = p;
     }
     ps.length = w;
@@ -2216,7 +2303,7 @@ export class Battle {
     this.releasePending(p);
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id });
     if (p.radius > 0) {
-      this.areaDamage(p.team, p.x, p.y, p.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, p.def.pushbackAll, p.def.targetBuff, p.def.buffTime, p.id);
+      this.areaDamage(p.team, p.x, p.y, p.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, p.def.pushbackAll, p.def.targetBuff, p.def.buffTime, p.id, p.group);
     } else if (p.target !== null) {
       this.queueDamage(p.target, p.damage, p.towerDamage, p.crownPct);
       if (p.def.targetBuff) this.applyBuff(p.target, p.def.targetBuff, p.def.buffTime, p.id);

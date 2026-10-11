@@ -5,12 +5,13 @@ import { addActive, newBattle } from './helpers.ts';
 
 const still = () => newBattle({ fixture: { width: 18000, height: 32000 } });
 
-test('Three Musketeers deploy at their card offsets (placement only; their attack sequences are not supported yet)', () => {
+test('Three Musketeers deploy at their card offsets, negated for team 0 (0xe7e8f8; attack sequences not supported yet)', () => {
   const b = newBattle();
   (b as unknown as { summonCard(t: number, c: unknown, x: number, y: number): void }).summonCard(0, b.defs.card('ThreeMusketeers', 11), 9500, 8500);
   b.run(1);
   const ms = b.units.filter((u) => u.card === 'ThreeMusketeers').map((u) => [u.x - 9500, u.y - 8500]);
-  assert.deepEqual(ms.sort(), [[-1000, 1000], [0, -1000], [1000, 1000]].sort());
+  // data offsets (0,-1000), (-1000,1000), (1000,1000) are authored for the top side: one in front
+  assert.deepEqual(ms.sort(), [[1000, -1000], [0, 1000], [-1000, -1000]].sort());
 });
 
 test('Goblin Gang: 3 stabbers + 3 spear goblins; Rascals: 1 boy + 2 girls', () => {

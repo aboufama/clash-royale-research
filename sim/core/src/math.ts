@@ -96,3 +96,27 @@ export class Hasher {
     return (this.h >>> 0).toString(16).padStart(8, '0');
   }
 }
+
+/**
+ * Native battle RNG 0x1294bb4 [STAT]: xorshift32 (13, arithmetic >> 17, 5); next(n) = |s| mod n
+ * (unsigned; 0x80000000 stays as is), 0 for n < 1. A zero state is replaced by 0xFFFFFFFF.
+ */
+export class NativeRng {
+  state: number;
+
+  constructor(seed: number) {
+    this.state = seed | 0;
+  }
+
+  next(n: number): number {
+    if (n < 1) return 0;
+    let s = this.state | 0;
+    if (s === 0) s = -1;
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    this.state = s;
+    const v = s < 0 ? (-s) >>> 0 : s;
+    return v % n;
+  }
+}

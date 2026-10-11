@@ -212,6 +212,9 @@ export interface UnitDef {
   deathSpawn: { unit: UnitDef; count: number; radius: number; deployTime: number } | null;
   /** Periodic spawner (Witch, Tombstone, huts). Times in ms. */
   spawn: { unit: UnitDef; number: number; pauseTime: number; interval: number; startTime: number; radius: number; angleShift: number } | null;
+  /** SpawnRadius / SpawnAngleShift (also read by the summon formation). */
+  spawnRadius: number;
+  spawnAngleShift: number;
   jumpEnabled: boolean;
   /** Hovering (crosses water in path costs, 0xf827c0). */
   hovering: boolean;
@@ -261,6 +264,24 @@ export interface SummonEntry {
   role: 'main' | 'second';
 }
 
+/** Native summon parameters (SpellData fields read by Deploy_summon 0xd423bc). */
+export interface SummonSpec {
+  /** SummonCharacter and SummonNumber (loaded as max(v,1)); the count is 0 without a SummonCharacter. */
+  main: UnitDef | null;
+  number: number;
+  second: UnitDef | null;
+  secondCount: number;
+  /** SummonCharactersList with SummonCharactersOffsetsX/Y and SummonCharactersDelayList. */
+  list: UnitDef[];
+  offsetsX: number[];
+  offsetsY: number[];
+  delayList: number[];
+  radius: number;
+  width: number;
+  deployDelay: number;
+  deployDelaySecond: number;
+}
+
 export interface CardDef {
   name: string;
   type: 'troop' | 'building' | 'spell';
@@ -268,6 +289,7 @@ export interface CardDef {
   cost: number; // elixir
   level: number;
   summon: SummonEntry[];
+  spec: SummonSpec;
   /** Spell projectile (Fireball, Arrows...) */
   spellProjectile: ProjectileDef | null;
   /** Offsets for characters spawned by the spell projectile (Goblin Barrel). */
@@ -277,6 +299,11 @@ export interface CardDef {
   areaEffect: AreaEffectDef | null;
   waves: number;
   waveInterval: number; // ms
+  /** MultipleProjectiles per wave, ProjectileInterval between them (ms), CustomFirstProjectile. */
+  multipleProjectiles: number;
+  projectileInterval: number;
+  firstProjectile: ProjectileDef | null;
+  spellAsDeploy: boolean;
   canDeployOnEnemySide: boolean;
   canPlaceOnWater: boolean;
   unsupported: string[];
@@ -527,6 +554,8 @@ export class Defs {
       };
     }
     const def: UnitDef = {
+      spawnRadius: num(r, 'SpawnRadius'),
+      spawnAngleShift: num(r, 'SpawnAngleShift'),
       name,
       kind: r._kind === 'building' ? 'building' : 'character',
       rarity,
@@ -669,6 +698,8 @@ export class Defs {
       deathAreaEffect: null,
       deathSpawn: null,
       spawn: null,
+      spawnRadius: 0,
+      spawnAngleShift: 0,
       jumpEnabled: false,
       hovering: false,
       flyDirectPaths: false,
@@ -759,6 +790,21 @@ export class Defs {
     if (spellProjectile?.targetBuff) unsupported.push(...spellProjectile.targetBuff.unsupported);
     const type = (r._type as CardDef['type']) ?? 'troop';
     if (!sc && !projName && !aeoName && !list) unsupported.push('no SummonCharacter/Projectile/AreaEffectObject');
+    const sc2u = sc2 ? summon.find((e) => e.role === 'second')!.unit : null;
+    const spec: SummonSpec = {
+      main: sc ? summon[0].unit : null,
+      number: Math.max(num(r, 'SummonNumber', 1), 1),
+      second: sc2u,
+      secondCount: sc2 ? num(r, 'SummonCharacterSecondCount') : 0,
+      list: list ? summon.filter((e) => e.offsets !== null || e.delays !== null).map((e) => e.unit) : [],
+      offsetsX: (r.SummonCharactersOffsetsX as number[] | undefined) ?? [],
+      offsetsY: (r.SummonCharactersOffsetsY as number[] | undefined) ?? [],
+      delayList: (r.SummonCharactersDelayList as number[] | undefined) ?? [],
+      radius: num(r, 'SummonRadius'),
+      width: num(r, 'SummonWidth'),
+      deployDelay: num(r, 'SummonDeployDelay'),
+      deployDelaySecond: num(r, 'SummonDeployDelaySecond'),
+    };
     const def: CardDef = {
       name,
       type,
@@ -766,12 +812,17 @@ export class Defs {
       cost: num(r, 'ManaCost'),
       level,
       summon,
+      spec,
       spellProjectile,
       spawnOffsets: spellProjectile?.spawnUnit ? offs() : null,
       spellRadius: num(r, 'Radius'),
       areaEffect,
       waves: num(r, 'ProjectileWaves', 1),
       waveInterval: num(r, 'ProjectileWaveInterval'),
+      multipleProjectiles: num(r, 'MultipleProjectiles', 1),
+      projectileInterval: num(r, 'ProjectileInterval'),
+      firstProjectile: str(r, 'CustomFirstProjectile') ? this.projectile(str(r, 'CustomFirstProjectile')!, level) : null,
+      spellAsDeploy: bool(r, 'SpellAsDeploy'),
       canDeployOnEnemySide: bool(r, 'CanDeployOnEnemySide'),
       canPlaceOnWater: bool(r, 'CanPlaceOnWater'),
       unsupported,

@@ -43,3 +43,29 @@ export function sin1e6(deg: number): number {
 export function cos1e6(deg: number): number {
   return SIN_1E6[(((deg + 90) % 360) + 360) % 360];
 }
+
+// Native integer trigonometry (libg 0x1294440 / 0x1295174) [STAT]: int16 table of
+// sin(deg)*1024 for 0..90 at libg 0x34335a (work/native/sin_table_1024.txt).
+const SIN_1024: readonly number[] = [
+  0, 18, 36, 54, 71, 89, 107, 125, 143, 160, 178, 195, 213, 230, 248, 265, 282, 299, 316, 333, 350, 367, 384, 400,
+  416, 433, 449, 465, 481, 496, 512, 527, 543, 558, 573, 587, 602, 616, 630, 644, 658, 672, 685, 698, 711, 724,
+  737, 749, 761, 773, 784, 796, 807, 818, 828, 839, 849, 859, 868, 878, 887, 896, 904, 912, 920, 928, 935, 943,
+  949, 956, 962, 968, 974, 979, 984, 989, 994, 998, 1002, 1005, 1008, 1011, 1014, 1016, 1018, 1020, 1022, 1023,
+  1023, 1024, 1024,
+];
+
+/** sin(deg) * 1024 exactly as 0x1294440: deg mod 360 (C remainder, then +360 if negative). */
+export function sin1024(deg: number): number {
+  let u = deg % 360;
+  if (u < 0) u += 360;
+  const a = u < 180 ? u : u - 180;
+  const i = a < 91 ? a : 180 - a;
+  return u < 180 ? SIN_1024[i] : -SIN_1024[i];
+}
+
+/** Rotate (x, y) by deg as 0x1295174: components (cos·x − sin·y)/1024, (sin·x + cos·y)/1024, truncated. */
+export function rotate1024(x: number, y: number, deg: number): [number, number] {
+  const c = sin1024(deg + 90);
+  const s = sin1024(deg);
+  return [Math.trunc((c * x - s * y) / 1024), Math.trunc((s * x + c * y) / 1024)];
+}
