@@ -3,6 +3,51 @@
 Newest first. Each entry gives the decision, why it was made, and what would
 change it.
 
+## 2026-10-11 — Follow the decompiled code literally, even where it surprises
+
+- **Decision:** where the decompiled libg code disagrees with community
+  knowledge or earlier approximations, the engine follows the code and records
+  the rule (with its address) in docs/FIDELITY.md. Examples now in the engine:
+  river tiles do not block walking units (path costs keep them off; deploying
+  ground units are blocked); attacks reset whenever a unit stops swinging;
+  area effects act from the tick after they are created; summon formations
+  and SummonCharactersOffsets are authored for the top side and negated for
+  team 0; knockback travels short of its nominal distance (unguarded −25
+  step); Arrows are 10 scattered arrows per wave sharing one hit list.
+- **Why:** the owner asked for byte-identical behaviour; the decompiled code is
+  the best available evidence, and each port that could be checked (A*: 12
+  native cases; attack and push: the 400-tick trace) matched exactly.
+- **Would change if:** a native trace contradicts a port (then the reading of
+  the code is wrong and gets fixed), or the owner's play-testing shows a
+  difference that a trace confirms.
+
+## 2026-10-11 — Native recovery and decompilation in the cloud (work/native)
+
+- **Decision:** the decrypted libg was rebuilt in the cloud with the public
+  recovery scripts and decompiled with headless Ghidra 12.1.4 under the
+  ignored `work/native/` (PORT_NOTES.md, `decomp/*.c`, `decompile.sh`). Nothing
+  from it is committed; the engine cites function addresses instead.
+- **Why:** the Mac-only artifacts are unreachable from the cloud, and porting
+  needs the code. The repository rules keep decoded material out of git.
+- **Would change if:** the owner wants the decompiler outputs versioned (they
+  would stay in this private repository only).
+
+## 2026-10-11 — Collision push: ported (supersedes the fitted rule)
+
+- **Decision:** the fitted push rule below was replaced by the decompiled
+  Movement_collidePush 0xfce900 and geometricStep 0xfcef48. The 400-tick native
+  trace now matches 539/539 positions exactly (the fit gave 508/539).
+
+## 2026-10-11 — Battle RNG: native algorithm, local seed
+
+- **Decision:** in-battle randomness (spell scatter) uses the native xorshift32
+  algorithm (0x1294bb4) seeded from the config seed; the deck shuffle keeps
+  its own generator.
+- **Why:** the native seed comes from the server and is not available; the
+  algorithm and the order of draws are what make the distribution right.
+- **Would change if:** a native match with a known seed is recorded; then the
+  seeding (0x1294b48) and every RNG call site must line up for a replay.
+
 ## 2026-10-11 — Owner: visuals indistinguishable, mechanics as exact as possible
 
 - **Decision:** the owner asked for visuals indistinguishable from the real
