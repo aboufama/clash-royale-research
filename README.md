@@ -34,7 +34,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Two fresh one-action diagnostics match all native/source receipts, with only six host timings differing; original prediction, queueing, delayed commit, debit and spawn repeat across 121 ticks. Original Android dlopen and strict reserved-address loading also repeat exactly, including twelve imports and native error paths. General battle control, game registration, complete state/reset and ordinary battle equivalence remain incomplete. |
+| Supporting native runtime | Partial | Two fresh124-tick diagnostics reproduce ordered external deployments for both owners, including native queueing, commits, elixir debits and live actors. Fifteen whole receipt files match; the sixteenth differs only in six host timings. Original Bionic initial-group TLS/preinit also repeats up to a preserved tagged-pointer fault. Full external matches, complete state/reset and ordinary-game exactness remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -43,7 +43,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **27** · **2026-10-11T12:17:13Z** · Independently reproduced the external troop deployment across two fresh 121-tick runs: thirteen whole receipt files match, with only six bootstrap host times differing in the fourteenth. Original dlopen and strict reserved-address loading also repeat byte-for-byte, including twelve relocations and negative paths. Complete state/reset, ordinary-game exactness and training remain gated.
+Review **28** · **2026-10-11T12:39:26Z** · Independently repeated ordered external deployments for both owners across124 original core ticks: fifteen receipt files match exactly, with only six host timings differing in the sixteenth. Original Bionic initial-group TLS and allocator entry also reproduce up to a preserved tagged-pointer fault. Full external episodes, complete state/reset and ordinary-game exactness remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -55,6 +55,19 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
+- **Both owners can now submit ordered external deployments** to the original
+  diagnostic engine. Inputs at frames 97 and 100 queue together, commit at
+  frames 117 and 120, spend elixir and create actors subsequently observed in
+  the live world. Two fresh 124-tick runs match fifteen whole receipt files;
+  the sixteenth differs only in six host initialization times. This is a
+  bounded action-control result, with full external matches and exactness still
+  pending. See [two-owner evidence](research/evidence/native-external-actions-two-owners.json).
+- **Original Bionic startup now passes initial-group TLS linking and enters
+  its allocator**. Original code reserves 8.25 GiB of inaccessible virtual space
+  and commits 512 KiB before an unresolved emulator tagged-address fault.
+  Independent complete reports match exactly, with 48 kernel-boundary controls.
+  The native constructor remains incomplete and the fault is preserved.
+  See [Bionic startup evidence](research/evidence/native-original-bionic-initial-group.json).
 - The **first externally submitted troop command repeats through original code**.
   Native prediction succeeds at frame 97; original queue timing commits it at
   frame 117, charges elixir and spawns an actor later observed in the live list.

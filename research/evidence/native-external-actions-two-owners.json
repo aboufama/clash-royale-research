@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "classification": "Independent repeated original-engine diagnostic with ordered external actions for both owners; not a full externally controlled match or exactness acceptance",
+  "build": "160402020",
+  "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+  "scenario": "Normal",
+  "seed": 1131,
+  "native_test_flags": 0,
+  "original_resource_inputs": 421,
+  "original_finalizer_returned": true,
+  "original_core_calls": 124,
+  "final_frame": 124,
+  "native_random_policy_entries": 0,
+  "preexecution_task_sources": 53,
+  "new_task_sources_during_execution": 0,
+  "frozen_source_pairs_verified_before_and_after": 80,
+  "adapter_and_controller_controls_passed": 29,
+  "offline_audit_controls_passed": 14,
+  "whole_comparison_controls_passed": 14,
+  "source_manifest_sha256": "29d4305c0bea662c97dbbb2437bd953c5994aac587e28086bd8668840c0b63cf",
+  "frozen_review_manifest_sha256": "f6a911737f7b6ec3c3746eb00a3dc0dd1e131ae55cd3668cd32a07f9f4424f1a",
+  "root_first_offline_audit_sha256": "de2590dae4bb6abe1531f2d057ad78538d30bf9bac957bf96815533c3ebaf036",
+  "root_repeat_offline_audit_sha256": "0363fe95ff87f96685bcdbe871415ae4c4031ad04f26538b37f60d082a010a90",
+  "actions": [
+    {
+      "submission_frame": 97,
+      "input": {
+        "owner": 1,
+        "slot": 1,
+        "x": 1241,
+        "y": 23316
+      },
+      "initial_prediction_result": 0,
+      "queue_count_before_after": [
+        0,
+        1
+      ],
+      "commit_frame": 117,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 80826,
+        "elixir_units_after": 60826,
+        "debit_accumulator_before": 0,
+        "debit_accumulator_after": 20000
+      },
+      "native_spawn_raw_coordinates": [
+        1499,
+        23499
+      ],
+      "host_coordinate_correction_performed": false,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_pointer_and_world_match": true,
+      "native_actor_id": 5000006,
+      "live_actor_count_before_after": [
+        6,
+        7
+      ]
+    },
+    {
+      "submission_frame": 100,
+      "input": {
+        "owner": 0,
+        "slot": 0,
+        "x": 12247,
+        "y": 17395
+      },
+      "initial_prediction_result": 0,
+      "queue_count_before_after": [
+        1,
+        2
+      ],
+      "commit_frame": 120,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 81360,
+        "elixir_units_after": 31360,
+        "debit_accumulator_before": 0,
+        "debit_accumulator_after": 50000
+      },
+      "native_spawn_raw_coordinates": [
+        12500,
+        14500
+      ],
+      "host_coordinate_correction_performed": false,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_pointer_and_world_match": true,
+      "native_actor_id": 5000007,
+      "live_actor_count_before_after": [
+        7,
+        8
+      ]
+    }
+  ],
+  "original_code_integrity_passed": true,
+  "native_guard_violations": 0,
+  "both_processes_closed_successfully": true,
+  "fresh_repeat": {
+    "root_comparison_sha256": "00af5f9eedc580a8999de42d328f781a9a517e031f87017b765ab1cfd14aace6",
+    "complete_files_compared": 16,
+    "whole_files_byte_identical": 15,
+    "host_elapsed_seconds_only_differences": 6,
+    "unexpected_differences": [],
+    "all_native_and_source_fields_match": true,
+    "files": [
+      {
+        "file": "native-events.json",
+        "first_sha256": "7404c6aa50d607bb2e47c4a01b3fa233b6f07ab50f0d44d3989cadd2093dee08",
+        "second_sha256": "7404c6aa50d607bb2e47c4a01b3fa233b6f07ab50f0d44d3989cadd2093dee08",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "native-hand-events.json",
+        "first_sha256": "072bf3716ed6c1508a78d035100810369f7bf447b85a82d5c6557f154ed86806",
+        "second_sha256": "072bf3716ed6c1508a78d035100810369f7bf447b85a82d5c6557f154ed86806",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "adapter-report.json",
+        "first_sha256": "bfcee5697d1d72608ab069b560dc54be623fba65df99b2ea9dc7d0793e0b7e99",
+        "second_sha256": "bfcee5697d1d72608ab069b560dc54be623fba65df99b2ea9dc7d0793e0b7e99",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "01-pre-core.json",
+        "first_sha256": "bd2e482459bd76be686afc36d9f210106cec01c207a89b8101cd99f5035e84ce",
+        "second_sha256": "bd2e482459bd76be686afc36d9f210106cec01c207a89b8101cd99f5035e84ce",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "02-submission.json",
+        "first_sha256": "51ec43b4d6ec5b0d3c07d8d53dd8375080747d0146e2c9981921322198673e53",
+        "second_sha256": "51ec43b4d6ec5b0d3c07d8d53dd8375080747d0146e2c9981921322198673e53",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "03-pre-core.json",
+        "first_sha256": "bcca9885ce04016cf9d2432dacd5e3dd622d6562c7f49f19c8e2d1d8f2a4ed79",
+        "second_sha256": "bcca9885ce04016cf9d2432dacd5e3dd622d6562c7f49f19c8e2d1d8f2a4ed79",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "04-submission.json",
+        "first_sha256": "794818a1ce866791590057b70731fd08660498ba4d278e4aad638f8a154684a2",
+        "second_sha256": "794818a1ce866791590057b70731fd08660498ba4d278e4aad638f8a154684a2",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "05-post-core.json",
+        "first_sha256": "e572b77003f1d549ba9b5b8fff2c4cf1f9d84d09f13321719ad4d422d1b54f2d",
+        "second_sha256": "e572b77003f1d549ba9b5b8fff2c4cf1f9d84d09f13321719ad4d422d1b54f2d",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "native-test-mode-read-events.json",
+        "first_sha256": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+        "second_sha256": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "report.json",
+        "first_sha256": "183bb096cb949f650852f207841ea664d34b0bfd807747342e8ba53e377e9c88",
+        "second_sha256": "183bb096cb949f650852f207841ea664d34b0bfd807747342e8ba53e377e9c88",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/test-setup/report-private.json",
+        "first_sha256": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+        "second_sha256": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "preexecution-source-closure/manifest.json",
+        "first_sha256": "29d4305c0bea662c97dbbb2437bd953c5994aac587e28086bd8668840c0b63cf",
+        "second_sha256": "29d4305c0bea662c97dbbb2437bd953c5994aac587e28086bd8668840c0b63cf",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/source-closure/manifest.json",
+        "first_sha256": "fcc10afc960b8eca940f7a5968a8486b1c59ed7922d0fa27ae1a01d77e4032c9",
+        "second_sha256": "fcc10afc960b8eca940f7a5968a8486b1c59ed7922d0fa27ae1a01d77e4032c9",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/report-private.json",
+        "first_sha256": "9c1d92fd3482d9a3b30dc7ff78bb2165f3cea9570ba7ec08191cc70346d6a329",
+        "second_sha256": "785568c7c481224c99547946fd086cface8bd46ddcd0cdf28ebf7b03b1939ef0",
+        "byte_identical": false,
+        "json_structurally_identical": false,
+        "differences": [
+          {
+            "path": [
+              "initialization_budget_batches",
+              0,
+              "elapsed_seconds"
+            ],
+            "first": 18.652,
+            "second": 17.877,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              1,
+              "elapsed_seconds"
+            ],
+            "first": 45.242,
+            "second": 43.208,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              2,
+              "elapsed_seconds"
+            ],
+            "first": 72.945,
+            "second": 69.663,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              3,
+              "elapsed_seconds"
+            ],
+            "first": 23.914,
+            "second": 23.101,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              4,
+              "elapsed_seconds"
+            ],
+            "first": 55.956,
+            "second": 53.818,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              5,
+              "elapsed_seconds"
+            ],
+            "first": 99.162,
+            "second": 95.359,
+            "allowed_host_elapsed_seconds": true
+          }
+        ]
+      },
+      {
+        "file": "terminal-source-closure/manifest.json",
+        "first_sha256": "af89e6d4091d22923205e2120ff3528a543a2d0d90733db07d813634155fb9b1",
+        "second_sha256": "af89e6d4091d22923205e2120ff3528a543a2d0d90733db07d813634155fb9b1",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/terminal-source-closure/manifest.json",
+        "first_sha256": "70cad851334864becf1d56d6e9dcf3f3df018ac89c24e040ee55fae89f2e0cd9",
+        "second_sha256": "70cad851334864becf1d56d6e9dcf3f3df018ac89c24e040ee55fae89f2e0cd9",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      }
+    ]
+  },
+  "byte_exact_gate_satisfied": false,
+  "limits": [
+    "The fixed two-action diagnostic ends after124 original core calls; it does not reach native match termination.",
+    "The action list replaces the built-in random-policy runner, changing RNG and scheduling history. No equality to that runner or ordinary client scheduling is assumed.",
+    "Original prediction and command creation may mutate state. Queue return alone is not evidence of placement; accepted actions are followed through commit, debit, spawn and later matching live insertion.",
+    "Command-to-debit-to-spawn parent links are observed. Later live insertion matches the native actor/world pointers; complete causal serialization is not established.",
+    "Original Normal test setup and modeled asset/platform boundaries remain. Complete state, reset, ordinary Android/server equivalence, throughput and training remain unvalidated."
+  ]
+}

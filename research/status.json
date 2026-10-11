@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 27,
-    "reviewed_at": "2026-10-11T12:17:13Z",
-    "summary": "Independently reproduced the external troop deployment across two fresh 121-tick runs: thirteen whole receipt files match, with only six bootstrap host times differing in the fourteenth. Original dlopen and strict reserved-address loading also repeat byte-for-byte, including twelve relocations and negative paths. Complete state/reset, ordinary-game exactness and training remain gated."
+    "sequence": 28,
+    "reviewed_at": "2026-10-11T12:39:26Z",
+    "summary": "Independently repeated ordered external deployments for both owners across124 original core ticks: fifteen receipt files match exactly, with only six host timings differing in the sixteenth. Original Bionic initial-group TLS and allocator entry also reproduce up to a preserved tagged-pointer fault. Full external episodes, complete state/reset and ordinary-game exactness remain unvalidated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Two fresh one-action diagnostics match all native/source receipts, with only six host timings differing; original prediction, queueing, delayed commit, debit and spawn repeat across 121 ticks. Original Android dlopen and strict reserved-address loading also repeat exactly, including twelve imports and native error paths. General battle control, game registration, complete state/reset and ordinary battle equivalence remain incomplete."
+        "Two fresh124-tick diagnostics reproduce ordered external deployments for both owners, including native queueing, commits, elixir debits and live actors. Fifteen whole receipt files match; the sixteenth differs only in six host timings. Original Bionic initial-group TLS/preinit also repeats up to a preserved tagged-pointer fault. Full external matches, complete state/reset and ordinary-game exactness remain incomplete."
       ]
     },
     {

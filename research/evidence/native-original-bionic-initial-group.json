@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "classification": "Independently reproduced original Bionic initial-group startup reaching a preserved tagged-address fault; initialization incomplete",
+  "report_sha256": "052a6c61ef8ee936a5983253880eb820b2c48c4ec494ec5cac152d3973c98d9c",
+  "whole_independent_reports_byte_identical": true,
+  "source_manifest_sha256": "f2ebdd85227c889f341b60e8a71434d72f23bffeaf0dacfddb94da476b2075dc",
+  "frozen_source_pairs_verified": 15,
+  "boundary_controls_passed": 48,
+  "sparse_ledger_controls_passed": 17,
+  "independent_sparse_overlap_controls_passed": 24,
+  "initial_dependency_root": "Original libstdc++.so supplied as the virtual main object",
+  "original_dependencies": [
+    "libc.so",
+    "libdl.so",
+    "ld-android.so"
+  ],
+  "original_static_tls_finalized": true,
+  "original_libc_local_initial_exec_tls_offset": "0x2fe8",
+  "original_libc_preinit_entered": true,
+  "original_libc_preinit_returned": false,
+  "native_sparse_reservation_bytes": 8858370048,
+  "materialized_bytes": 524288,
+  "native_commits": [
+    262144,
+    262144
+  ],
+  "native_instruction_and_pointer_rewrites": 0,
+  "terminal_fault": {
+    "original_libc_instruction_offset": "0x4af9c",
+    "access": "8-byte write through tagged address",
+    "unicorn_error": "UC_ERR_WRITE_UNMAPPED",
+    "preserved_without_recovery": true
+  },
+  "explicit_virtual_inputs": [
+    "Pinned original files and APEX Bionic search path",
+    "256 declared entropy bytes,48 consumed",
+    "CLOCK_MONOTONIC_COARSE timespec0,0",
+    "8-byte kernel CPU-affinity capacity with CPU0-only mask",
+    "Original signal39 handler registration with prior default action",
+    "Sparse inaccessible virtual reservation; backing only from original native commitment requests"
+  ],
+  "all_original_executable_bytes_unchanged": true,
+  "ordinary_android_startup_complete": false,
+  "game_registered": false,
+  "byte_exact_gate_satisfied": false,
+  "limits": [
+    "This is a diagnostic original dependency group with finite virtual kernel/process inputs, not observed device state.",
+    "The libc constructor has not returned. Its static-TLS success and earlier constructors_called bookkeeping must not be interpreted as completed runtime initialization.",
+    "CPU handling of tagged data addresses remains unresolved in this frozen checkpoint; no host pointer masking or native allocator changes were applied.",
+    "The libstdc++ main object may affect future global symbol bindings. Any later game integration must establish the actual intended symbol scope.",
+    "No complete Android namespace, app startup, game library registration or battle equivalence is established."
+  ]
+}

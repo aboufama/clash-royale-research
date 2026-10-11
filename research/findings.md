@@ -1162,3 +1162,47 @@ memory or establishes the game's dependency initialization. The [dynamic-loader
 record](evidence/native-original-dlopen.json) retains those limits. The next
 runtime step is original initial-group loading of real Bionic dependencies,
 preserving their TLS and constructor ordering.
+
+## Repeated external deployments for both owners
+
+Two fresh original Normal/1131 contexts each execute a fixed two-action list
+and 124 manual original core ticks. Owner 1, slot 1 is submitted at frame 97;
+owner 0, slot 0 follows at frame 100. Original prediction returns zero for both,
+and both coexist in the native queue. Original committed execution occurs at
+frames 117 and 120, debiting 20,000 and 50,000 internal elixir units. Each native
+spawn result is subsequently found in the same world's live actor list.
+
+The independently verified comparison covers sixteen entire receipt files.
+Fifteen match byte-for-byte; the sole remaining file differs only in six
+individually listed host initialization timings. All eighty frozen/live source
+pairs remain unchanged, original code checks pass, and no random-policy entry
+occurs. Both processes close successfully. The [two-owner evidence](evidence/native-external-actions-two-owners.json)
+preserves input coordinates separately from coordinates produced by original
+spawn logic, and distinguishes nested command/debit/spawn observations from
+later actor-pointer associations.
+
+This run does not reach native match termination. Manual core scheduling omits
+ordinary client timing, prediction reconciliation and runner result packaging.
+Original test initialization and modeled platform boundaries remain. Complete
+state, reset, ordinary-game equivalence and training acceptance remain open.
+
+## Original Bionic initial dependency group
+
+A separate diagnostic starts the original linker with unchanged `libstdc++.so`
+as its initial object. Original dependency loading admits Bionic before static
+TLS finalization; its local initial-exec TLS relocation now succeeds through
+original linker code. Original libc preinitialization enters its Scudo allocator.
+The allocator requests an 8.25 GiB inaccessible reservation and two 256 KiB
+commitments. A reviewed sparse virtual-memory ledger represents the reservation
+without allocating that amount of host memory; only native commitment calls
+create backing.
+
+Execution stops at an original eight-byte store through a tagged address.
+The native constructor has not returned. Root and independent complete reports
+match byte-for-byte, 48 dispatch controls pass, and all original executable bytes
+remain unchanged. No pointer is masked and the fault is not recovered. The
+[initial-group evidence](evidence/native-original-bionic-initial-group.json)
+records the explicit entropy, affinity, clock, signal and memory inputs.
+CPU tagged-address semantics remain unresolved in this frozen checkpoint.
+The diagnostic initial object's symbol scope also needs review before future
+game integration; successful TLS linking is not full Android startup.
