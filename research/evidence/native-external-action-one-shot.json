@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "classification": "First observed external-action deployment in a fresh original test context; independent fresh repetition pending",
+  "build": "160402020",
+  "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+  "scenario": "Normal",
+  "seed": 1131,
+  "native_test_flags": 0,
+  "original_resource_inputs": 421,
+  "original_finalizer_returned": true,
+  "source_manifest_sha256": "3e9b9a7017976f757b3c1612ad711e64028d06b69df82bb428295a8909cb75ed",
+  "terminal_source_manifest_sha256": "07c3e1abc9af95d28cfc91aa7675a3ba6d1f7c2d9f189a3929d7d1460549bce2",
+  "preexecution_task_sources": 52,
+  "task_sources_added_during_run": 0,
+  "frozen_review_files_verified_before_and_after": 76,
+  "asset_free_adapter_and_controller_controls_passed": 40,
+  "record_sha256": {
+    "report.json": "1a9ab2afe8fe78a9bd475a4abb88468e33ad278ceaa20d7c11e2c637339de7fb",
+    "adapter-report.json": "dcbb2bd4350ff3d30572572e788706abe07ff0c04c43f3de56536526f8032f9b",
+    "native-events.json": "dbae88e030435e35a7335feb8ef5165c19e3448a1b7a76aba7cf8e31b9909139",
+    "native-hand-events.json": "cac90c17599bb85bc6fbecd0f39de0e74eacb7b5d038e9c2c7ebcd5aab711a7e",
+    "01-pre-core.json": "bd2e482459bd76be686afc36d9f210106cec01c207a89b8101cd99f5035e84ce",
+    "02-submission.json": "096b0e14058fd622bb8e56c59db182cbf2815af94506f70c9396813aec331d9f",
+    "03-post-core.json": "6bd5455a028dc500ef5419b8347d71999294b248eb52900ca4f3a02821fa1400",
+    "native-test-mode-read-events.json": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+    "bootstrap/report-private.json": "30c4316346d7f3e7eacbf157b9ede1624d7b681a3d5c2992fcfafcc7f9336404"
+  },
+  "root_offline_review_sha256": "79c7de5dde9e03c4675f536f35fc38dae71043493f33c4031c33fb449b7c9502",
+  "independent_offline_review_sha256": "c641348fc92d1233a8b942ae744dacc77b373fb067f5ca187be34c991a1a048f",
+  "external_input": {
+    "owner_index": 1,
+    "hand_slot": 1,
+    "raw_coordinates": [
+      1241,
+      23316
+    ],
+    "submission_frame": 97
+  },
+  "original_command_path": "Actual native owner/account/hand lookup, descriptor builder, command factory and setters, then original runner bridge once. No host-built descriptor, direct committed execution, repeated legality search or native policy switch.",
+  "manual_original_core_steps": 121,
+  "native_policy_entry_watch_hits": 0,
+  "prediction_native_result": 0,
+  "primary_queue_count_before_after": [
+    0,
+    1
+  ],
+  "commit_native_flags": 2,
+  "commit_native_result": 0,
+  "commit_frame": 117,
+  "observed_native_delay_frames": 20,
+  "native_elixir_units_before_after": [
+    80826,
+    60826
+  ],
+  "native_debit_accumulator_before_after": [
+    0,
+    20000
+  ],
+  "native_spawn_raw_coordinate_arguments": [
+    1499,
+    23499
+  ],
+  "native_command_coordinates_preserved": [
+    1241,
+    23316
+  ],
+  "host_coordinate_correction_performed": false,
+  "observed_command_debit_spawn_parent_chain": true,
+  "later_live_insertion_matches_spawned_actor_pointer_and_world": true,
+  "live_actor_count_before_after": [
+    6,
+    7
+  ],
+  "actor_occurrences_before_after": [
+    0,
+    1
+  ],
+  "main_observer_events": 9,
+  "all_observed_events_returned": true,
+  "observer_pending_or_error": false,
+  "original_game_and_cpp_and_bionic_code_integrity_passed": true,
+  "native_guard_violations": 0,
+  "process_closed_successfully": true,
+  "independent_fresh_run_reproduced": false,
+  "byte_exact_gate_satisfied": false,
+  "limits": [
+    "This is one 121-tick diagnostic with one intended action, not a full externally controlled match or general action API.",
+    "A previous built-in action supplies coordinate/slot provenance only. Omitting the random-policy runner changes RNG and scheduling history; parity with that battle is not assumed.",
+    "Original Normal test initialization and explicitly modeled asset/platform boundaries remain. Ordinary Android/client/server initialization is not reproduced.",
+    "Manual original core stepping omits runner secondary comparison, statistics/result packaging and production timed prediction/checksum/network reconciliation.",
+    "Command-to-debit-to-spawn nesting is observed; later live insertion is an exact actor/world pointer association, not proof of all causality or complete state.",
+    "No reset, complete per-tick state, general rejection corpus, throughput qualification or training acceptance is established."
+  ]
+}

@@ -1081,3 +1081,49 @@ with no memory or interrupt violation. The terminated source guest is never
 resumed, and its memory and 71 recorded registers remain unchanged. Both complete
 lookup reports match exactly. The [linker evidence](evidence/native-original-linker-startup.json)
 records the finite-file, separate-guest and unrelocated-target limits.
+
+
+A subsequent normal-loader probe supplies the unchanged 34,664-byte Android
+`libdl_android.so`. Original code creates its library record and resolves all
+eight JUMP_SLOT imports against the original special linker dependency. Each
+write is observed at an original linker instruction and every resulting pointer
+matches the original export. Both complete reports match byte-for-byte; 33
+boundary controls pass, and linker and target executable bytes remain unchanged.
+Original late startup migrates the main thread's TLS and unmaps its temporary
+TLS allocation, then returns to the harness before executing any target code.
+
+The target is a DSO with unchanged entry zero and no initializers. This verifies
+loader acceptance and dependency relocation, not execution as an application or
+loading of the game. Unsupported tagged-address control, finite signal-mask
+operations, noreserve mappings and all earlier virtual-kernel inputs remain
+explicit. The game requires a fresh original-ELF loading path; the recovered flat
+image already contains relocations and must not be silently treated as raw ELF.
+
+
+## First externally submitted native deployment
+
+A fresh original Normal/1131 context now receives one fixed external hand-slot
+and position choice after 97 manually scheduled original core ticks. The native
+hand lookup, descriptor builder, factory, setters and original submission bridge
+run without fabricated gameplay fields. Original prediction returns zero, and
+the observed queue count changes from zero to one. The original random-policy
+entry watch remains empty throughout setup and the action window.
+
+At frame 117, the same command returns zero from committed execution. Its nested
+debit call consumes 20,000 native elixir units and invokes native character spawn.
+The returned actor pointer later gains live membership in the same world, changing
+its live count from six to seven. Original command coordinates remain [1241,23316];
+native debit/spawn arguments are [1499,23499], with no host correction. All 121
+core calls advance one frame and the run closes without an error.
+
+Both observers have no pending calls or errors. Original game, shipped C++ and
+Bionic code checks pass; all 52 preloaded task sources remain unchanged, with
+no added task source. The 76-file review archive matches before and after the
+run. Forty host/observer controls and two separate offline record reviews pass.
+An independent fresh repetition is still pending. The [one-action evidence](evidence/native-external-action-one-shot.json)
+preserves the exact hashes and finite scope.
+
+This is a diagnostic action/step milestone. It does not establish a general legal
+action API, normal client scheduling, reset, complete state, or a full externally
+controlled battle. The context is still the built-in test configuration under
+modeled platform inputs; ordinary-game byte equivalence and training remain gated.

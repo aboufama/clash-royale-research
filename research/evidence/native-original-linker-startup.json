@@ -109,5 +109,32 @@
     "memory_or_interrupt_violations": 0,
     "original_terminal_guest_resumed": false,
     "scope": "A separate analysis guest copies retained original mappings, preserves execute permissions and adds a private writable stack. Original lookup recognizes target entry and final PT_LOAD byte; rejects outside boundaries, unmapped addresses, the self-linker special node and previous game handle. This is a lookup fixture, not a complete or resumable game snapshot."
+  },
+  "subsequent_original_dependency_relocation": {
+    "independent_report_sha256": "8e0976f4f50b27187bd8e47e10c1a0553c3d09601d72989cc3aac7a3669648ed",
+    "whole_independent_report_byte_identical": true,
+    "frozen_source_manifest_sha256": "61605f2cfedb0f4102b193d2227825fda0f4445849f766c6947e9c2ab49837f0",
+    "checkpoint_files_verified_before_and_after": 12,
+    "finite_platform_controls_passed": 33,
+    "target_name": "libdl_android.so",
+    "target_bytes": 34664,
+    "target_sha256": "c007614917439e9e4f6a357d7990367ae797f8c6a50a026467a43248efdb1cdd",
+    "target_needed": [
+      "ld-android.so"
+    ],
+    "native_JUMP_SLOT_stores_observed": 8,
+    "all_target_relocations_match_original_linker_exports": true,
+    "all_target_relocation_writes_from_original_linker_instructions": true,
+    "target_program_headers_and_executable_bytes_match_original": true,
+    "running_linker_executable_bytes_unchanged": true,
+    "original_linker_initializer_returns": 17,
+    "native_linker_initialization_returned": true,
+    "native_exit_requested": false,
+    "native_main_thread_TLS_migrated_and_temporary_mapping_released": true,
+    "target_instructions_executed": 0,
+    "original_target_entry": 0,
+    "target_has_DT_INIT_or_init_array": false,
+    "scope": "The original loader accepts the unchanged DSO as a virtual main program, resolves its sole native dependency and returns before target entry. Entry zero is not a runnable application; no game loading or normal Android startup completion is claimed.",
+    "additional_explicit_kernel_boundary": "Unsupported ARM64 tagged-address ABI returns raw EINVAL, which original startup handles. Original signal-mask block/unblock/restore and noreserve PROT_NONE mappings are modeled. Original temporary-TLS unmap applies after native thread-pointer migration. No signals are delivered; prior finite virtual filesystem/process/entropy limits remain."
   }
 }

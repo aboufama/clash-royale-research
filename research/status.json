@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 25,
-    "reviewed_at": "2026-10-11T11:49:30Z",
-    "summary": "Independently repeated original linker --list mapping and native-created library records, 26 finite-platform controls, and seven original membership queries in a separate protected guest. All reports match exactly. Target remains unrelocated; game registration, external-action integration, complete state/reset and ordinary-match equivalence remain open."
+    "sequence": 26,
+    "reviewed_at": "2026-10-11T12:03:13Z",
+    "summary": "Recorded the first external native troop command: prediction at frame97, original delayed commit at117, debit, spawn and later live insertion; 121 core ticks return with unchanged code/source pins. Independent fresh repetition remains pending. Independently reproduced original Android DSO loading and all eight native symbol relocations. Ordinary-match equivalence, complete state/reset and training remain gated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Repeated diagnostic health/position streams match across 905 samples. Original Android linker initialization, a finite-file --list mapping and seven native library-membership cases independently reproduce exact reports. The mapped target remains unrelocated; game library registration, ordinary Android startup and battle equivalence remain incomplete."
+        "One fixed external action passes original prediction, queueing, delayed commit, debit and spawn in 121 manual core ticks; fresh repetition remains pending. Original linker maps a genuine Android DSO and resolves its eight imports with byte-identical independent reports. Normal game registration, complete state/reset and ordinary battle equivalence remain incomplete."
       ]
     },
     {
