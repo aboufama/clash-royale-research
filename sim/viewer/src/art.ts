@@ -215,7 +215,9 @@ export class ArtWorld implements WorldRenderer {
         if (u.kingState === KING_ACTIVATING) act = (66 - u.kingTicks) * 50 + f.alpha * 50;
         else if (u.kingState !== KING_INACTIVE) act = 3300 + sim;
         const aim = u.target && u.kingState !== KING_INACTIVE ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
-        items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, act, aim, dead) });
+        const face: [number, number] = [u.dirX, u.dirY];
+        const since = u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9;
+        items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, act, aim, dead, face, since) });
       } else {
         const side = u.x < 9000 ? 'princessLeft' : 'princessRight';
         const atk = this.attackPhase(u, f);
@@ -248,7 +250,8 @@ export class ArtWorld implements WorldRenderer {
       const py = ypx(x, y) + (flying ? 2000 : 0);
       const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: (b.tick - q.startTick) * 50 + f.alpha * 50 })) : undefined;
       const flashMs = b.tick - u.lastHurtTick < 10 ? (b.tick - u.lastHurtTick) * 50 + f.alpha * 50 : undefined;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, flashMs, sprite: this.sprites.get(u.id) ?? undefined };
+      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, flashMs, sprite: this.sprites.get(u.id) ?? undefined,
+        face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9 };
       if (u.def.hides) {
         // Tesla: closed while hidden, rising for UpTimeMs, then up
         if (u.hidden && u.upMs > 0) { o.state = 'appear'; o.stateMs = u.upMs + f.alpha * 50; } else o.state = u.hidden ? 'hidden' : 'up';
@@ -329,6 +332,9 @@ export class ArtWorld implements WorldRenderer {
         walk: u.walkMs, walkPrev: f.prevWalk.get(u.id) ?? u.walkMs,
         atk: u.atkTimer, atkPrev: f.prevAtk.get(u.id) ?? u.atkTimer, finish: u.finishMs,
         alpha: f.alpha, dt, clock: sim / 1000, flip: this.art.flip,
+        // the tower princess swings on the Princess tower's attack timer (A: the attached actor's own
+        // attack component is not modelled)
+        hitSpeed: u.tower === TOWER_PRINCESS ? u.def.hitSpeed : undefined,
       }));
     }
     for (const id of this.anims.keys()) if (!seen.has(id)) this.anims.delete(id);

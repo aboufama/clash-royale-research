@@ -210,7 +210,7 @@ export interface TowerArt {
   positions: { king: [number, number]; princessLeft: [number, number]; princessRight: [number, number] };
   king: {
     sc: string; blue: string; red: string; frames: number; fps: number; labels: Record<string, string>;
-    turretChild: string; kingChild: string; turretFrames: number;
+    turretChild: string; kingChild: string; turretFrames: number; turretMovement?: number;
     destroyed: string; // rubble export (drawn by drawKingTower(destroyed)); destroyedLayer: 'Base' | 'Ground'
     destroyedLayer?: string;
     king: { sc: string; blue: string; red: string; frames: number; fps: number };

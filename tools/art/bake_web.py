@@ -885,7 +885,7 @@ class Baker:
              "destroyed": "kingtower_destroyed", "scale": king.get("Scale", 100),
              "attachedHeight": king.get("AttachedCharacterHeight"), "projectileStartZ": king.get("ProjectileStartZ"),
              "healthBar": king.get("HealthBar"), "healthBarOffsetYBlue": king.get("HealthBarOffsetYBlue"),
-             "healthBarOffsetYRed": king.get("HealthBarOffsetYRed"),
+             "healthBarOffsetYRed": king.get("HealthBarOffsetYRed"), "turretMovement": king.get("TurretMovement"),
              "shadow": {s: king.get(f"Shadow{s}") for s in ("ScaleX", "ScaleY", "Skew", "X", "Y")}}
         self.want(bt, king["RedExportName"])
         self.want("sc/chr_king.sc", "King_red")

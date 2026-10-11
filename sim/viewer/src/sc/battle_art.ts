@@ -16,6 +16,7 @@ import type { DrawOptions } from './renderer.ts';
 import { ScRenderer } from './renderer.ts';
 import type { EffectPlayer } from './effects.ts';
 import { projectileSprite, turretFrame, unitSprite } from './units.ts';
+import { turretPose, viewAngle as nativeViewAngle } from './anim.ts';
 import type { ActionName, UnitSprite } from './units.ts';
 
 export type Team = 0 | 1;
@@ -39,6 +40,9 @@ export interface UnitDrawOptions {
   stateMs?: number;
   /** export + frame + mirror chosen by the client's view update (sc/anim.ts); overrides action/angle */
   sprite?: { export: string; frame: number; mirror: boolean };
+  /** facing vector (actor +0xf8/+0xfc) for turrets, and seconds since the last attack (recoil) */
+  face?: [number, number];
+  sinceAttackS?: number;
 }
 
 export interface AreaEffectHandle {
@@ -233,7 +237,8 @@ export class BattleArt {
       let frame = labels.idle ?? 0;
       if (activationMs !== undefined) frame = Math.min(stop, start + Math.floor((activationMs * k.fps) / 1000));
       const named: DrawOptions['named'] = { [k.kingChild]: { hide: true } };
-      named[k.turretChild] = { frame: team === 0 ? 0 : k.turretFrames - 1 };
+      named[k.turretChild] = this.turretOverride(k.turretFrames, k.turretMovement ?? 0, undefined,
+        angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2));
       r.draw(lib, exp, frame, m, WHITE, { childFrame: Math.floor((timeMs * k.fps) / 1000), named });
       return;
     }
@@ -250,6 +255,15 @@ export class BattleArt {
     }
   }
 
+  /** Named override for a `turret` child (FUN_008455cc): frame, mirror and recoil offset. */
+  turretOverride(n: number, turretMovement: number, face: [number, number] | undefined, aim: number,
+    sinceAttackS = 1e9): NonNullable<DrawOptions['named']>[string] {
+    const a = face ? nativeViewAngle(face[0], face[1], this.flip)
+      : nativeViewAngle(Math.round(Math.cos(aim) * 256), Math.round(Math.sin(aim) * 256), this.flip);
+    const p = turretPose(a, n, turretMovement, sinceAttackS);
+    return { frame: p.frame, matrix: [p.sign, 0, 0, 1, p.ox, p.oy] };
+  }
+
   // -- towers ----------------------------------------------------------------------------------
 
   towerPos(kind: 'king' | 'princessLeft' | 'princessRight', team: Team): [number, number] {
@@ -263,7 +277,7 @@ export class BattleArt {
    * aim: turret angle (engine convention) once active.
    */
   drawKingTower(r: ScRenderer, team: Team, timeMs: number, activationMs?: number, aim?: number,
-    destroyed = false): void {
+    destroyed = false, face?: [number, number], sinceAttackS?: number): void {
     const t = this.manifest.towers.king;
     const [x, y] = this.towerPos('king', team);
     const [px, py] = this.gameToPx(x, y);
@@ -278,15 +292,12 @@ export class BattleArt {
     let frame = labels.idle ?? 0;
     if (activationMs !== undefined) frame = Math.min(stop, start + Math.floor((activationMs * t.fps) / 1000));
     const clock = Math.floor((timeMs * t.fps) / 1000);
-    const tf = turretFrame(this.viewAngle(aim ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), t.turretFrames);
     const named: DrawOptions['named'] = {
       [t.kingChild]: { lib: this.lib(t.king.sc), export: team === 0 ? t.king.blue : t.king.red, frame, childFrame: clock },
+      // HasRotationOnTimeline: the turret follows the facing every frame (FUN_008455cc)
+      [t.turretChild]: this.turretOverride(t.turretFrames, t.turretMovement ?? 0, face,
+        aim ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2), sinceAttackS),
     };
-    if (activationMs !== undefined && frame >= stop) {
-      named[t.turretChild] = { frame: tf.frame, matrix: tf.mirror ? [-1, 0, 0, 1, 0, 0] : undefined };
-    } else {
-      named[t.turretChild] = { frame: team === 0 ? 0 : t.turretFrames - 1 };
-    }
     r.draw(lib, exp, frame, [1, 0, 0, 1, px, py], WHITE, { childFrame: clock, named });
   }
 
@@ -454,9 +465,10 @@ export class BattleArt {
     let done = false;
     const named: DrawOptions['named'] = {};
     if (clip.turretChild) {
-      const tf = turretFrame(this.viewAngle(o.aim ?? defAim), clip.turretFrames ?? clip.frames);
-      frame = clip.frames === (clip.turretFrames ?? clip.frames) ? tf.frame : 0;
-      named[clip.turretChild] = { frame: tf.frame, matrix: tf.mirror ? [-1, 0, 0, 1, 0, 0] : undefined };
+      const ov = this.turretOverride(clip.turretFrames ?? clip.frames, art.turretMovement ?? 0, o.face,
+        o.aim ?? defAim, o.sinceAttackS);
+      frame = clip.frames === (clip.turretFrames ?? clip.frames) ? ov.frame ?? 0 : 0;
+      named[clip.turretChild] = ov;
     } else if (o.state) {
       let st = o.state;
       if (st === 'up' && labels.appear_end !== undefined) st = 'appear_end';

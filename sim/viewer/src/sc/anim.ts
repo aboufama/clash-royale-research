@@ -143,6 +143,8 @@ export interface AnimInput {
   dt: number;
   clock: number;
   flip: boolean;
+  /** HitSpeed of the actor whose attack timer drives the swing (default: the character's data) */
+  hitSpeed?: number;
 }
 
 export interface AnimFrame {
@@ -239,7 +241,7 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
     }
     const extra = i.finish > 0 ? t(i.alpha * 50) + i.finish : 0;
     if (af >= 0) {
-      const f = attackFrame(!!art.animationsKeepLastFrame, false, art.hitSpeed ?? 1000, time, a.frames, clipMs, af, extra);
+      const f = attackFrame(!!art.animationsKeepLastFrame, false, i.hitSpeed ?? art.hitSpeed ?? 1000, time, a.frames, clipMs, af, extra);
       frame = f.frame;
       if (s.finishing && f.frame === 0) s.finishing = false;
     }
@@ -284,4 +286,24 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   frame %= a.frames;
   if (frame < 0) frame += a.frames;
   return { export: `${a.export}_${dir.idx + 1}`, frame, mirror: dir.sign < 0, action: slot, key };
+}
+
+/**
+ * FUN_008455cc turret (HasRotationOnTimeline buildings: King tower, Cannon, X-Bow): the `turret`
+ * child's frame and mirror for view angle `a` over its n frames, and the TurretMovement recoil
+ * offset k = TM / (TM * s + 1) px along the aim, s = seconds since the last attack (view +0x330,
+ * reset by the attack callback 0x846ab4).
+ */
+export function turretPose(a: number, n: number, turretMovement: number, sinceAttackS: number): {
+  frame: number; sign: number; ox: number; oy: number;
+} {
+  const q = n * 4 - 4;
+  const u = t((q * a) / 360);
+  const right = u <= q >> 1 || n * 4 - 5 <= u;
+  const v = right ? u : q + ~u;
+  let frame = (v + 1) >> 1;
+  if (n <= frame) frame = 0;
+  const k = turretMovement / (turretMovement * sinceAttackS + 1);
+  const rad = a * 0.017453294;
+  return { frame, sign: right ? 1 : -1, ox: -(Math.sin(rad) * k), oy: k * Math.cos(rad) };
 }
