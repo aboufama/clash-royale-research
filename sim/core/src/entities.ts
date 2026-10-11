@@ -80,6 +80,14 @@ export class Unit {
   /** Ticks active and HP already lost to building lifetime decay. */
   lifeTicks: number;
   decayed: number;
+  /** Spawner: ms until the next group, members left in the current group, ms to the next member. */
+  spawnTimer: number;
+  spawnLeft: number;
+  spawnSub: number;
+  spawnIndex: number;
+  /** Charge: distance travelled uninterrupted, charging flag. */
+  chargeDist: number;
+  charging: boolean;
 
   constructor(id: number, def: UnitDef, card: string, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -121,6 +129,13 @@ export class Unit {
     this.buffs = [];
     this.lifeTicks = 0;
     this.decayed = 0;
+    const sp = def.spawn;
+    this.spawnTimer = sp ? (sp.startTime >= 0 ? sp.startTime : sp.pauseTime) : 0;
+    this.spawnLeft = 0;
+    this.spawnSub = 0;
+    this.spawnIndex = 0;
+    this.chargeDist = 0;
+    this.charging = false;
   }
 
   get alive(): boolean {

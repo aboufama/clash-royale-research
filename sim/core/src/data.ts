@@ -173,6 +173,16 @@ export interface UnitDef {
   kamikaze: boolean;
   lifeTime: number;
   deathAreaEffect: AreaEffectDef | null;
+  deathSpawn: { unit: UnitDef; count: number; radius: number; deployTime: number } | null;
+  /** Periodic spawner (Witch, Tombstone, huts). Times in ms. */
+  spawn: { unit: UnitDef; number: number; pauseTime: number; interval: number; startTime: number; radius: number; angleShift: number } | null;
+  jumpEnabled: boolean;
+  jumpSpeed: number;
+  /** Charge: distance (A: data value x10 game units) of uninterrupted travel, speed %, first-hit damage. */
+  chargeRange: number;
+  chargeSpeedMul: number;
+  damageSpecial: number;
+  manaOnDeathForOpponent: number;
   /** Mechanics this definition uses that the engine does not implement yet. */
   unsupported: string[];
 }
@@ -206,8 +216,13 @@ const UNIT_FIELDS_OK = new Set([
   'StopMovementAfterMS', 'WaitMS', 'AttackFinishTime', 'OverrideAttackFinishTime', 'TryToFinishAttackAnimation',
   'TryToFinishAttackAnimationBeforeNextAttack', 'AttackDashTime', 'SpawnAngleShift', 'IsBuilding', 'Ability',
   'ClonedVersion', 'IgnoreBuff', 'IgnoreResurrect', 'IgnoreClone', 'CustomSpawnFilter', 'LifeTime',
-  'DeathAreaEffect',
+  'DeathAreaEffect', 'DeathSpawnCharacter', 'DeathSpawnCount', 'DeathSpawnRadius', 'DeathSpawnDeployTime',
+  'DeathSpawnPushback', 'SpawnCharacter', 'SpawnNumber', 'SpawnPauseTime', 'SpawnInterval', 'SpawnStartTime',
+  'ShieldHitpoints', 'JumpEnabled', 'JumpHeight', 'JumpSpeed', 'ChargeRange', 'ChargeSpeedMultiplier', 'DamageSpecial',
+  'AttackShakeTime', 'ManaOnDeathForOpponent',
 ]);
+/** Starting actions known to be cosmetic or covered by native rules (no gameplay change needed). */
+const IGNORABLE_ACTIONS = new Set(['JumpHack_Check_Jump_Interval']);
 const PROJECTILE_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Speed', 'Damage', 'Radius', 'Homing', 'AoeToAir', 'AoeToGround', 'OnlyEnemies', 'Gravity',
   'CrownTowerDamagePercent', 'DeflectBehaviour', 'DeflectRadius', 'Pushback', 'PushbackAll', 'DamageScalingMode',
@@ -369,7 +384,11 @@ export class Defs {
     const rarity = str(r, 'Rarity');
     const projName = str(r, 'Projectile');
     const unsupported: string[] = [];
-    for (const k of Object.keys(r)) if (!UNIT_FIELDS_OK.has(k)) unsupported.push(k);
+    for (const k of Object.keys(r)) {
+      if (UNIT_FIELDS_OK.has(k)) continue;
+      if (k === 'OnStartingAction' && IGNORABLE_ACTIONS.has(r[k] as string)) continue;
+      unsupported.push(k);
+    }
     let projectile: ProjectileDef | null = null;
     if (projName) {
       projectile = this.projectile(projName, level);
@@ -382,6 +401,28 @@ export class Defs {
     const dae = str(r, 'DeathAreaEffect');
     const deathAreaEffect = dae ? this.areaEffect(dae, level) : null;
     if (deathAreaEffect) unsupported.push(...deathAreaEffect.unsupported);
+    const dsc = str(r, 'DeathSpawnCharacter');
+    let deathSpawn: UnitDef['deathSpawn'] = null;
+    if (dsc) {
+      const unit = this.unit(dsc, level);
+      unsupported.push(...unit.unsupported.map((x) => `${dsc}.${x}`));
+      deathSpawn = { unit, count: num(r, 'DeathSpawnCount', 1), radius: num(r, 'DeathSpawnRadius'), deployTime: num(r, 'DeathSpawnDeployTime', -1) };
+    }
+    const spc = str(r, 'SpawnCharacter');
+    let spawn: UnitDef['spawn'] = null;
+    if (spc) {
+      const unit = this.unit(spc, level);
+      unsupported.push(...unit.unsupported.map((x) => `${spc}.${x}`));
+      spawn = {
+        unit,
+        number: num(r, 'SpawnNumber', 1),
+        pauseTime: num(r, 'SpawnPauseTime'),
+        interval: num(r, 'SpawnInterval'),
+        startTime: num(r, 'SpawnStartTime', -1),
+        radius: num(r, 'SpawnRadius'),
+        angleShift: num(r, 'SpawnAngleShift'),
+      };
+    }
     const def: UnitDef = {
       name,
       kind: r._kind === 'building' ? 'building' : 'character',
@@ -415,6 +456,14 @@ export class Defs {
       kamikaze: bool(r, 'Kamikaze'),
       lifeTime: num(r, 'LifeTime'),
       deathAreaEffect,
+      deathSpawn,
+      spawn,
+      jumpEnabled: bool(r, 'JumpEnabled'),
+      jumpSpeed: num(r, 'JumpSpeed'),
+      chargeRange: num(r, 'ChargeRange') * 10,
+      chargeSpeedMul: num(r, 'ChargeSpeedMultiplier'),
+      damageSpecial: scaleStat(this.data, num(r, 'DamageSpecial'), level, rarity),
+      manaOnDeathForOpponent: num(r, 'ManaOnDeathForOpponent'),
       unsupported,
     };
     this.unitCache.set(key, def);
@@ -481,6 +530,14 @@ export class Defs {
       kamikaze: false,
       lifeTime: 0,
       deathAreaEffect: null,
+      deathSpawn: null,
+      spawn: null,
+      jumpEnabled: false,
+      jumpSpeed: 0,
+      chargeRange: 0,
+      chargeSpeedMul: 0,
+      damageSpecial: 0,
+      manaOnDeathForOpponent: 0,
       unsupported: [],
     };
     this.unitCache.set(key, def);

@@ -401,14 +401,96 @@ export class Battle {
         uy = clamp(uy, 0, ARENA_H - 1);
         if (!def.flyingHeight && !this.arena.walkableAt(ux, uy)) { ux = x; uy = y; }
       }
-      const u = new Unit(this.nextId++, def, card, team, ux, uy, this.tick + 1);
-      const ticks = Math.round(def.deployTime / TICK_MS) + Math.round((i * delayMs) / TICK_MS);
-      u.deployTicks = ticks;
-      u.deployTotal = ticks;
-      this.newUnits.push(u);
-      if (u.isBuilding) this.arena.setOcclusion(team, ux, uy, u.radius, true);
-      if (this.recordEvents) this.events.push({ tick: this.tick, type: 'spawn', team, x: ux, y: uy, name: def.name, id: u.id });
+      this.createUnit(team, card, def, ux, uy, Math.round(def.deployTime / TICK_MS) + Math.round((i * delayMs) / TICK_MS));
     }
+  }
+
+  /** Create an actor; it joins the live list at the end of this tick. */
+  private createUnit(team: number, card: string, def: UnitDef, x: number, y: number, deployTicks: number): Unit {
+    const u = new Unit(this.nextId++, def, card, team, x, y, this.tick + 1);
+    u.deployTicks = deployTicks;
+    u.deployTotal = deployTicks;
+    this.newUnits.push(u);
+    if (u.isBuilding) this.arena.setOcclusion(team, x, y, u.radius, true);
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'spawn', team, x, y, name: def.name, id: u.id });
+    return u;
+  }
+
+  /** Point on a circle around (x, y); team 1 mirrored. Falls back to the centre if not standable. */
+  private ringPos(team: number, x: number, y: number, r: number, deg: number, air: boolean): [number, number] {
+    const s = team === 0 ? 1 : -1;
+    let px = clamp(x + s * idiv(cos1e6(deg) * r, 1000000), 0, this.boundW - 1);
+    let py = clamp(y + s * idiv(sin1e6(deg) * r, 1000000), 0, this.boundH - 1);
+    if (!air && !this.fixture && !this.arena.walkableAt(px, py)) { px = x; py = y; }
+    return [px, py];
+  }
+
+  /**
+   * Death spawns: DeathSpawnCount units on a circle of DeathSpawnRadius (centre for one),
+   * deploying for DeathSpawnDeployTime or their own DeployTime (D; positions A).
+   */
+  private deathSpawn(t: Unit): void {
+    const ds = t.def.deathSpawn!;
+    const ticks = Math.round((ds.deployTime >= 0 ? ds.deployTime : ds.unit.deployTime) / TICK_MS);
+    for (let i = 0; i < ds.count; i++) {
+      const [x, y] = ds.count > 1 && ds.radius > 0
+        ? this.ringPos(t.team, t.x, t.y, ds.radius, 180 + Math.floor((i * 360) / ds.count), ds.unit.flyingHeight > 0)
+        : [t.x, t.y];
+      this.createUnit(t.team, t.card, ds.unit, x, y, ticks);
+    }
+  }
+
+  /**
+   * Spawners (Witch, Night Witch, Tombstone, huts): a group of SpawnNumber every SpawnPauseTime,
+   * the first after SpawnStartTime (else SpawnPauseTime), members SpawnInterval apart; timers run
+   * at the SpawnSpeedMultiplier rate (D). Placement: on a circle of SpawnRadius starting in front
+   * (+SpawnAngleShift), or in front of a building (A).
+   */
+  private updateSpawner(u: Unit): void {
+    const sp = u.def.spawn!;
+    const dt = this.spawnDelta(u);
+    if (dt <= 0) return;
+    u.spawnTimer -= dt;
+    if (u.spawnTimer <= 0) {
+      u.spawnTimer += sp.pauseTime > 0 ? sp.pauseTime : 1000;
+      u.spawnLeft = sp.number;
+      u.spawnSub = 0;
+      u.spawnIndex = 0;
+    }
+    if (u.spawnLeft > 0) {
+      u.spawnSub -= dt;
+      while (u.spawnLeft > 0 && u.spawnSub <= 0) {
+        this.spawnMember(u, sp, u.spawnIndex++);
+        u.spawnLeft--;
+        if (sp.interval > 0) u.spawnSub += sp.interval;
+      }
+    }
+  }
+
+  private spawnMember(u: Unit, sp: NonNullable<UnitDef['spawn']>, index: number): void {
+    let x = u.x;
+    let y = u.y;
+    const air = sp.unit.flyingHeight > 0;
+    if (sp.radius > 0) {
+      [x, y] = this.ringPos(u.team, u.x, u.y, sp.radius, 90 + sp.angleShift + Math.floor((index * 360) / Math.max(1, sp.number)), air);
+    } else if (u.isBuilding) {
+      const off = u.radius + sp.unit.collisionRadius;
+      const side = sp.number > 1 ? ((index % 3) - 1) * sp.unit.collisionRadius : 0;
+      [x, y] = [clamp(u.x + side, 0, this.boundW - 1), clamp(u.y + (u.team === 0 ? off : -off), 0, this.boundH - 1)];
+      if (!air && !this.fixture && !this.arena.walkableAt(x, y)) { x = u.x; y = u.y; }
+    }
+    this.createUnit(u.team, u.card, sp.unit, x, y, Math.round(sp.unit.deployTime / TICK_MS));
+  }
+
+  private spawnDelta(u: Unit): number {
+    if (u.buffs.length === 0) return TICK_MS;
+    let haste = 100;
+    let slow = 0;
+    for (const b of u.buffs) {
+      const m = b.def.spawnSpeedMul;
+      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+    }
+    return idiv(idiv(TICK_MS * haste, 100) * clamp(100 + slow, 0, 100), 100);
   }
 
   private regenElixir(): void {
@@ -597,10 +679,12 @@ export class Battle {
     } else if (d.areaDamageRadius > 0) {
       const cx = d.selfAsAoeCenter ? u.x : t.x;
       const cy = d.selfAsAoeCenter ? u.y : t.y;
-      this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, d.damage, -1, d.crownTowerDamagePercent, 0, false);
+      const dmg = u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
+      this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, dmg, -1, d.crownTowerDamagePercent, 0, false);
     } else {
-      this.queueDamage(t, d.damage, -1, d.crownTowerDamagePercent);
+      this.queueDamage(t, u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage, -1, d.crownTowerDamagePercent);
     }
+    if (u.charging || u.chargeDist > 0) { u.charging = false; u.chargeDist = 0; }
     if (d.kamikaze) {
       u.hp = 0;
       u.state = ST_DEAD;
@@ -684,13 +768,16 @@ export class Battle {
       if (--u.kingTicks <= 0) u.kingState = KING_ACTIVE;
       return;
     }
+    if (u.def.spawn) this.updateSpawner(u);
     if (u.isBuilding) {
       if (u.def.lifeTime > 0) this.decay(u);
       return;
     }
     if (u.pushTicks > 0) this.applyPush(u);
+    const wasMoving = u.moving;
     u.moving = false;
     if (!u.locked && u.target !== null && u.def.speed > 0) this.moveToward(u, u.target);
+    if (u.def.chargeRange > 0 && !u.moving && wasMoving && !u.locked) { u.chargeDist = 0; u.charging = false; }
     this.separate(u);
   }
 
@@ -742,6 +829,10 @@ export class Battle {
     if (mx !== 0 || my !== 0) this.tryMove(u, mx, my);
   }
 
+  private jumpable(x: number, y: number): boolean {
+    return x >= 0 && y >= 0 && x < ARENA_W && y < ARENA_H && this.arena.isWaterAt(x, y);
+  }
+
   /**
    * Building lifetime: HP decays linearly so the building expires after LifeTime ms of being
    * active (D: LifeTime; A: linear integer schedule).
@@ -781,7 +872,7 @@ export class Battle {
       const cell = Arena.cellOf(u.x, u.y);
       const goal = Arena.cellOf(t.x, t.y);
       if (u.pathGoal !== goal || u.pathVersion !== this.arena.version) {
-        u.path = this.arena.findPath(cell, goal, u.team, false);
+        u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
         u.pathIdx = 0;
         u.pathGoal = goal;
         u.pathVersion = this.arena.version;
@@ -796,7 +887,7 @@ export class Battle {
         const ux = Math.floor(u.x / CELL);
         const uy = Math.floor(u.y / CELL);
         if (Math.abs(cx - ux) > 1 || Math.abs(cy - uy) > 1) {
-          u.path = this.arena.findPath(cell, goal, u.team, false);
+          u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
           u.pathIdx = 0;
           if (u.path.length === 0) return;
         }
@@ -809,8 +900,11 @@ export class Battle {
     const dy = gy - u.y;
     const d = isqrt(dx * dx + dy * dy);
     if (d === 0) return;
-    const sp = this.moveSpeed(u);
+    let sp = this.moveSpeed(u);
     if (sp <= 0) return;
+    // River jump: JumpSpeed while over water (A); charge: speed x ChargeSpeedMultiplier (D).
+    if (u.def.jumpEnabled && u.def.jumpSpeed > sp && this.arena.isWaterAt(u.x, u.y)) sp = u.def.jumpSpeed;
+    if (u.charging) sp = idiv(sp * u.def.chargeSpeedMul, 100);
     const step = sp < d ? sp : d;
     const mx = idiv(dx * step, d);
     const my = idiv(dy * step, d);
@@ -818,6 +912,10 @@ export class Battle {
       u.dirX = mx;
       u.dirY = my;
       u.moving = this.tryMove(u, mx, my);
+      if (u.moving && u.def.chargeRange > 0 && !u.charging) {
+        u.chargeDist += step;
+        if (u.chargeDist >= u.def.chargeRange) u.charging = true;
+      }
     }
   }
 
@@ -825,7 +923,7 @@ export class Battle {
   private tryMove(u: Unit, mx: number, my: number): boolean {
     const nx = clamp(u.x + mx, 0, this.boundW - 1);
     const ny = clamp(u.y + my, 0, this.boundH - 1);
-    if (u.isAir || this.fixture || this.arena.walkableAt(nx, ny)) {
+    if (u.isAir || this.fixture || this.arena.walkableAt(nx, ny) || (u.def.jumpEnabled && this.jumpable(nx, ny))) {
       u.x = nx;
       u.y = ny;
       return true;
@@ -860,6 +958,8 @@ export class Battle {
       u.atkTimer = 0;
       u.locked = false;
       u.target = null;
+      u.charging = false;
+      u.chargeDist = 0;
     }
   }
 
@@ -1056,6 +1156,12 @@ export class Battle {
     if (this.recordEvents) this.events.push({ tick: this.tick, type: t.tower ? 'tower' : 'death', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id });
     if (t.isBuilding) this.arena.setOcclusion(t.team, t.x, t.y, t.radius, false);
     if (t.def.deathAreaEffect) this.spawnAreaEffect(t.team, t.def.deathAreaEffect, t.x, t.y);
+    if (t.def.deathSpawn) this.deathSpawn(t);
+    if (t.def.manaOnDeathForOpponent > 0 && !this.fixture) {
+      // ManaOnDeathForOpponent read as elixir x1000 (A)
+      const p = this.players[1 - t.team];
+      p.elixir = Math.min(this.maxElixir, p.elixir + t.def.manaOnDeathForOpponent * 10);
+    }
     if (t.tower !== TOWER_NONE) {
       const owner = this.players[t.team];
       const other = this.players[1 - t.team];
@@ -1128,6 +1234,8 @@ export class Battle {
       h.add(u.id); h.add(u.x); h.add(u.y); h.add(u.hp); h.add(u.shield); h.add(u.state);
       h.add(u.deployTicks); h.add(u.atkTimer); h.add(u.atkDelay); h.add(u.target ? u.target.id : -1);
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.pushTicks);
+      h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.chargeDist); h.add(u.charging ? 1 : 0);
+      h.add(u.lifeTicks); h.add(u.decayed);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }
     for (const a of this.areaEffects) { h.add(a.id); h.add(a.age); h.add(a.nextHit); }

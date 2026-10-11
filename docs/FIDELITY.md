@@ -66,7 +66,13 @@ Engine: `sim/core` (TypeScript, 20 Hz, integer game units). Tests: `cd sim && np
 | Spells | Rage (bottle + area) | D | RageBottle lands (DeployTime 500), expires, spawns the Rage AEO and RageDamage | – | |
 | Buildings | Lifetime decay | D/A | LifeTime from data (D); linear integer HP decay while active (A) | – | |
 | Buildings | Minimum range (Mortar) | D | MinimumRange excluded from targeting and range checks | – | |
-| Special | Charge, dash, jump, spawners, death spawn, chain, evolutions, champions | – | Planned for M4 | | |
+| Special | Death spawns | D/A | DeathSpawnCharacter/Count/Radius/DeployTime (D); positions on a circle starting left (A); death bombs (Balloon, Giant Skeleton) are 0-HP buildings that land after DeployTime and explode via DeathAreaEffect (D) | – | |
+| Special | Spawners (Witch, Night Witch, Tombstone, huts) | D/A | SpawnNumber/PauseTime/Interval/StartTime, SpawnSpeedMultiplier from buffs (D); first group after SpawnStartTime else SpawnPauseTime, placement on a SpawnRadius circle from the front or in front of buildings (A) | – | |
+| Special | Shields (Guards, Dark Prince) | D | ShieldHitpoints scaled; absorbs first, excess lost | brief §6 | |
+| Special | River jump (Hog, Prince, Royal Hogs…) | A | JumpEnabled units may path through water (water cost 7) at JumpSpeed over water; jump arc, targetability during the jump not modelled | – | |
+| Special | Charge (Prince, Dark Prince, Battle Ram) | D/A | ChargeSpeedMultiplier, DamageSpecial (D); ChargeRange read as data × 10 game units (A); reset by stopping without a target or by stun (A) | – | |
+| Special | Elixir to opponent on death | A | ManaOnDeathForOpponent read as elixir × 1000 | – | |
+| Special | Dash, chain, piercing projectiles, evolutions, champions, scripted actions | – | Planned | | |
 | Scaling | Level and rarity scaling | D | floor(base × M[L−1−rel]/100), towers from tower scaling | Known L11 values ✓ | |
 
 ## Rendering (viewer)
