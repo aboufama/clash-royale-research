@@ -1,0 +1,18 @@
+{
+  "name": "cr-sim",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic Clash Royale battle simulator (build 160402020): engine, viewer, bench",
+  "scripts": {
+    "test": "node --test core/test/*.test.ts",
+    "typecheck": "tsc -p .",
+    "bench": "node bench/bench.ts",
+    "build": "esbuild viewer/src/main.ts --bundle --format=esm --sourcemap --outfile=viewer/dist/main.js",
+    "dev": "esbuild viewer/src/main.ts --bundle --format=esm --sourcemap --outfile=viewer/dist/main.js --servedir=viewer --serve=0.0.0.0:8080"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "0.25.10",
+    "typescript": "5.9.3"
+  }
+}
