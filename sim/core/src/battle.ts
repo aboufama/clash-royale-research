@@ -17,7 +17,7 @@ import {
   type SummonEntry, type Timeline, type UnitDef,
 } from './data.ts';
 import {
-  AreaEffect, type BattleEvent, BuffInst, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, ST_ACTIVE, ST_DEAD,
+  AreaEffect, type BattleEvent, BuffInst, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, type SpellGroup, ST_ACTIVE, ST_DEAD,
   ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS, Unit,
 } from './entities.ts';
 import { clamp, Hasher, idiv, isqrt, NativeRng, Rng } from './math.ts';
@@ -96,6 +96,12 @@ export class Battle {
   readonly laneSeqDeploy: boolean;
   readonly avoidBuildings: boolean;
   readonly flyingNoWater: boolean;
+  /** LOGIC_PENDING_DAMAGE_IGNORE_IF_DURATION_LESS (600), CURRENT_TARGET_IGNORES_PENDING_DAMAGE, PROTECTION_CAP_PERCENTAGE. */
+  readonly pendingIgnoreMs: number;
+  readonly currentIgnoresPending: boolean;
+  readonly protectionCap: number;
+  /** LOGIC_SYMMETRICAL_DEPLOY_SNAP (0xf9e16c). */
+  readonly symmetricSnap: boolean;
 
   tick = 0;
   units: Unit[] = [];
@@ -117,7 +123,15 @@ export class Battle {
   private dmgAmount: number[] = [];
   private dmgTower: number[] = [];
   private dmgPct: number[] = [];
+  /** Damage key (event +8), buff applied when the damage lands (0xfd09ac) with its time and source id. */
+  private dmgKey: number[] = [];
+  private dmgBuff: (BuffDef | null)[] = [];
+  private dmgBuffTime: number[] = [];
+  private dmgSrc: number[] = [];
   private dmgN = 0;
+  /** Projectile damage-key counter (ctx +800). */
+  private nextKey = 0;
+  private scratch3: Unit[] = [];
   private scratch: Unit[] = [];
   private scratch2: Unit[] = [];
   readonly grid: SpatialGrid;
@@ -145,6 +159,10 @@ export class Battle {
     this.laneSeqDeploy = G.LOGIC_LANE_ID_BASED_DEPLOY_SEQUENCE !== false;
     this.avoidBuildings = G.KS_POS_TO_TARGET_GROUND_AVOID_BUILDINGS !== false;
     this.flyingNoWater = G.KS_POS_TO_TARGET_FLYING_NO_WATER !== false;
+    this.pendingIgnoreMs = typeof G.LOGIC_PENDING_DAMAGE_IGNORE_IF_DURATION_LESS === 'number' ? G.LOGIC_PENDING_DAMAGE_IGNORE_IF_DURATION_LESS : 0;
+    this.currentIgnoresPending = G.CURRENT_TARGET_IGNORES_PENDING_DAMAGE === true;
+    this.protectionCap = typeof G.PROTECTION_CAP_PERCENTAGE === 'number' ? G.PROTECTION_CAP_PERCENTAGE : 100;
+    this.symmetricSnap = G.LOGIC_SYMMETRICAL_DEPLOY_SNAP === true;
 
     const mk = (team: number): Player => {
       const deckNames = cfg.decks[team];
@@ -245,49 +263,193 @@ export class Battle {
   }
 
   /**
-   * Snap/clamp a requested troop position the way the native command does [OBS]:
-   * team 0 snaps to tile centres 1000k+500 and clamps y <= 14500; team 1 snaps in the
-   * mirrored frame (17999-x, 31999-y), i.e. to 1000k+499, and clamps y >= 17499
-   * (LOGIC_SYMMETRICAL_DEPLOY_SNAP). Pocket areas after a Princess tower falls (A).
+   * Deploy position check 0xf9e16c [STAT], run by the play command when it commits (0xd77504):
+   * the input is clamped to the arena and snapped to the card's tile grid (0xde0838: 1000k+500 for
+   * troops and spells, tile corners for even-sized buildings); then rings of 1000-unit steps around
+   * it (up to 30) are searched for positions whose whole footprint (1 tile, TileSize for buildings)
+   * lies on deployable tiles of the zone map (0xfa2c0c) and on cells passing 0xe8b6b4 (no water
+   * unless CanPlaceOnWater, no no-deploy/building cells unless CanPlaceOnBuildings), inside the
+   * DeployWTileMargin columns; the nearest by dist2 to the clamped input wins (first found on
+   * ties), the first ring with a valid position ends the search. With LOGIC_SYMMETRICAL_DEPLOY_SNAP
+   * a ground non-building troop is moved 1 left when the input x is in the left half and 1 down for
+   * team 1 (1000k+499). Returns null when nothing valid is found (the command fails).
    */
-  snapDeploy(team: number, x: number, y: number, card: CardDef): { x: number; y: number } {
-    let mx = team === 0 ? x : ARENA_W - 1 - x;
-    let my = team === 0 ? y : ARENA_H - 1 - y;
-    mx = clamp(mx, 0, ARENA_W - 1);
-    my = clamp(my, 0, ARENA_H - 1);
-    mx = Math.floor(mx / 1000) * 1000 + 500;
-    my = Math.floor(my / 1000) * 1000 + 500;
-    const enemy = this.players[1 - team];
-    let maxY = 14500;
-    // Pocket (A): with the enemy Princess tower on that side destroyed, the zone extends into
-    // that half of the enemy side up to y 25000 (mirrored frame). Community knowledge, unverified.
-    if (card.type !== 'spell' && !this.fixture) {
-      const sideLeft = mx < 9000;
-      // In the mirrored frame of team 1, "left" is the enemy's right tower.
-      const tower = team === 0 ? enemy.princess[sideLeft ? 0 : 1] : enemy.princess[sideLeft ? 1 : 0];
-      if (!tower.alive) maxY = 24500;
+  deployPlace(team: number, card: CardDef, x: number, y: number): { x: number; y: number } | null {
+    const A = this.arena;
+    const xMax = A.w * CELL - 1;
+    const yMax = A.h * CELL - 1;
+    const xi = x < 1 ? 0 : x >= xMax ? xMax : x;
+    const yi = y < 1 ? 0 : y >= yMax ? yMax : y;
+    if (this.fixture) return { x: trunc(xi / 1000) * 1000 + 500, y: trunc(yi / 1000) * 1000 + 500 };
+    // bVar12: not a SpellAsDeploy card with a projectile or area effect
+    const plain = !(card.spellAsDeploy && (card.spellProjectile !== null || card.areaEffect !== null));
+    const W = A.w >> 1;
+    const H = A.h >> 1;
+    const arr = this.zoneMap(team, card.canDeployOnEnemySide, card.canPlaceOnBuildings);
+    // the deploying character (summon index 0, else the spell projectile's SpawnCharacter)
+    let d: UnitDef | null = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
+    if (d === null && card.spellProjectile !== null) d = card.spellProjectile.spawnUnit;
+    let foot = 1;
+    let sx = trunc(xi / 1000) * 1000 + 500;
+    let sy = trunc(yi / 1000) * 1000 + 500;
+    if (d !== null) {
+      if (d.spawnPathfindMorph !== null) d = d.spawnPathfindMorph; // 0xde06d0
+      if (plain) {
+        if (d.kind === 'building') foot = this.tileSize(d);
+        sx = this.snapCoord(d, xi);
+        sy = this.snapCoord(d, yi);
+      }
     }
-    // Cards that may be placed anywhere (Miner, Goblin Drill) skip the zone clamp (D: CanDeployOnEnemySide).
-    if (card.canDeployOnEnemySide) maxY = ARENA_H - 1;
-    if (my > maxY) my = maxY;
-    mx = clamp(mx, 250, ARENA_W - 250);
-    my = clamp(my, 250, ARENA_H - 250);
-    return team === 0 ? { x: mx, y: my } : { x: ARENA_W - 1 - mx, y: ARENA_H - 1 - my };
+    const margin = card.deployWTileMargin;
+    const flags = A.flags;
+    const water = card.canPlaceOnWater;
+    const onBuildings = card.canPlaceOnBuildings;
+    const cellOk = (cx: number, cy: number): boolean => {
+      const v = flags[cx + A.w * cy];
+      return (v & F_WATER) === 0 ? (v & (F_BLOCKED | F_OCCLUDER)) === 0 || onBuildings : water;
+    };
+    let best = 0x7fffffff;
+    let bx = 0;
+    let by = 0;
+    let maxRing = 30;
+    for (let r = 0; ; r++) {
+      const n = r === 0 ? 1 : 2 * r;
+      for (let j = 0; j < n; j++) {
+        for (let q = 0; q < 4; q++) {
+          if (r === 0 && q > 0) break;
+          let a = -r;
+          let b = j - r;
+          if (q & 1) { a = r - j; b = -r; }
+          const cx = sx + (q < 2 ? b : -b) * 1000;
+          const cy = sy + (q < 2 ? a : -a) * 1000;
+          const top = cy - foot * 500;
+          const c0 = trunc((cx - foot * 500) / 1000);
+          const c1 = trunc((cx + foot * 500) / 1000);
+          const r0 = trunc(top / 1000);
+          const r1 = trunc((cy + foot * 500) / 1000);
+          let ok = true;
+          for (let c = c0; c < c1 && ok; c++) {
+            if (r0 >= r1) continue;
+            if (c < margin || c >= W - margin || top < -999) { ok = false; break; }
+            for (let row = r0; row < r1; row++) {
+              if (row >= H || arr[row * W + c] === 0 || !cellOk(2 * c, 2 * row) || !cellOk(2 * c + 1, 2 * row)
+                || !cellOk(2 * c, 2 * row + 1) || !cellOk(2 * c + 1, 2 * row + 1)) { ok = false; break; }
+            }
+          }
+          if (!ok) continue;
+          const ex = cx - xi;
+          const ey = cy - yi;
+          const d2 = ex * ex + ey * ey;
+          if (d2 < best) { best = d2; bx = cx; by = cy; maxRing = 0; }
+        }
+      }
+      if (maxRing <= r) break;
+    }
+    if (best === 0x7fffffff) return null;
+    if (d !== null && this.symmetricSnap && !(d.flyingHeight > 0) && d.kind !== 'building' && d.spawnPathfindSpeed === 0) {
+      if (xi < A.w * 250) bx -= 1;
+      by -= team & 1;
+    }
+    return { x: bx, y: by };
   }
 
-  /** Whether a (snapped) troop position is free of blocked tiles and towers (UI rule, A). */
-  deployPositionOk(team: number, x: number, y: number, card: CardDef): boolean {
-    if (card.type === 'spell') return x >= 0 && y >= 0 && x < ARENA_W && y < ARENA_H;
-    if (!this.arena.walkableAt(x, y)) return false;
-    const r = card.summon[0]?.unit.collisionRadius ?? 500;
-    for (const u of this.units) {
-      if (!u.isBuilding || !u.alive) continue;
-      const dx = u.x - x;
-      const dy = u.y - y;
-      const rr = u.radius + r;
-      if (dx * dx + dy * dy < rr * rr) return false;
+  /** TileSize 0xde07ec [STAT]: TileSizeOverride, else (CollisionRadius + 499)/500 + 1 tiles. */
+  private tileSize(d: UnitDef): number {
+    return d.tileSizeOverride > 0 ? d.tileSizeOverride : trunc((d.collisionRadius + 499) / 500) + 1;
+  }
+
+  /** 0xde0838 [STAT]: tile centre for troops and odd-sized buildings, tile corner for even sizes. */
+  private snapCoord(d: UnitDef, v: number): number {
+    const base = trunc(v / 1000) * 1000;
+    if (d.kind !== 'building') return base + 500;
+    return this.tileSize(d) & 1 ? base + 500 : base;
+  }
+
+  private zoneArr = new Uint8Array(0);
+
+  /**
+   * Deploy-zone map 0xfa2c0c [STAT] on 1000-unit tiles (18 x 32), 1 = deployable, for a card of
+   * `team` (normal mode: no touchdown, DeployStartY/EndY unset, FullLaneDeploy unsupported). Every
+   * live building (or IsSummoner actor) stamps 0 over a rectangle around it: an enemy one with
+   * NoDeploySizeW > 0 (the crown towers) its NoDeploySizeW x NoDeploySizeH tiles unless the card
+   * CanDeployOnEnemySide, any other its TileSize footprint. With CanPlaceOnBuildings only the enemy
+   * crown towers stamp (their no-deploy area), and not at all with CanDeployOnEnemySide. A fallen
+   * Princess tower stops stamping, which opens the pocket.
+   */
+  private zoneMap(team: number, enemySideOk: boolean, onBuildings: boolean): Uint8Array {
+    const W = this.arena.w >> 1;
+    const H = this.arena.h >> 1;
+    if (this.zoneArr.length !== W * H) this.zoneArr = new Uint8Array(W * H);
+    const arr = this.zoneArr;
+    arr.fill(1);
+    const units = this.units;
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i];
+      if (a.state === ST_DEAD) continue;
+      const d = a.def;
+      if (!a.isBuilding && !d.isSummoner) continue;
+      const enemy = a.team !== team;
+      let w = 0;
+      let h = 0;
+      if (!onBuildings) {
+        if (enemy && d.noDeployW > 0 && !enemySideOk) { w = d.noDeployW; h = d.noDeployH; }
+        else { w = this.tileSize(d); h = w; }
+      } else {
+        if (enemySideOk || !enemy || !(d.isSummoner || a.tower === TOWER_PRINCESS)) continue;
+        w = d.noDeployW;
+        h = d.noDeployH;
+      }
+      if (w === 0) continue;
+      const r0 = trunc((a.y - h * 500) / 1000);
+      const r1 = trunc((a.y + h * 500) / 1000);
+      const c0 = trunc((a.x - w * 500) / 1000);
+      const c1 = trunc((a.x + w * 500) / 1000);
+      for (let r = r0 < 0 ? 0 : r0; r < r1 && r < H; r++) {
+        for (let c = c0 < 0 ? 0 : c0; c < c1 && c < W; c++) arr[r * W + c] = 0;
+      }
     }
-    return true;
+    return arr;
+  }
+
+  /**
+   * Deploy-zone y range for a summon at column x, 0xfa023c [STAT] (Tower_castSpell passes it to
+   * Deploy_summon, which clamps ground members' y into it): over the zone map's tiles in the
+   * column, team 0 spans [1000·row, 1000·row + 500], team 1 [1000·row + 500 − 1, 1000·row]; no
+   * clamp when nothing is deployable or the span reaches 16000 (e.g. a pocket lane).
+   */
+  private summonZone(team: number, x: number, card: CardDef): [number, number] {
+    const NONE: [number, number] = [-0x80000000, 0x7fffffff];
+    if (this.fixture) return NONE;
+    const W = this.arena.w >> 1;
+    const H = this.arena.h >> 1;
+    const arr = this.zoneMap(team, card.canDeployOnEnemySide, false);
+    const col = trunc(x / 500) >> 1;
+    let lo = 0x7fffffff;
+    let hi = -0x80000000;
+    let found = false;
+    const odd = team & 1;
+    for (let r = 0; r < H; r++) {
+      if (col >= 0 && col < W && arr[r * W + col] !== 0) {
+        const mn = r * 1000 + (odd ? 500 : 0);
+        const mx = r * 1000 + (odd ? 0 : 500);
+        if (mn < lo) lo = mn;
+        if (mx > hi) hi = mx;
+        found = true;
+      }
+    }
+    if (odd) lo -= 1;
+    if (!found || hi - lo >= this.arena.h * 250) return NONE;
+    return [lo, hi];
+  }
+
+  /** Snapped deploy position (viewer preview): deployPlace, or the clamped input if none is valid. */
+  snapDeploy(team: number, x: number, y: number, card: CardDef): { x: number; y: number } {
+    return this.deployPlace(team, card, x, y) ?? { x: clamp(x, 0, ARENA_W - 1), y: clamp(y, 0, ARENA_H - 1) };
+  }
+
+  /** Whether the native deploy check finds a position for a play at (x, y). */
+  deployPositionOk(team: number, x: number, y: number, card: CardDef): boolean {
+    return this.deployPlace(team, card, x, y) !== null;
   }
 
   /** Validate a hand play without side effects. Returns the snapped position or an error. */
@@ -299,9 +461,8 @@ export class Battle {
     const card = p.deck[p.hand[slot]];
     if (card.unsupported.length) return 'unsupported';
     if (!this.infiniteElixir && p.elixir - p.pending < card.cost * ELIXIR_ONE) return 'elixir';
-    const pos = card.type === 'spell' ? { x: clamp(x, 0, ARENA_W - 1), y: clamp(y, 0, ARENA_H - 1) } : this.snapDeploy(team, x, y, card);
-    if (!this.deployPositionOk(team, pos.x, pos.y, card)) return 'position';
-    return pos;
+    // client-side prediction of the commit-time check (0xf9e16c)
+    return this.deployPlace(team, card, x, y) ?? 'position';
   }
 
   /** Play the card in hand slot `slot` at (x, y). It commits 20 ticks later. */
@@ -317,7 +478,8 @@ export class Battle {
     p.queue.push(di);
     p.hand[slot] = p.queue.shift()!;
     p.slotReady[slot] = this.tick + this.nextCardCooldownTicks();
-    this.commands.push({ team, card, x: pos.x, y: pos.y, submitTick: this.tick, slot, cost });
+    // the command carries the input position; the deploy check runs again when it commits
+    this.commands.push({ team, card, x, y, submitTick: this.tick, slot, cost });
     return null;
   }
 
@@ -326,9 +488,8 @@ export class Battle {
     if (this.result) return 'ended';
     const card = this.defs.card(cardName, this.levels[team]);
     if (card.unsupported.length) return 'unsupported';
-    const pos = card.type === 'spell' ? { x: clamp(x, 0, ARENA_W - 1), y: clamp(y, 0, ARENA_H - 1) } : this.snapDeploy(team, x, y, card);
-    if (!this.deployPositionOk(team, pos.x, pos.y, card)) return 'position';
-    this.commands.push({ team, card, x: pos.x, y: pos.y, submitTick: this.tick, slot: -1, cost: 0 });
+    if (this.deployPlace(team, card, x, y) === null) return 'position';
+    this.commands.push({ team, card, x, y, submitTick: this.tick, slot: -1, cost: 0 });
     return null;
   }
 
@@ -348,6 +509,7 @@ export class Battle {
     this.updateProjectiles();
     this.updateAreaEffects();
     this.flushDamage(); // world vt+0x90 damage queue flush
+    this.projectileMaintenance(); // world vt+0x18 at the end of the tick
     this.removeDead();
     this.checkEnd();
     this.tick++;
@@ -415,17 +577,27 @@ export class Battle {
     cmds.length = w;
   }
 
+  /**
+   * Play command commit 0xd77504 [STAT]: the deploy check 0xf9e16c runs on the input position; a
+   * play with no valid position fails without a debit; otherwise min(cost, elixir) is debited and
+   * the card is cast at the checked position.
+   */
   private executeCommand(c: Command): void {
     const p = this.players[c.team];
+    const card = c.card;
+    const pos = this.deployPlace(c.team, card, c.x, c.y);
+    if (pos === null) {
+      p.pending -= c.cost;
+      return;
+    }
     if (c.cost > 0) {
       // Debit min(cost, current) at commit [STAT/OBS: native debit observations].
       const debit = Math.min(c.cost, p.elixir);
       p.elixir -= debit;
       p.pending -= c.cost;
     }
-    const card = c.card;
-    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: c.x, y: c.y, name: card.name, id: -1 });
-    this.castSpell(c.team, card, c.x, c.y);
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: pos.x, y: pos.y, name: card.name, id: -1 });
+    this.castSpell(c.team, card, pos.x, pos.y);
   }
 
   /**
@@ -452,8 +624,10 @@ export class Battle {
    * by ProjectileWaveInterval per wave and ProjectileInterval per projectile. With several
    * projectiles (Arrows) the first aims at the target and the others at a ring of radius
    * R − 0.6·r (R spell radius, r projectile radius) at 360/(n−1) steps, each jittered by 0.6·r in a
-   * random direction (battle RNG) and kept within 0.9·R; one wave shares a hit list so a target is
-   * hit once per wave. Each starts at the King tower offset by (dx/4, dy) of its aim offset.
+   * random direction (battle RNG) and kept within 0.9·R; one wave shares a group (0xf8f498 /
+   * 0xf93784): a hit list, so a target is hit once per wave, and the spell circle (target point, R)
+   * that every damaged actor must also touch (World_areaDamage second circle). Each starts at the
+   * King tower offset by (dx/4, dy) of its aim offset.
    * The scatter mode is assumed for MultipleProjectiles > 1 (A: spell vt+0x1c0 not decoded).
    */
   private castProjectiles(team: number, card: CardDef, x: number, y: number): void {
@@ -471,7 +645,8 @@ export class Battle {
     for (let w = 0; w < waves; w++) {
       let delay = waveDelay;
       let angle = 0;
-      const group: number[] | null = scatter ? [] : null;
+      // one group per wave (0xf8f498 / 0xf93784): shared hit list and the spell's circle (target, Radius)
+      const group: SpellGroup | null = scatter ? { ids: [], x, y, r: R } : null;
       for (let k = 0; k < n; k++) {
         const def = (k === 0 && card.firstProjectile) ? card.firstProjectile : card.spellProjectile!;
         let ox = 0;
@@ -575,18 +750,9 @@ export class Battle {
           wait = sp.deployDelay * i;
         }
       }
-      this.createUnit(team, card.name, def, ux, uy, Math.round(wait / TICK_MS) + Math.round(deployMs / TICK_MS));
+      const u = this.createUnit(team, card.name, def, ux, uy, Math.round(wait / TICK_MS) + Math.round(deployMs / TICK_MS));
+      u.waitTicks = Math.round(wait / TICK_MS); // state 11 until the delay ends (0xd423bc)
     }
-  }
-
-  /** Deploy-zone y range for summoned ground units (0xfa023c; A: own half plus destroyed-tower pockets). */
-  private summonZone(team: number, x: number, card: CardDef): [number, number] {
-    if (card.canDeployOnEnemySide || this.fixture) return [0, ARENA_H - 1];
-    const enemy = this.players[1 - team];
-    const left = x < ARENA_W / 2;
-    const tower = enemy.princess[left ? 0 : 1];
-    if (team === 0) return [0, tower.alive ? 14999 : 24999];
-    return [tower.alive ? 17000 : 7000, ARENA_H - 1];
   }
 
   /**
@@ -769,22 +935,138 @@ export class Battle {
   }
 
   /**
-   * AttackComp_isValidTarget 0xfc4008 (subset for implemented mechanics) [STAT]. The pending-damage
-   * overkill test for projectile attackers is approximated: a target already covered by in-flight
-   * projectile damage is skipped (A on the exact duration rule).
+   * AttackComp_isValidTarget 0xfc4008 -> 0xf94824 (subset for implemented mechanics) [STAT]. Units
+   * waiting out a summon delay (state 11) are not targetable (vt148 0xf825e4 -> vtf8 0xf85420).
+   * With `checkPending`, an attacker that has a Projectile skips a target whose pending damage
+   * would kill it (0xf94824 tail, see pendingOverkill).
    */
   private isValidTarget(u: Unit, t: Unit | null, checkPending: boolean): boolean {
     if (t === null || t === u) return false;
     if (t.state === ST_DEAD || t.maxHp <= 0) return false;
     if (t.team === u.team) return false;
-    if (t.hidden || t.tunneling) return false;
+    if (t.hidden || t.tunneling || t.waitTicks > 0) return false;
     const d = u.def;
     if (d.targetOnlyBuildings && !t.isBuilding && !(d.attacksAir && !d.attacksGround && t.isAir)) return false;
     if (d.targetOnlyTroops && t.isBuilding) return false;
     if (t.isAir && !d.attacksAir) return false;
     if (!t.isAir && !d.attacksGround && d.attacksAir) return false;
-    if (checkPending && d.projectile && t.pending > 0 && t.pending >= t.hp + t.shield) return false;
+    if (checkPending && d.projectile !== null && t.pending !== 0 && this.pendingOverkill(t)) return false;
     return true;
+  }
+
+  /**
+   * Pending-damage overkill test, the tail of 0xf94824 [STAT]. With pending damage p (actor +0x114)
+   * and its duration (actor +0x118) the target is skipped when all of these hold:
+   * - 0xfcc054: no shield up, and p reduced by the target's damage-reduction buffs (0xfc1e84, at
+   *   least 1) is at least its current hitpoints;
+   * - duration <= LOGIC_PENDING_DAMAGE_IGNORE_IF_DURATION_LESS (600);
+   * - not MorphKeepTarget (+0x58d) and not a troop with a LifeTime;
+   * - not dash-immune (0xf820b4: attack +0x48 > 0, DashImmuneToDamageTime >= 1 and attack +0x48 <=
+   *   duration; no supported unit dashes, so never);
+   * - no healing buff (0xfc2530: HealPerSecond > 0) unless p reaches its full scaled hitpoints.
+   * The UNKILLABLE tag and the dash/attached immunity of 0xf817b0 have no supported users.
+   */
+  private pendingOverkill(t: Unit): boolean {
+    const pend = t.pending;
+    if (t.shield > 0) return false;
+    let p = pend;
+    if (t.buffs.length) {
+      p = this.reduceDamage(t, p);
+      if (p < 2) p = 1;
+    }
+    if (t.hp > p) return false;
+    if (t.pendingDur > this.pendingIgnoreMs) return false;
+    const d = t.def;
+    if (d.morphKeepTarget || (d.lifeTime > 0 && !t.isBuilding)) return false;
+    if (d.hitpoints > pend) {
+      for (const b of t.buffs) if (b.def.hps > 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Buff damage reduction 0xfc1e84 [STAT]: the strongest positive and the strongest negative
+   * DamageReduction of the active buffs are added, clamped to +-PROTECTION_CAP_PERCENTAGE, and the
+   * damage scaled by (100 - r)/100 (truncated).
+   */
+  private reduceDamage(t: Unit, dmg: number): number {
+    let mx = 0;
+    let mn = 0;
+    for (const b of t.buffs) {
+      const r = b.def.damageReduction;
+      if (mx <= r) mx = r;
+      if (r <= mn) mn = r;
+    }
+    const r = mx + mn;
+    const cap = this.protectionCap;
+    let c = r;
+    if (cap <= r) c = cap;
+    if (r <= -cap) c = -cap;
+    return idiv((100 - c) * dmg, 100);
+  }
+
+  /**
+   * Actor vt1b8 0xf8553c [STAT]: pending damage += dmg; a non-negative flight time raises the
+   * duration to max(duration, time rounded up to 50), capped at 1000.
+   */
+  private addPending(t: Unit, dmg: number, time: number): void {
+    t.pending += dmg;
+    if (time >= 0) {
+      let d = idiv(time + 49, 50) * 50;
+      if (d < t.pendingDur) d = t.pendingDur;
+      if (d > 999) d = 1000;
+      t.pendingDur = d;
+    }
+  }
+
+  /** Projectile damage against `t` (0xf8ef58): the crown-tower value for crown towers [STAT]. */
+  private projDamageVs(p: Projectile, t: Unit): number {
+    if (t.tower === TOWER_NONE) return p.damage;
+    if (p.towerDamage >= 0) return p.towerDamage;
+    return idiv((Math.max(p.crownPct, -100) + 100) * p.damage + 99, 100);
+  }
+
+  /**
+   * 0xf8fa94 [STAT], when the projectile joins the world list (vt20 0xf93584) or is set up again
+   * in the world (chain hop): a Homing projectile with a target adds its damage to the target's
+   * pending damage with the flight time isqrt(dist2)·50/Speed.
+   */
+  private registerPending(p: Projectile): void {
+    const t = p.target;
+    if (t === null || !p.def.homing) return;
+    const dx = t.x - p.x;
+    const dy = t.y - p.y;
+    const dist = isqrt(dx * dx + dy * dy);
+    const sp = p.def.speed;
+    this.addPending(t, this.projDamageVs(p, t), sp !== 0 ? idiv(dist * 50, sp) : 0);
+    p.pendReg = true;
+  }
+
+  /** Pending release on reaching the aim point (0xf90708 / 0xf8eed8) [STAT]. */
+  private releasePending(p: Projectile): void {
+    const t = p.target;
+    if (t !== null && p.pendReg) t.pending -= this.projDamageVs(p, t);
+    p.pendReg = false;
+  }
+
+  /**
+   * End-of-tick world maintenance 0xf8c9d8 for projectiles [STAT]: actors that died are removed
+   * and every reference to them replaced by null (projectile vt38 0xf92ed8: a homing projectile
+   * first aims at the target's last position); then the projectiles created this tick join the
+   * world list (vt20 0xf93584) and register their pending damage (0xf8fa94).
+   */
+  private projectileMaintenance(): void {
+    const ps = this.projectiles;
+    const tick = this.tick;
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i];
+      const t = p.target;
+      if (t !== null && t.state === ST_DEAD) {
+        if (p.def.homing) { p.tx = t.x; p.ty = t.y; }
+        p.target = null;
+      }
+      if (p.born === tick && !p.pendReg && p.target !== null) this.registerPending(p);
+    }
   }
 
   /**
@@ -936,6 +1218,7 @@ export class Battle {
   private setTarget(u: Unit, t: Unit | null, force: boolean, fromSearch: boolean): void {
     if (u.target === t && !force) return;
     u.target = t;
+    u.attackedTarget = false; // +0x19
     if (t === null) {
       // ordinary troop: timer kept (LoadFirstHit/LoadAfterRetarget units not supported yet)
     } else if (!this.pointInRange(t, u.x, u.y, this.getRange(u), this.getMinRange(u), false)) {
@@ -1030,7 +1313,14 @@ export class Battle {
         keep = this.inRange(u, tg, 500); // LOGIC_PRESERVE_TARGET_IF_HIT_STARTED (ranged, mid-swing)
       }
     }
-    if (!(tg && keep && this.isValidTarget(u, tg, true))) {
+    // keep a valid target in range; a unit that already attacked it and has
+    // KeepTargetWithPendingDamage keeps it ignoring the pending damage (CURRENT_TARGET_IGNORES_PENDING_DAMAGE)
+    let kept = false;
+    if (tg && keep) {
+      kept = this.isValidTarget(u, tg, true)
+        || (u.attackedTarget && d.keepTargetWithPendingDamage && this.currentIgnoresPending && this.isValidTarget(u, tg, false));
+    }
+    if (!kept) {
       if (u.retargetCd === 0 && u.finishMs === 0) this.findTarget(u);
       if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
     }
@@ -1078,6 +1368,7 @@ export class Battle {
   /** AttackComp_execute 0xfc619c + meleeHit 0xfc7080 (implemented paths) [STAT]. */
   private execute(u: Unit, t: Unit | null): void {
     const d = u.def;
+    u.attackedTarget = true; // +0x19
     u.lastHitTick = this.tick;
     // LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE: target beyond range + 1500 -> no damage
     const cancelled = !u.isBuilding && t !== null && !this.pointInRange(t, u.x, u.y, 1500 + this.getRange(u), 0, false);
@@ -1098,8 +1389,8 @@ export class Battle {
           const cy = d.selfAsAoeCenter ? u.y : u.tsy;
           this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, dmg, -1, d.crownTowerDamagePercent, 0, false);
         } else {
-          this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent);
-          if (d.buffOnDamage) this.applyBuff(t, d.buffOnDamage, d.buffOnDamageTime, u.id);
+          // BuffOnDamage lands with the damage (flush callback 0xfd09ac)
+          this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id);
           if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
         }
       }
@@ -1129,8 +1420,7 @@ export class Battle {
       }
       if (best === null) break;
       picked.push(best);
-      this.queueDamage(best, dmg, -1, d.crownTowerDamagePercent);
-      if (d.buffOnDamage) this.applyBuff(best, d.buffOnDamage, d.buffOnDamageTime, u.id);
+      this.queueDamage(best, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id);
     }
   }
 
@@ -1154,14 +1444,17 @@ export class Battle {
       if (def.pingpong) pr.rangeLeft = Math.min(def.pierceRange >> 1, Math.max(def.minDistance, dd));
       return;
     }
+    // Projectile_setup 0xf8e6fc [STAT]: every projectile keeps its target (homing ones follow it;
+    // single-target ones damage it on arrival); pending damage registers when it joins the world
+    // list at the end of the tick (projectileMaintenance). ChainedHitRadius > 0: first hit counted
+    // and the target put on the ignore list (0xf94780). A SpawnProjectile chain gets a damage key.
     const pr = new Projectile(this.nextProjId++, def, u.team, sx, sy, this.tick);
     pr.sourceId = u.id;
     pr.tx = t.x;
     pr.ty = t.y;
-    if (def.homing) {
-      pr.target = t;
-      if (def.radius <= 0) { t.pending += def.damage; pr.pendingOn = t; }
-    }
+    pr.target = t;
+    if (def.chainRadius > 0) { pr.chainHits = 1; pr.ignoreIds.push(t.id); }
+    if (def.spawnProjectile !== null) pr.key = ++this.nextKey;
     this.projectiles.push(pr);
   }
 
@@ -1180,41 +1473,75 @@ export class Battle {
     return pr;
   }
 
-  private queueDamage(t: Unit, amount: number, towerDamage: number, pct: number): void {
+  /**
+   * Damage_enqueue 0xfca3d4: queued, applied in the end-of-tick flush. `key` is the damage key
+   * (event +8, 0 = none); `buff` is the damage-landed buff (projectile TargetBuff / BuffOnDamage,
+   * 0xfd09ac), applied only if the damage lands.
+   */
+  private queueDamage(t: Unit, amount: number, towerDamage: number, pct: number, key = 0,
+    buff: BuffDef | null = null, buffTime = 0, srcId = -1): void {
     const i = this.dmgN++;
     this.dmgTarget[i] = t;
     this.dmgAmount[i] = amount;
     this.dmgTower[i] = towerDamage;
     this.dmgPct[i] = pct;
+    this.dmgKey[i] = key;
+    this.dmgBuff[i] = buff;
+    this.dmgBuffTime[i] = buffTime;
+    this.dmgSrc[i] = srcId;
   }
 
-  /** Damage every enemy whose collision circle meets the area (A: edge overlap rule). */
+  /** Actor_circleOverlapSq 0xf95084 [STAT]: circles overlap strictly; buildings by the closest point of their square. */
+  private overlaps(t: Unit, x: number, y: number, R: number): boolean {
+    if (t.isBuilding) {
+      const r0 = t.radius;
+      const ex = clamp(x, t.x - r0, t.x + r0) - x;
+      const ey = clamp(y, t.y - r0, t.y + r0) - y;
+      return ex <= R && ex >= -R && ey <= R && ey >= -R && ex * ex + ey * ey < R * R;
+    }
+    const dx = t.x - x;
+    const dy = t.y - y;
+    const r = R + t.radius;
+    return dx * dx + dy * dy < r * r;
+  }
+
+  /**
+   * World_areaDamage 0xf97be8 [STAT]: candidates in world-list order that are enemies, targetable
+   * (not hidden, tunnelling or waiting out a deploy delay) and on an affected layer, overlapping the
+   * circle (and the spell wave's circle when `group` is given); the group's shared list skips actors
+   * already hit by the wave and records new ones. At most one crown tower is taken (the first);
+   * collection stops at `maxTargets` (> 0). Each is damaged (crown-tower value for towers) and
+   * knocked back from (x, y).
+   */
   private areaDamage(team: number, x: number, y: number, radius: number, air: boolean, ground: boolean,
     damage: number, towerDamage: number, pct: number, pushback: number, pushAll: boolean,
-    buff: BuffDef | null = null, buffTime = 0, sourceId = -1, ignore: number[] | null = null): void {
+    buff: BuffDef | null = null, buffTime = 0, sourceId = -1, group: SpellGroup | null = null, maxTargets = 0, key = 0): void {
     const units = this.units;
+    const hits = this.scratch3;
+    let n = 0;
+    let tower = false;
     for (let i = 0; i < units.length; i++) {
       const t = units[i];
       if (t.team === team || t.state === ST_DEAD) continue;
+      if (t.maxHp <= 0 || t.hidden || t.tunneling || t.waitTicks > 0) continue;
       if (t.isAir ? !air : !ground) continue;
-      const dx = t.x - x;
-      const dy = t.y - y;
-      const d2 = dx * dx + dy * dy;
-      // Actor_circleOverlapSq: circle dist2 < (r_a + R)^2; buildings by the closest point of their square [STAT]
-      if (t.isBuilding) {
-        const r0 = t.radius;
-        const ex = clamp(x, t.x - r0, t.x + r0) - x;
-        const ey = clamp(y, t.y - r0, t.y + r0) - y;
-        if (ex * ex + ey * ey >= radius * radius) continue;
-      } else {
-        const r = radius + t.radius;
-        if (d2 >= r * r) continue;
+      if (!this.overlaps(t, x, y, radius)) continue;
+      if (group !== null) {
+        if (group.r > 0 && !this.overlaps(t, group.x, group.y, group.r)) continue;
+        if (group.ids.includes(t.id)) continue;
+        group.ids.push(t.id);
       }
-      if (t.maxHp <= 0 || t.hidden || t.tunneling) continue;
-      if (ignore) { if (ignore.includes(t.id)) continue; ignore.push(t.id); }
-      this.queueDamage(t, damage, towerDamage, pct);
-      if (buff) this.applyBuff(t, buff, buffTime, sourceId);
-      if (pushback > 0) this.applyPushback(t, x, y, pushback, pushAll); // World_areaDamage 0xf97be8
+      const isTower = t.tower !== TOWER_NONE;
+      if (isTower && tower) continue;
+      tower = tower || isTower;
+      hits[n++] = t;
+      if (maxTargets > 0 && n >= maxTargets) break;
+    }
+    for (let i = 0; i < n; i++) {
+      const t = hits[i];
+      hits[i] = null as unknown as Unit;
+      if (damage > 0) this.queueDamage(t, damage, towerDamage, pct, key, buff, buffTime, sourceId);
+      if (pushback > 0) this.applyPushback(t, x, y, pushback, pushAll);
     }
   }
 
@@ -1222,6 +1549,10 @@ export class Battle {
 
   private updateActor(u: Unit): void {
     if (u.state === ST_DEAD) return;
+    // Character update 0xf800bc [STAT]: state 11 (summon delay) only counts down; otherwise the
+    // pending-damage duration (actor +0x118) drops by 50.
+    if (u.waitTicks > 0) u.waitTicks--;
+    else u.pendingDur = (u.pendingDur > 50 ? u.pendingDur : 50) - 50;
     if (u.tunneling) { this.tunnel(u); return; }
     if (u.state === ST_DEPLOYING) {
       if (u.deployTicks > 0) u.deployTicks--;
@@ -1864,7 +2195,7 @@ export class Battle {
    * starts at the smallest 25n with 25(1+..+n) >= distance and drops by 25 per tick.
    */
   private applyPushback(t: Unit, ox: number, oy: number, amount: number, ignoreImmune: boolean): void {
-    if (!this.mobile(t) || t.state === ST_DEAD || t.tunneling) return;
+    if (!this.mobile(t) || t.state === ST_DEAD || t.tunneling || t.waitTicks > 0) return; // vtf8 (state 11) refuses
     if (t.kbActive) return;
     if (t.def.ignorePushback && !ignoreImmune) return;
     let dx = t.x - ox;
@@ -1984,7 +2315,7 @@ export class Battle {
       }
     } else if (!u.hidden) {
       u.idleMs += TICK_MS;
-      if (u.idleMs >= u.def.hideTime) { u.hidden = true; u.idleMs = 0; u.target = null; u.locked = false; }
+      if (u.idleMs >= u.def.hideTime) { u.hidden = true; u.idleMs = 0; u.target = null; u.attackedTarget = false; u.locked = false; }
     }
   }
 
@@ -1994,6 +2325,7 @@ export class Battle {
    * reaches 100. Not while deploying. At 0 HP the actor dies at once.
    */
   private healthUpdate(u: Unit): void {
+    if (u.dmgKeys.length) this.expireDamageKeys(u);
     if (u.state !== ST_ACTIVE || u.hp < 1 || u.tunneling) return;
     const lt = u.def.lifeTime;
     if (lt <= 0 || u.tower !== TOWER_NONE) return;
@@ -2007,6 +2339,29 @@ export class Battle {
     this.kill(u);
   }
 
+
+  /**
+   * Health update 0xfc99e0, first part [STAT]: damage keys recorded more than 999 ms ago are
+   * dropped (the last record moves into the freed slot), whatever the actor's state.
+   */
+  private expireDamageKeys(u: Unit): void {
+    const now = this.tick * TICK_MS;
+    const ks = u.dmgKeys;
+    const ts = u.dmgKeyTimes;
+    let n = ks.length;
+    let i = 0;
+    while (i < n) {
+      if (now - ts[i] > 999) {
+        n--;
+        ks[i] = ks[n];
+        ts[i] = ts[n];
+        ks.length = n;
+        ts.length = n;
+      } else {
+        i++;
+      }
+    }
+  }
 
   // ---------------------------------------------------------------- buffs & area effects
 
@@ -2033,6 +2388,7 @@ export class Battle {
       u.atkTimer = 0;
       u.locked = false;
       u.target = null;
+      u.attackedTarget = false;
       u.charge = 0;
       u.rampMs = 0;
     }
@@ -2273,99 +2629,158 @@ export class Battle {
     }
   }
 
-  private releasePending(p: Projectile): void {
-    if (p.pendingOn) { p.pendingOn.pending -= p.damage; p.pendingOn = null; }
-  }
-
+  /**
+   * Projectile_update 0xf90708, ordinary flight [STAT]: a Homing projectile aims at its target's
+   * position (0xf91378; a dead target keeps its last position, the reference is dropped at the end
+   * of the tick); it moves Speed toward the aim point, truncating, while Speed < the remaining
+   * distance; otherwise it releases its pending damage, snaps to the aim point and applies its hit.
+   * Deflection (0xf913f4) needs an area effect with DeflectProjectilesEnabled (Monk's ability),
+   * which no supported card creates.
+   */
   private moveProjectile(p: Projectile): void {
     if (p.pierce) { this.movePierce(p); return; }
     const t = p.target;
-    if (t !== null) {
-      if (t.state === ST_DEAD) { p.target = null; this.releasePending(p); }
-      else { p.tx = t.x; p.ty = t.y; }
-    }
+    if (t !== null && p.def.homing) { p.tx = t.x; p.ty = t.y; }
     const dx = p.tx - p.x;
     const dy = p.ty - p.y;
     const d = isqrt(dx * dx + dy * dy);
     const sp = p.def.speed;
-    if (d <= sp) {
-      p.x = p.tx;
-      p.y = p.ty;
-      p.alive = false;
-      this.impact(p);
+    if (sp < d) {
+      p.x += idiv(dx * sp, d);
+      p.y += idiv(dy * sp, d);
       return;
     }
-    p.x += idiv(dx * sp, d);
-    p.y += idiv(dy * sp, d);
-  }
-
-  private impact(p: Projectile): void {
     this.releasePending(p);
-    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id });
-    if (p.radius > 0) {
-      this.areaDamage(p.team, p.x, p.y, p.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, p.def.pushbackAll, p.def.targetBuff, p.def.buffTime, p.id, p.group);
-    } else if (p.target !== null) {
-      this.queueDamage(p.target, p.damage, p.towerDamage, p.crownPct);
-      if (p.def.targetBuff) this.applyBuff(p.target, p.def.targetBuff, p.def.buffTime, p.id);
-      if (p.def.chainCount > 1) this.chain(p, p.target);
-    }
-    if (p.def.spawnUnit) this.spawnFromProjectile(p, p.spell ? this.defs.card(p.spell, this.levels[p.team]).spawnOffsets : null);
+    p.x = p.tx;
+    p.y = p.ty;
+    p.alive = false;
+    this.applyHit(p);
   }
 
   /**
-   * Chain lightning: from the first target, hop to the nearest enemy not yet hit within
-   * ChainedHitRadius, up to ChainedHitCount targets in all; hops are instantaneous (A).
+   * Projectile_applyHit 0xf9188c [STAT]. Without Radius: the target (if still referenced) takes the
+   * damage wherever it is (0xf8f618, crown-tower value for towers, the projectile's damage key),
+   * TargetBuff landing with it, and Pushback away from the aim point (or along the flight with
+   * DoDirectionalPushback, 0xfcfe18). With Radius: World_areaDamage at the aim point with
+   * MaximumTargets and the spell wave's group. Then spawned characters, then the chain hop.
    */
-  private chain(p: Projectile, first: Unit): void {
-    const hit: Unit[] = [first];
-    let last = first;
-    const units = this.units;
-    while (hit.length < p.def.chainCount) {
-      let best: Unit | null = null;
-      let bestD = 0;
-      for (let i = 0; i < units.length; i++) {
-        const t = units[i];
-        if (t.team === p.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling || hit.includes(t)) continue;
-        const dx = t.x - last.x;
-        const dy = t.y - last.y;
-        const d2 = dx * dx + dy * dy;
-        const r = p.def.chainRadius + t.radius;
-        if (d2 > r * r) continue;
-        if (best === null || d2 < bestD) { best = t; bestD = d2; }
+  private applyHit(p: Projectile): void {
+    const def = p.def;
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id });
+    if (def.radius < 1) {
+      const t = p.target;
+      if (t !== null) {
+        if (p.damage > 0) this.queueDamage(t, p.damage, p.towerDamage, p.crownPct, p.key, def.targetBuff, def.buffTime, p.id);
+        if (def.pushback > 0) {
+          if (def.directionalPushback) this.directionalPushback(t, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
+          else this.applyPushback(t, p.tx, p.ty, def.pushback, def.pushbackAll);
+        }
       }
-      if (best === null) break;
-      hit.push(best);
-      this.queueDamage(best, p.damage, p.towerDamage, p.crownPct);
-      if (p.def.targetBuff) this.applyBuff(best, p.def.targetBuff, p.def.buffTime, p.id);
-      last = best;
+    } else {
+      // 0xf8f03c: PushbackAll is not passed to the splash (p21 = 0)
+      this.areaDamage(p.team, p.tx, p.ty, def.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, false,
+        def.targetBuff, def.buffTime, p.id, p.group, def.maxTargets, p.key);
     }
+    if (def.spawnUnit) this.spawnFromProjectile(p, p.spell ? this.defs.card(p.spell, this.levels[p.team]).spawnOffsets : null);
+    if (def.chainRadius > 0 && p.chainHits < def.chainCount) this.chainHop(p);
+  }
+
+  /**
+   * Chain hop, the ChainedHitRadius tail of 0xf9188c [STAT]: the nearest actor (world-list order,
+   * strict <) whose isqrt distance from the projectile is below ChainedHitRadius, valid for the
+   * projectile (0xf94824 as a projectile: enemy, targetable, not on its ignore list; air and ground
+   * alike, crown towers included) becomes the new target: the projectile is set up again from where
+   * it is (Projectile_setup: hit count + 1, target onto the ignore list, pending damage registered
+   * at once), aims at the mirror of its start through the hit point (homing follows the target) and
+   * waits 150 ms (+0x1b0) before flying on.
+   */
+  private chainHop(p: Projectile): void {
+    const def = p.def;
+    const units = this.units;
+    let best: Unit | null = null;
+    let bestD = 0x7fffffff;
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i];
+      if (a.team === p.team || a.maxHp <= 0 || a.hidden || a.tunneling || a.waitTicks > 0) continue;
+      if (a.state === ST_DEAD && a.tower !== TOWER_NONE) continue; // tower ruins are not actors
+      if (p.ignoreIds.includes(a.id)) continue;
+      const dx = a.x - p.x;
+      const dy = a.y - p.y;
+      const d = isqrt(dx * dx + dy * dy);
+      if (d < def.chainRadius && d < bestD) { best = a; bestD = d; }
+    }
+    if (best === null) return;
+    const ax = p.tx;
+    const ay = p.ty;
+    p.tx = ax * 2 - p.startX;
+    p.ty = ay * 2 - p.startY;
+    p.startX = p.x;
+    p.startY = p.y;
+    p.target = best;
+    p.chainHits++;
+    p.ignoreIds.push(best.id);
+    p.alive = true;
+    p.delay = 150;
+    this.registerPending(p);
+  }
+
+  /** Directional pushback 0xfcfe18 [STAT]: origin 100 units behind the target along (dx, dy). */
+  private directionalPushback(t: Unit, dx: number, dy: number, amount: number, all: boolean): void {
+    const l = isqrt(dx * dx + dy * dy);
+    const bx = l !== 0 ? idiv(dx * 100, l) : dx;
+    const by = l !== 0 ? idiv(dy * 100, l) : dy;
+    this.applyPushback(t, t.x - bx, t.y - by, amount, all);
   }
 
   // ---------------------------------------------------------------- damage & death
 
+  /**
+   * World_flushDamageQueue 0xf992e0 -> Damage_apply 0xfcaeec per event in queue order [STAT]:
+   * crown towers take the crown-tower value (TowerDamage, or ceil((max(p,-100)+100)·dmg/100),
+   * 0xde0334/0xe5aed8); nothing happens for 0 damage; damage-reduction buffs scale it (0xfc1e84,
+   * at least 1); a non-zero damage key already recorded on the target within the last 1000 ms only
+   * refreshes the record's time, else it is recorded; then the hit (shield first, excess on the
+   * breaking hit lost, 0xfcb29c) and the landed-damage buff (0xfd09ac). Attacker damage multipliers
+   * (buff +0x38/+0x3c) have no supported source.
+   */
   private flushDamage(): void {
+    const now = this.tick * TICK_MS;
     for (let i = 0; i < this.dmgN; i++) {
       const t = this.dmgTarget[i];
       if (t.state === ST_DEAD) continue;
       let amount = this.dmgAmount[i];
       if (t.tower !== TOWER_NONE) {
-        // Crown towers: TowerDamage (absolute) or CrownTowerDamagePercent; floor (A on rounding).
-        // crown-tower damage 0xde0334: ((max(p,-100)+100)*dmg + 99)/100 (ceil) [STAT]
         if (this.dmgTower[i] >= 0) amount = this.dmgTower[i];
         else if (this.dmgPct[i] !== 0) amount = Math.trunc(((Math.max(this.dmgPct[i], -100) + 100) * amount + 99) / 100);
-        if (t.tower === TOWER_KING && t.kingState === KING_INACTIVE && amount > 0) this.activateKing(t);
       }
-      if (amount > 0) t.lastHurtTick = this.tick;
-      // Shield absorbs first; excess damage on the breaking hit is lost [OBS].
+      if (amount <= 0) continue;
+      if (t.buffs.length) {
+        amount = this.reduceDamage(t, amount);
+        if (amount < 2) amount = 1;
+      }
+      const key = this.dmgKey[i];
+      if (key !== 0) {
+        const ks = t.dmgKeys;
+        let j = 0;
+        while (j < ks.length && ks[j] !== key) j++;
+        if (j < ks.length) { t.dmgKeyTimes[j] = now; continue; }
+        ks.push(key);
+        t.dmgKeyTimes.push(now);
+      }
+      if (t.tower === TOWER_KING && t.kingState === KING_INACTIVE) this.activateKing(t);
+      t.lastHurtTick = this.tick;
+      // Shield absorbs first; excess damage on the breaking hit is lost [STAT 0xfcb29c].
       if (t.shield > 0) {
         t.shield = Math.max(0, t.shield - amount);
       } else {
         t.hp -= amount;
       }
       if (t.hp <= 0) this.kill(t);
+      const buff = this.dmgBuff[i];
+      if (buff !== null && this.dmgBuffTime[i] > 0) this.applyBuff(t, buff, this.dmgBuffTime[i], this.dmgSrc[i]);
     }
     // release references
-    for (let i = 0; i < this.dmgN; i++) this.dmgTarget[i] = null as unknown as Unit;
+    for (let i = 0; i < this.dmgN; i++) { this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; }
     this.dmgN = 0;
   }
 
@@ -2470,12 +2885,13 @@ export class Battle {
       h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
       h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaTimer); h.add(u.hidden ? 1 : 0);
       h.add(u.idleMs); h.add(u.upMs); h.add(u.tunneling ? 1 : 0);
+      h.add(u.pending); h.add(u.pendingDur); h.add(u.waitTicks); h.add(u.dmgKeys.length);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }
     for (const a of this.areaEffects) { h.add(a.id); h.add(a.life); }
     for (const p of this.projectiles) {
       h.add(p.id); h.add(p.x); h.add(p.y); h.add(p.tx); h.add(p.ty); h.add(p.target ? p.target.id : -1);
-      h.add(p.rangeLeft); h.add(p.returning ? 1 : 0); h.add(p.hitIds.length);
+      h.add(p.rangeLeft); h.add(p.returning ? 1 : 0); h.add(p.hitIds.length); h.add(p.delay); h.add(p.chainHits);
     }
     for (const c of this.commands) { h.add(c.team); h.add(c.x); h.add(c.y); h.add(c.submitTick); }
     for (const s of this.rng.state()) h.add(s);

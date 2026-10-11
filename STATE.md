@@ -49,7 +49,7 @@ Last updated 2026-10-11 (native movement, spells and formations ported; 70 cards
 | Gameplay data | ✅ `tools/data/`, standard-library Python only. It decodes 648 logic files (0 errors) into 66 JSON tables plus `cards.json` with mechanic flags. Field meanings, units and level scaling are in [docs/DATA_FIELDS.md](docs/DATA_FIELDS.md) |
 | Art | ✅ `tools/art/` decodes the SC2 sprite format (`.sc` v5: FlatBuffers + zstd) and the `.sctx` ASTC textures, and renders original animation frames to sheets plus JSON (anchor, hit frame). Verified on the Knight's run and attack animations. See [tools/art/README.md](tools/art/README.md) |
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
-| Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays. 41 tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~4,000× real time per core |
+| Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, the damage-key window and the deploy check with its zone map. 48 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~4,000× real time per core |
 | Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). HUD (clock, crowns, elixir bar) still partly HTML |
 | Demo (GitHub Pages) | ⚠️ `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on pushes to `main` or this branch. The build job passes; deploy needs the owner to enable Pages (Settings → Pages → Source: GitHub Actions) and allow this branch in the `github-pages` environment. The site is public even though the repo is private (owner's explicit choice) |
 | Training bridge | ❌ Not started |
@@ -120,13 +120,16 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 
 ## Next steps
 
-1. **Remaining native ports** (A rows in docs/FIDELITY.md): projectile hit
-   application details (0xf9188c, homing, deflection), the deploy-zone clamp
-   (0xfa023c), the default lane goal without a target (0xd43a4c), King
-   activation conditions (TOML scripting), the pending-damage overkill rule
-   (0xfc4008), spawner/death-spawn placement, Tesla and Miner state machines,
-   tower update details, area-effect candidate grid order, and the damage-key
-   dedupe (0xfcaeec, 1 s window).
+1. **Remaining native ports** (A rows in docs/FIDELITY.md): the default lane
+   goal without a target (0xd43a4c: a mode subsystem at ctx+0x358 whose vt+0x48
+   is not yet identified), King activation conditions (TOML scripting),
+   spawner/death-spawn placement, Tesla and Miner state machines, tower update
+   details, area-effect candidate grid order, the piercing/rolling projectile
+   path (CheckCollisions 0xf91790/0xf8f978), projectile spawn offsets
+   (0xf8e4c8 angle/TargetToEdge). Done 2026-10-11: pending-damage overkill rule
+   (0xf94824), projectile flight/hit/chain (0xf90708, 0xf9188c), damage apply
+   and key window (0xfcaeec), deploy check and zones (0xf9e16c, 0xfa2c0c,
+   0xfa023c); see `sim/core/test/ported.test.ts`.
 2. **Differential checks:** ask the owner to run the Mac harness on a few
    scripted matches (two knights crossing, Arrows on Skeleton Army, Giant vs
    Cannon, Hog Rider jump) and record per-tick positions/HP; add them as tests.
@@ -145,8 +148,10 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 
 ## Open questions for the owner
 
-- Pocket deploy area after a Princess tower falls: confirm its exact shape
-  (currently the lane half up to y 25000, mirrored).
+- Pocket deploy area after a Princess tower falls: now from the decompiled zone
+  map (the fallen tower stops stamping its 11×21 no-deploy area; the King's
+  18×16 area still blocks), i.e. that lane from the river to y 20999. Worth a
+  smell test.
 - Starting elixir: the owner said to follow the decompile; data and the native
   run both give 6.
 - Training stack: the owner says it doesn't matter yet; optimise for speed

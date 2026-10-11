@@ -105,8 +105,16 @@ export class Unit {
   spawnLeft: number;
   spawnSub: number;
   spawnIndex: number;
-  /** Pending damage from in-flight projectiles aimed at this unit (targeting overkill test). */
+  /** Pending damage of homing projectiles in flight toward this actor (actor +0x114, 0xf8553c). */
   pending: number;
+  /** Pending-damage duration ms (actor +0x118): max of the registered flight times rounded up to
+   * 50, capped at 1000; -50 per actor update. */
+  pendingDur: number;
+  /** Waiting out a summon deploy delay (native state 11): untargetable, no pending decay. */
+  waitTicks: number;
+  /** Recent damage keys and their times (health +0x58 / +0x68): a key is ignored for 1000 ms (0xfcaeec). */
+  dmgKeys: number[];
+  dmgKeyTimes: number[];
   /** Inferno ramp: ms spent attacking the current target. */
   rampMs: number;
   /** Elixir Collector: ms until the next elixir. */
@@ -143,6 +151,8 @@ export class Unit {
   charge: number;
   /** Charged first hit pending (attack+0x3f): the next swing skips the load and hits at once. */
   chargeHit: boolean;
+  /** Attacked the current target (attack +0x19): set by execute, cleared by a target change. */
+  attackedTarget: boolean;
   /** Avoidance sidestep (m+0x1f4): +-200, decays 10 per tick. */
   sidestep: number;
   gridStamp: number;
@@ -203,6 +213,10 @@ export class Unit {
     this.spawnSub = 0;
     this.spawnIndex = 0;
     this.pending = 0;
+    this.pendingDur = 0;
+    this.waitTicks = 0;
+    this.dmgKeys = [];
+    this.dmgKeyTimes = [];
     this.rampMs = 0;
     this.manaTimer = Math.round(def.manaPeriod / 50);
     this.hidden = def.hides;
@@ -225,6 +239,7 @@ export class Unit {
     this.wpDirY = 0;
     this.charge = 0;
     this.chargeHit = false;
+    this.attackedTarget = false;
     this.sidestep = 0;
     this.gridStamp = 0;
     // Native attack timer starts at 0; the first swing starts at LoadTime - load (load 0 for a fresh
@@ -279,12 +294,17 @@ export class Projectile {
   hitIds: number[];
   returning: boolean;
   source: Unit | null;
-  /** Unit whose pending damage this projectile counts toward. */
-  pendingOn: Unit | null;
+  /** Pending damage registered on the target (projectile +0x1dc, 0xf8fa94). */
+  pendReg: boolean;
+  /** Damage key (projectile +0xc0): non-zero only for SpawnProjectile chains (0xf8e6fc). */
+  key: number;
+  /** Chain lightning: hits so far (+0x1b8) and the ignore list of actor ids (+0x60). */
+  chainHits: number;
+  ignoreIds: number[];
   /** Start delay ms (projectile +0x1b0): counts down 50 per update before the projectile moves. */
   delay: number;
-  /** Ids already hit by the projectile's group (one spell wave shares one list: World_areaDamage ignore list). */
-  group: number[] | null;
+  /** Spell-wave group (0xf8f498): shared ignore list and the spell circle every target must touch. */
+  group: SpellGroup | null;
 
   constructor(id: number, def: ProjectileDef, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -317,8 +337,19 @@ export class Projectile {
     this.hitIds = [];
     this.returning = false;
     this.source = null;
-    this.pendingOn = null;
+    this.pendReg = false;
+    this.key = 0;
+    this.chainHits = 0;
+    this.ignoreIds = [];
   }
+}
+
+/** One spell wave's shared hit list and circle (0xf8f498 / 0xf93784): World_areaDamage ignore list and second circle. */
+export interface SpellGroup {
+  ids: number[];
+  x: number;
+  y: number;
+  r: number;
 }
 
 /** Area effect object (Zap, Freeze, Poison, Rage...). */

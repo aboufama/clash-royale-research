@@ -110,6 +110,9 @@ export interface ProjectileDef {
   spawnDeployTime: number;
   /** Follow-up projectile spawned on impact (Log -> rolling log). */
   spawnProjectile: ProjectileDef | null;
+  /** MaximumTargets of the splash (+0x174; < 1 = all) and DoDirectionalPushback (+0x2d8). */
+  maxTargets: number;
+  directionalPushback: boolean;
 }
 
 /** Object filter (game_object_filters.toml): which actors an area effect touches. */
@@ -246,6 +249,16 @@ export interface UnitDef {
   upTime: number;
   /** Miner / Goblin Drill: tunnels from the King tower at this speed (units per tick). */
   spawnPathfindSpeed: number;
+  /** MorphKeepTarget (+0x58d) and KeepTargetWithPendingDamage (+0x840): pending-damage overkill exemptions. */
+  morphKeepTarget: boolean;
+  keepTargetWithPendingDamage: boolean;
+  /** Deploy-zone map (0xfa2c0c): NoDeploySizeW/H tiles (+0x80c/+0x810), TileSizeOverride (+0x4e8), IsSummoner (+0x572). */
+  noDeployW: number;
+  noDeployH: number;
+  tileSizeOverride: number;
+  isSummoner: boolean;
+  /** SpawnPathfindMorph (+0x268): what a tunnelling character becomes (Goblin Drill); the deploy check uses its footprint. */
+  spawnPathfindMorph: UnitDef | null;
   /** Mechanics this definition uses that the engine does not implement yet. */
   unsupported: string[];
 }
@@ -306,6 +319,9 @@ export interface CardDef {
   spellAsDeploy: boolean;
   canDeployOnEnemySide: boolean;
   canPlaceOnWater: boolean;
+  /** CanPlaceOnBuildings (+0x17d) and DeployWTileMargin (+0x1a4), read by the deploy check 0xf9e16c. */
+  canPlaceOnBuildings: boolean;
+  deployWTileMargin: number;
   unsupported: string[];
 }
 
@@ -325,6 +341,7 @@ const UNIT_FIELDS_OK = new Set([
   'AttackShakeTime', 'ManaOnDeathForOpponent', 'ManaCollectAmount', 'ManaGenerateTimeMs', 'ManaOnDeath',
   'VariableDamage2', 'VariableDamage3', 'VariableDamageTime1', 'VariableDamageTime2', 'VisualHitSpeed', 'MultipleTargets',
   'AllTargetsHit', 'BuffOnDamage', 'BuffOnDamageTime', 'HidesWhenNotAttacking', 'HideTimeMs', 'UpTimeMs', 'SpawnPathfindSpeed',
+  'MorphKeepTarget', 'KeepTargetWithPendingDamage', 'NoDeploySizeW', 'NoDeploySizeH', 'TileSizeOverride',
 ]);
 /** Starting actions known to be cosmetic or covered by native rules (no gameplay change needed). */
 const IGNORABLE_ACTIONS = new Set(['JumpHack_Check_Jump_Interval']);
@@ -335,6 +352,7 @@ const PROJECTILE_FIELDS_OK = new Set([
   'ChainedHitCount', 'ChainedHitRadius', 'ProjectileRange', 'ProjectileRadius', 'ProjectileRadiusY', 'PingpongVisualTime',
   'SpawnCharacter', 'SpawnCharacterCount', 'SpawnCharacterDeployTime', 'SpawnConstPriority', 'AlwaysResetAnimation',
   'SpawnProjectile', 'SpawnChain', 'RadiusY', 'ProjectileStartExtraRadius', 'HomingMinDistance', 'HomingTime',
+  'MaximumTargets', 'DoDirectionalPushback',
 ]);
 const AEO_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Radius', 'LifeDuration', 'HitSpeed', 'HitSpeedOffset', 'Damage', 'Buff', 'BuffTime',
@@ -496,6 +514,8 @@ export class Defs {
       spawnCount: num(r, 'SpawnCharacterCount', 1),
       spawnDeployTime: num(r, 'SpawnCharacterDeployTime', -1),
       spawnProjectile: null,
+      maxTargets: num(r, 'MaximumTargets'),
+      directionalPushback: bool(r, 'DoDirectionalPushback'),
     };
     this.projCache.set(key, def);
     const sc = str(r, 'SpawnCharacter');
@@ -616,9 +636,18 @@ export class Defs {
       hideTime: num(r, 'HideTimeMs'),
       upTime: num(r, 'UpTimeMs'),
       spawnPathfindSpeed: num(r, 'SpawnPathfindSpeed'),
+      morphKeepTarget: bool(r, 'MorphKeepTarget'),
+      keepTargetWithPendingDamage: bool(r, 'KeepTargetWithPendingDamage'),
+      noDeployW: num(r, 'NoDeploySizeW'),
+      noDeployH: num(r, 'NoDeploySizeH'),
+      tileSizeOverride: num(r, 'TileSizeOverride'),
+      isSummoner: bool(r, 'IsSummoner'),
+      spawnPathfindMorph: null,
       unsupported,
     };
     this.unitCache.set(key, def);
+    const morph = str(r, 'SpawnPathfindMorph');
+    if (morph && this.data.units[morph]) def.spawnPathfindMorph = this.unit(morph, level);
     return def;
   }
 
@@ -659,6 +688,8 @@ export class Defs {
       spawnCount: 0,
       spawnDeployTime: -1,
       spawnProjectile: null,
+      maxTargets: 0,
+      directionalPushback: false,
     };
     const def: UnitDef = {
       name,
@@ -722,6 +753,13 @@ export class Defs {
       hideTime: 0,
       upTime: 0,
       spawnPathfindSpeed: 0,
+      morphKeepTarget: false,
+      keepTargetWithPendingDamage: false,
+      noDeployW: num(r, 'NoDeploySizeW'),
+      noDeployH: num(r, 'NoDeploySizeH'),
+      tileSizeOverride: num(r, 'TileSizeOverride'),
+      isSummoner: bool(r, 'IsSummoner'),
+      spawnPathfindMorph: null,
       unsupported: [],
     };
     this.unitCache.set(key, def);
@@ -825,6 +863,8 @@ export class Defs {
       spellAsDeploy: bool(r, 'SpellAsDeploy'),
       canDeployOnEnemySide: bool(r, 'CanDeployOnEnemySide'),
       canPlaceOnWater: bool(r, 'CanPlaceOnWater'),
+      canPlaceOnBuildings: bool(r, 'CanPlaceOnBuildings'),
+      deployWTileMargin: num(r, 'DeployWTileMargin'),
       unsupported,
     };
     this.cardCache.set(key, def);
