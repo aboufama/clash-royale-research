@@ -7,6 +7,7 @@
 // 16-direction galleries of run / attack / idle around the field), units (&action=run1|attack1|idle1),
 // fx (every baked effect looping), hud (cards, HUD panels, health bars),
 // compare (&lib=&export=&frame=&scale=&ox=&oy=&w=&h= : one clip, for pixel comparison with render.py).
+// all (every baked unit/building, area effects, buffs, ruins, deploy timers, card thumbnails),
 // ?t=<ms> freezes time (effects are simulated up to t deterministically); ?shot hides the overlay box.
 
 import {
@@ -112,7 +113,13 @@ for (const [fam, url] of Object.entries(m.fonts ?? {})) {
 }
 r.clearTextCache();
 
-const chars = Object.keys(m.characters).filter((n) => n !== m.towers.princess.character);
+// galleries / arena fighters: the original 22-unit set (all characters with ?set=all)
+const ARENA_SET = ['Knight', 'Archer', 'Giant', 'Musketeer', 'MiniPekka', 'Valkyrie', 'BabyDragon', 'Minion', 'Skeleton',
+  'Goblin', 'SpearGoblin', 'Bomber', 'Wizard', 'Barbarian', 'Pekka', 'MegaMinion', 'Princess', 'BlowdartGoblin',
+  'RoyalGiant', 'Bat', 'DartBarrell', 'AngryBarbarian'];
+const chars = params.get('set') === 'all'
+  ? Object.keys(m.characters).filter((n) => n !== m.towers.princess.character && m.characters[n].actions && Object.keys(m.characters[n].actions).length)
+  : ARENA_SET.filter((n) => m.characters[n]);
 const fx = new EffectPlayer(art, 7);
 const A = art.yScale;
 
@@ -271,11 +278,17 @@ function drawArenaScene(t: number): void {
     const kpy = art.gameToPx(kx, ky)[1];
     const activation = team === 1 ? (actT > 1000 ? actT - 1000 : undefined) : undefined;
     const aim = team === 1 ? -Math.PI / 2 + Math.sin(t / 900) * 1.2 : undefined;
-    items.push({ y: kpy, draw: () => art.drawKingTower(r, team, t, activation, aim) });
+    const ruins = params.has('ruins') && team === 1;
+    if (ruins) art.drawTowerRuin(r, 'king', team);
+    else items.push({ y: kpy, draw: () => art.drawKingTower(r, team, t, activation, aim) });
     for (const side of ['princessLeft', 'princessRight'] as const) {
       const [px, py] = art.towerPos(side, team);
       const tpy = art.gameToPx(px, py)[1];
       const attacking = Math.floor(t / 3000) % 2 === 1;
+      if (ruins && side === 'princessLeft') {
+        art.drawTowerRuin(r, side, team);
+        continue;
+      }
       items.push({ y: tpy, draw: () => art.drawPrincessTower(r, team, side, t, attacking ? 'attack' : 'idle', team === 0 ? Math.PI / 2 : -Math.PI / 2, t % 1200) });
     }
   }
@@ -315,13 +328,14 @@ function drawArenaScene(t: number): void {
 
   // projectile showcase above the field (drawn on top): each one spins through its directions
   const projNames = Object.keys(m.projectiles).filter((p) => m.projectiles[p].export);
-  r.drawRect(-330, -360, 660, 250, [0.08, 0.1, 0.08, 0.8]);
-  labels.push({ x: -320, y: -366, text: 'projectiles (velocity direction rotating; shadow below)', size: 12, color: '#ffd' });
+  const PC = 14, prow = Math.ceil(projNames.length / PC);
+  r.drawRect(-330, -450, 660, prow * 100 + 40, [0.08, 0.1, 0.08, 0.8]);
+  labels.push({ x: -320, y: -456, text: 'projectiles (velocity direction rotating; shadow below)', size: 12, color: '#ffd' });
   projNames.forEach((p, i) => {
-    const x = -290 + (i % 9) * 72, y = -300 + Math.floor(i / 9) * 120;
+    const x = -305 + (i % PC) * 47, y = -400 + Math.floor(i / PC) * 100;
     const [gx, gy] = art.pxToGame(x, y + 40);
     const ang = t / 900 + i * 0.7;
-    labels.push({ x: x - 32, y: y + 62, text: p, size: 7 });
+    labels.push({ x: x - 22, y: y + 58 - (i % 2) * 9, text: p, size: 6 });
     art.drawProjectile(r, p, 0, gx, gy, 2300, Math.cos(ang) * 1000, Math.sin(ang) * 1000, Math.sin(ang * 0.7) * 600, t, true);
   });
 
@@ -424,6 +438,139 @@ function drawHudMode(t: number): void {
   });
 }
 
+// -- "all" mode: every baked unit / building, area effects, buffs, ruins, deploy timers, thumbnails --
+
+const allUnits = Object.keys(m.characters);
+const COLS = 10, CW = 130, CH = 135;
+const unitRows = Math.ceil(allUnits.length / COLS);
+const aeoNames = Object.keys(m.areaEffects ?? {});
+const AEO_Y = unitRows * CH + 120, AW = 260, AH = 230;
+const BUFF_Y = AEO_Y + Math.ceil(aeoNames.length / 5) * AH + 80;
+const buffNames = Object.keys(m.buffs ?? {});
+const aeoPeriod = (n: string) => Math.max(1500, ((m.areaEffects?.[n]?.lifeDuration as number) ?? 0) + 1200);
+const aeoNext = new Map<string, number>();
+
+function aeoCell(i: number): [number, number] {
+  return [(i % 5) * AW + AW / 2, AEO_Y + Math.floor(i / 5) * AH + AH / 2];
+}
+
+function allEvents(t: number): void {
+  aeoNames.forEach((n, i) => {
+    let next = aeoNext.get(n) ?? 0;
+    while (next <= t) {
+      const [cx, cy] = aeoCell(i);
+      const [gx, gy] = art.pxToGame(cx, cy);
+      const a = m.areaEffects![n];
+      const src = a.sourceEffects ? Object.values(a.sourceEffects)[0] : undefined;
+      art.playAreaEffect(fx, n, gx, gy, { team: 0, sourceEffect: src });
+      if (a.projectile && m.projectiles[a.projectile]?.hitEffect) fx.play(m.projectiles[a.projectile].hitEffect!, gx, gy);
+      next += aeoPeriod(n);
+    }
+    aeoNext.set(n, next);
+  });
+}
+
+function drawAllMode(t: number): void {
+  labels = [];
+  const total = BUFF_Y + 420;
+  r.drawRect(-20, -60, COLS * CW + 60, total, [0.38, 0.5, 0.28, 1]);
+  labels.push({ x: 0, y: -30, text: `${allUnits.length} characters / buildings (blue: attack or default state, aim rotating; red right)`, size: 13, color: '#ffd' });
+  const items: { y: number; draw: () => void }[] = [];
+  allUnits.forEach((n, i) => {
+    const cx = (i % COLS) * CW + CW / 2, cy = Math.floor(i / COLS) * CH + CH * 0.62;
+    const a = m.characters[n];
+    labels.push({ x: cx - CW / 2 + 4, y: cy + CH * 0.36, text: n, size: 9 });
+    const ang = (t / 1400) % (Math.PI * 2);
+    for (const team of [0, 1] as Team[]) {
+      const [gx, gy] = art.pxToGame(cx + (team === 0 ? -26 : 26), cy);
+      const isB = a.kind === 'building' || !!a.clip;
+      let state: string | undefined;
+      let stateMs = 0;
+      if (a.clip?.blue?.labels) {
+        const lb = Object.values(a.clip.blue.labels);
+        const cyc = ['appear', 'up', 'hide', 'hidden', 'deploy', 'attack', 'idle'].filter((x) => lb.includes(`${x}_start`) || lb.includes(x) || (x === 'up' && lb.includes('appear_end')) || (x === 'hidden' && lb.includes('idle')));
+        if (cyc.length) {
+          const k = Math.floor(t / 1200) % cyc.length;
+          state = cyc[k];
+          stateMs = t % 1200;
+        }
+      }
+      const z = -((a.flyingHeight as number) ?? 0) * 0.6;
+      items.push({ y: cy + (team ? 0.1 : 0), draw: () => {
+        if (isB) art.drawBuilding(r, n, team, gx, gy, t, { aim: team === 0 ? ang : -ang, state, stateMs, z, action: 'attack', actionMs: t % 1500 });
+        else art.drawUnit(r, n, team, gx, gy, 'attack', team === 0 ? -Math.PI / 4 : Math.PI * 0.75, t % ((a.hitSpeed as number) ?? 1200), { z });
+      } });
+    }
+  });
+  items.sort((p, q) => p.y - q.y);
+  for (const it of items) it.draw();
+
+  // area effects
+  labels.push({ x: 0, y: AEO_Y - 30, text: 'area effects (looping at their data radius / lifetime; ellipse = Radius)', size: 13, color: '#ffd' });
+  aeoNames.forEach((n, i) => {
+    const [cx, cy] = aeoCell(i);
+    const a = m.areaEffects![n];
+    const rad = (a.radius as number) ?? 1000;
+    // radius marker: 32 dots on the ground ellipse
+    for (let k = 0; k < 32; k++) {
+      const th = (k / 32) * Math.PI * 2;
+      const [gx, gy] = art.pxToGame(cx, cy);
+      const [px, py] = art.gameToPx(gx + Math.cos(th) * rad, gy + Math.sin(th) * rad);
+      r.drawRect(px - 1.5, py - 1.5, 3, 3, [1, 1, 1, 0.8]);
+    }
+    labels.push({ x: cx - AW / 2 + 6, y: cy + AH / 2 - 8, text: `${n} r=${rad} life=${a.lifeDuration ?? '-'}`, size: 9 });
+  });
+  fx.draw(r, 'Ground');
+  fx.draw(r, 'GroundAbility');
+  r.beginShadows();
+  fx.draw(r, 'Shadow');
+  const sh = m.arena.shadow;
+  r.endShadows([(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, (sh.ShadowA ?? 50) / 100], 2.5);
+  for (const layer of ['Base', 'Object', 'Above']) fx.draw(r, layer);
+
+  // buffs on a Knight, ruins, deploy timers
+  labels.push({ x: 0, y: BUFF_Y - 30, text: 'buff colour filters (Knight), hit flash, tower ruins, deploy timers', size: 13, color: '#ffd' });
+  [...buffNames, 'flash'].forEach((b, i) => {
+    const cx = 60 + i * 95, cy = BUFF_Y + 90;
+    const [gx, gy] = art.pxToGame(cx, cy);
+    const o = b === 'flash' ? { flashMs: t % 600 } : { buffs: [{ name: b, ms: t % 3000 }] };
+    art.drawUnit(r, 'Knight', 0, gx, gy, 'run', -Math.PI / 2, t, o);
+    labels.push({ x: cx - 40, y: cy + 40, text: b, size: 9 });
+  });
+  const ruinY = BUFF_Y + 270;
+  const k = m.towers.king, pr = m.towers.princess;
+  r.draw(art.lib(k.sc), k.destroyed, 0, [1, 0, 0, 1, 120, ruinY]);
+  r.draw(art.lib(pr.sc), pr.destroyed, 0, [1, 0, 0, 1, 300, ruinY]);
+  for (const ex of ['kingtower_destroyed', 'princesstower_destroyed']) {
+    // shark-skin ruins (not the default), shown small for reference
+    if (art.lib(k.sc).has(ex)) r.draw(art.lib(k.sc), ex, 0, [0.4, 0, 0, 0.4, ex.startsWith('king') ? 800 : 870, ruinY]);
+  }
+  labels.push({ x: 60, y: ruinY + 70, text: `${k.destroyed}`, size: 9 });
+  labels.push({ x: 250, y: ruinY + 70, text: `${pr.destroyed}`, size: 9 });
+  [0.15, 0.5, 0.85].forEach((f, i) => {
+    art.drawDeployTimer(r, 0, 480 + i * 90, ruinY, (f + t / 4000) % 1);
+    art.drawDeployTimer(r, 1, 480 + i * 90, ruinY + 70, (f + t / 4000) % 1);
+  });
+  labels.push({ x: 440, y: ruinY + 110, text: 'troopDeployTimer_player / _enemy', size: 9 });
+}
+
+// card thumbnails (data URLs) shown as DOM images, proving the cardThumbnail path
+if (mode === 'all' || mode === 'hud') {
+  const strip = document.createElement('div');
+  strip.style.cssText = 'position:fixed;right:8px;top:8px;display:flex;flex-wrap:wrap;gap:4px;max-width:46vw;justify-content:flex-end;pointer-events:none';
+  document.body.appendChild(strip);
+  const names = Object.keys(m.cards).slice(0, mode === 'all' ? 70 : 12);
+  void Promise.all(names.map((c) => art.cardThumbnail(c, mode === 'all' ? 44 : 64, { pixelRatio: 1 }))).then((urls) => {
+    urls.forEach((u, i) => {
+      const img = new Image();
+      img.src = u;
+      img.title = names[i];
+      strip.appendChild(img);
+    });
+    (window as unknown as { scThumbs: number }).scThumbs = urls.length;
+  });
+}
+
 function drawCompare(): void {
   const lib = art.lib(params.get('lib') ?? 'chr_knight');
   const s = Number(params.get('scale') ?? 2);
@@ -450,6 +597,8 @@ function frame(now: number): void {
     if (mode === 'arena') {
       fireEvents(simT, nt);
       updateShots(nt);
+    } else if (mode === 'all') {
+      allEvents(simT);
     } else if (mode === 'fx') {
       fxEvents(simT);
     }
@@ -461,6 +610,7 @@ function frame(now: number): void {
   else if (mode === 'units') drawUnitsMode(t);
   else if (mode === 'fx') drawFxMode(t);
   else if (mode === 'hud') drawHudMode(t);
+  else if (mode === 'all') drawAllMode(t);
   r.end();
   drawLabels();
   if (now - last > 500) {
@@ -471,10 +621,11 @@ function frame(now: number): void {
   if (frozen === null) requestAnimationFrame(frame);
 }
 
-if (mode === 'arena') fit([-1320, -460, 2640, 2420]);
+if (mode === 'arena') fit([-1320, -480, 2640, 2440]);
 else if (mode === 'units') fit([-150, -70, 16 * 64 + 170, chars.length * 90 + 90]);
 else if (mode === 'fx') fit([0, 0, 1500, Math.ceil(fxCells.length / 10) * 150 + 20]);
 else if (mode === 'hud') fit([-20, -20, 1400, 1120]);
+else if (mode === 'all') fit([-20, -60, COLS * CW + 60, BUFF_Y + 420]);
 else resize();
 const zoomParam = params.get('zoom');
 if (zoomParam) {

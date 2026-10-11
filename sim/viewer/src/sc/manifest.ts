@@ -17,7 +17,26 @@ export interface ClipRef {
   labels?: Record<string, string>;
 }
 
+/** Single labelled clip of a building (or a character drawn without direction exports). */
+export interface BuildingClip {
+  export: string;
+  frames: number;
+  fps: number;
+  labels?: Record<string, string>;
+  turretChild?: string; // child whose frame is the aim (19 frames over 180 degrees, up -> right -> down)
+  turretFrames?: number;
+}
+
 export interface CharacterArt {
+  kind?: 'character' | 'building';
+  /** buildings / single-clip units: blue + red clips */
+  clip?: { blue?: BuildingClip; red?: BuildingClip };
+  /** buildings drawn in two parts (e.g. a top over the attached character) */
+  top?: { blue?: ClipRef; red?: ClipRef };
+  turretMovement?: number;
+  hasRotationOnTimeline?: boolean;
+  lifeTime?: number;
+  deathAreaEffect?: string;
   sc: string;
   blue: string;
   red: string;
@@ -179,14 +198,17 @@ export interface TowerArt {
   positions: { king: [number, number]; princessLeft: [number, number]; princessRight: [number, number] };
   king: {
     sc: string; blue: string; red: string; frames: number; fps: number; labels: Record<string, string>;
-    turretChild: string; kingChild: string; turretFrames: number; destroyed: string;
+    turretChild: string; kingChild: string; turretFrames: number;
+    destroyed: string; // rubble export (drawn by drawKingTower(destroyed)); destroyedLayer: 'Base' | 'Ground'
+    destroyedLayer?: string;
     king: { sc: string; blue: string; red: string; frames: number; fps: number };
     healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
     shadow: Record<string, number>; effects: Record<string, string>; projectile?: string;
   };
   princess: {
     sc: string; base: { blue: string; red: string }; top: { blue: string; red: string }; character: string;
-    destroyed: string; healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
+    destroyed: string; destroyedLayer?: string;
+    healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
     shadow: Record<string, number>; effects: Record<string, string>; projectile?: string;
   };
 }
@@ -199,8 +221,41 @@ export interface CardArt {
   [k: string]: unknown;
 }
 
+export interface AreaEffectArt {
+  radius?: number; // game units the ScaledEffect is authored for
+  lifeDuration?: number; // ms
+  hitSpeed?: number;
+  buff?: string;
+  buffTime?: number;
+  pushback?: number;
+  projectile?: string; // e.g. Lightning bolts
+  spawnAreaEffectObject?: string;
+  spawnCharacter?: string;
+  /** scaledEffect (ground circle, scale by radius), loopingEffect (for the lifetime), oneShotEffect,
+   * spawnEffect, hitEffect */
+  effects: Record<string, string>;
+  clip?: ClipRef;
+  /** deathEffect of units whose DeathAreaEffect is this AEO (the visual of e.g. GolemDeathExplosion) */
+  sourceEffects?: Record<string, string>;
+  [k: string]: unknown;
+}
+
+export interface BuffArt {
+  speedMultiplier?: number;
+  hitSpeedMultiplier?: number;
+  spawnSpeedMultiplier?: number;
+  damagePerSecond?: number;
+  /** colour filter clip applied to the buffed unit (loop = pulses, else eases in and holds) */
+  filter?: ClipRef & { loop: boolean };
+  effect?: string; // effect attached to the unit while buffed (FollowParent)
+  markEffect?: string;
+  [k: string]: unknown;
+}
+
 export interface Manifest {
   version: number;
+  areaEffects?: Record<string, AreaEffectArt>;
+  buffs?: Record<string, BuffArt>;
   libs: Record<string, { json: string }>;
   characters: Record<string, CharacterArt>;
   spells: Record<string, { card: string; projectile?: string; effect?: string; [k: string]: unknown }>;

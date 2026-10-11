@@ -94,5 +94,7 @@ Engine: `sim/core` (TypeScript, 20 Hz, integer game units). Tests: `cd sim && np
 
 | Item | Level | Notes |
 | --- | --- | --- |
-| Unit, tower, projectile, effect art | – | Being built: original SC2 movie clips played back in WebGL from the build's `.sc`/`.sctx` files (tools/art/bake_web.py) |
+| Unit, building, tower, projectile, effect art | D/A | Original SC2 movie clips from the build's `.sc`/`.sctx` files (tools/art/bake_web.py), played in WebGL for all 70 supported cards (D). Clip choice from engine state (deploy / attack timed to the hit tick / run / idle), building turrets and Tesla states, and effect/particle playback timing (A) |
+| Area effects, buff filters, tower ruins | D/A | Area-effect ground circles scaled to the data radius, looping/one-shot effects for the object's lifetime; buff colour filters (cold, rage, poison); white hit flash approximated with `filter_target`; tower ruins from the default death effects' permanent particles (D); buff filter ease-out on expiry not recovered (A) |
+| Deploy clock, card art | D | `troopDeployTimer_player/_enemy` over deploying units (fraction of DeployTime); hand and palette use the original card frame, icon and elixir cost |
 | HUD (hand, elixir, clock, crowns, HP bars) | A | Placeholder HTML/canvas styling, not the game's HUD art yet |

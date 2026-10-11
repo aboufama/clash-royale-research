@@ -47,6 +47,16 @@ export interface PlayOptions {
   follow?: () => [number, number, number] | null;
   /** parent velocity in game units / s (for Inertia) */
   velocity?: () => [number, number, number];
+  /** end the effect after this many ms: loops stop, clips fade out over `fadeMs`, emitters stop */
+  durationMs?: number;
+  /** fade-out length for clips when `durationMs` elapses (default 300) */
+  fadeMs?: number;
+  /** area effects: scale everything by radius / refRadius (ScaledEffects are authored at refRadius) */
+  radius?: number;
+  refRadius?: number;
+  /** skip emitters whose particles are permanent (life >= 100 s), e.g. the rubble a tower death effect
+   * leaves behind; draw that with BattleArt.drawKingTower/drawPrincessTower(destroyed) instead */
+  skipPersistent?: boolean;
 }
 
 export interface DrawItem {
@@ -77,6 +87,10 @@ type Comp = SwfComp | EmitComp | NestComp;
 interface EffectInst {
   name: string;
   def: EffectDef;
+  age: number; // ms since start (not reset by loops)
+  killAt: number; // ms (Infinity = never)
+  killed: boolean;
+  fade: number; // 1 -> 0 while fading out after killAt
   x: number; y: number; z: number; // game units (current)
   t: number;
   scale: number;
@@ -141,10 +155,14 @@ export class EffectPlayer {
     return id;
   }
 
-  /** Stop a (looping) effect: no new particles/loops; live particles finish. */
-  stop(handle: number): void {
+  /** Stop a (looping) effect: no new particles/loops; live particles finish. With `fadeOut`,
+   * clips also fade out (as when `durationMs` elapses). */
+  stop(handle: number, fadeOut = false): void {
     const e = this.handles.get(handle);
-    if (e) e.stopped = true;
+    if (e) {
+      e.stopped = true;
+      if (fadeOut && !e.killed) e.killAt = e.age;
+    }
     this.handles.delete(handle);
   }
 
@@ -162,8 +180,15 @@ export class EffectPlayer {
       name = def.EnemyVersion;
       def = effects[name];
     }
+    // a nested effect that (via EnemyVersion or directly) contains itself would recurse forever
+    let depth = 0;
+    for (let p = parent; p; p = p.parent) {
+      if (p.name === name || ++depth > 8) return null;
+    }
+    const radiusScale = opts.radius && opts.refRadius ? opts.radius / opts.refRadius : 1;
     const inst: EffectInst = {
-      name, def, x, y, z: opts.z ?? 0, t: 0, scale: ((def.Scale ?? 100) / 100) * (opts.scale ?? 1), team,
+      name, def, age: 0, killAt: opts.durationMs ?? Infinity, killed: false, fade: 1,
+      x, y, z: opts.z ?? 0, t: 0, scale: ((def.Scale ?? 100) / 100) * (opts.scale ?? 1) * radiusScale, team,
       angle: opts.angle ?? 0, comps: [], stopped: false, done: false, opts, parent,
     };
     inst.comps = this.makeComps(inst);
@@ -179,6 +204,7 @@ export class EffectPlayer {
       } else if (c.type === 'ParticleEmitter' && c.emitter) {
         let e = this.art.manifest.emitters[c.emitter];
         if (!e) continue;
+        if (inst.opts.skipPersistent && (e.ParticleMinLife ?? 0) >= 100000) continue;
         if (inst.team === 1 && e.EnemyVersion && this.art.manifest.emitters[e.EnemyVersion]) {
           e = this.art.manifest.emitters[e.EnemyVersion];
         }
@@ -210,6 +236,12 @@ export class EffectPlayer {
     }
     const t0 = e.t;
     e.t += dt;
+    e.age += dt;
+    if (e.age >= e.killAt) {
+      e.stopped = true;
+      e.killed = true;
+      e.fade = Math.max(0, 1 - (e.age - e.killAt) / (e.opts.fadeMs ?? 300));
+    }
     if (t0 === 0 && e.def.ShakeScreen) this.shake = Math.max(this.shake, e.def.ShakeScreen);
     const forced = e.def.ForcedLength;
     let allDone = true;
@@ -224,10 +256,15 @@ export class EffectPlayer {
       if (c.kind === 'swf') {
         const frames = c.c.frames ?? 1, fps = c.c.fps || 30;
         if (!e.def.Loop && (lt * fps) / 1000 >= frames) c.done = true;
-        if (e.def.Loop && e.stopped) c.done = true;
+        if (e.def.Loop && e.stopped && !e.killed) c.done = true;
+        if (e.killed && e.fade <= 0) c.done = true;
       } else if (c.kind === 'nest') {
         if (!c.inst) {
-          c.inst = this.make(c.c.effect!, e.x, e.y, { team: e.team, angle: e.angle, scale: e.scale * ((c.c.scale ?? 100) / 100), z: e.z, velocity: e.opts.velocity }, e);
+          c.inst = this.make(c.c.effect!, e.x, e.y, {
+            team: e.team, angle: e.angle, scale: e.scale * ((c.c.scale ?? 100) / 100), z: e.z, velocity: e.opts.velocity,
+            durationMs: Number.isFinite(e.killAt) ? Math.max(0, e.killAt - e.age) : undefined, fadeMs: e.opts.fadeMs,
+            skipPersistent: e.opts.skipPersistent,
+          }, e);
           if (!c.inst) { c.done = true; continue; }
         }
         if (e.stopped) c.inst.stopped = true;
@@ -260,7 +297,7 @@ export class EffectPlayer {
     }
     const max = em.ParticleCount ?? 1;
     const hasInterval = (em.ParticleMinInterval ?? 0) > 0 || (em.ParticleMaxInterval ?? 0) > 0;
-    const emitting = !e.stopped || !e.def.Loop;
+    const emitting = !e.stopped || (!e.def.Loop && !e.killed);
     if (emitting && em.particles.length) {
       if (!hasInterval) {
         if (c.emitted === 0) for (let i = 0; i < max; i++) this.emit(e, c, sc, i, max, 0);
@@ -374,7 +411,8 @@ export class EffectPlayer {
         const fps = comp.fps || 30, frames = comp.frames ?? 1;
         let f = Math.floor((lt * fps) / 1000);
         f = e.def.Loop ? f % frames : Math.min(frames - 1, f);
-        out.push({ layer, sortY: groundY, draw: (r) => r.draw(lib, comp.export!, f, [s, 0, 0, s, ox, oy]) });
+        const col: Col = [1, 1, 1, e.fade, 0, 0, 0];
+        out.push({ layer, sortY: groundY, draw: (r) => r.draw(lib, comp.export!, f, [s, 0, 0, s, ox, oy], col) });
         continue;
       }
       const em = c.e;

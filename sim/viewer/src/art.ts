@@ -31,7 +31,10 @@ export function createArt(_manifest: unknown): ArtHooks {
           console.warn('font', fam, err);
         }
       }
-      renderThumbnails(art, thumbs);
+      // original card art (frame + icon + elixir cost) for the DOM hands and palette
+      await Promise.all(Object.keys(art.manifest.cards).map(async (card) => {
+        try { thumbs.set(card, await art.cardThumbnail(card, 120)); } catch (err) { console.warn('card', card, err); }
+      }));
       const r = new ScRenderer(canvas);
       r.clearTextCache();
       return new ArtWorld(art, r, cam, canvas);
@@ -40,22 +43,6 @@ export function createArt(_manifest: unknown): ArtHooks {
       return thumbs.get(card) ?? null;
     },
   };
-}
-
-/** Render each card's in-battle art (card frame + icon + cost) once, as data URLs for the DOM hand. */
-function renderThumbnails(art: BattleArt, out: Map<string, string>): void {
-  const c = document.createElement('canvas');
-  c.width = 150;
-  c.height = 182;
-  let r: ScRenderer;
-  try { r = new ScRenderer(c, { alpha: true, preserveDrawingBuffer: true }); } catch { return; }
-  for (const card of Object.keys(art.manifest.cards)) {
-    r.begin([0, 0, 0, 0]);
-    r.setView(1, 0, 0, 1, 0, 0);
-    art.drawCard(r, card, [0.72, 0, 0, 0.72, 75, 92]);
-    r.end();
-    out.set(card, c.toDataURL('image/png'));
-  }
 }
 
 interface DrawItem { y: number; draw: () => void }
@@ -67,6 +54,8 @@ export class ArtWorld implements WorldRenderer {
   private canvas: HTMLCanvasElement;
   private fx: EffectPlayer;
   private lastNow = 0;
+  /** Running area-effect visuals by engine AEO id. */
+  private aeoFx = new Map<number, { stop(): void }>();
   /** SC px -> CSS px scale and offset (screen = s * px + v). */
   private s = 1;
   private vx = 0;
@@ -123,7 +112,14 @@ export class ArtWorld implements WorldRenderer {
         const ca = m.characters[e.name];
         let eff = ca?.effects?.deathEffect as string | undefined;
         if (e.type === 'tower') eff = (e.name === 'KingTower' ? m.towers.king.effects?.deathEffect : m.towers.princess.effects?.deathEffect) as string | undefined;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        // tower rubble is drawn by drawTowerRuin, so skip the effect's permanent particles
+        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, skipPersistent: e.type === 'tower' });
+      } else if (e.type === 'aoe') {
+        const a = b.areaEffects.find((q) => q.id === e.id);
+        const h = this.art.playAreaEffect(this.fx, e.name, e.x, e.y, {
+          team, radius: a?.def.radius, durationMs: a ? a.def.lifeDuration : undefined,
+        });
+        if (h.handles.length) this.aeoFx.set(e.id, h);
       } else if (e.type === 'cast') {
         const sp = m.spells[e.name];
         const eff = sp?.effect;
@@ -150,8 +146,18 @@ export class ArtWorld implements WorldRenderer {
     r.setView(this.s * dpr, 0, 0, this.s * dpr, this.vx * dpr, this.vy * dpr);
     art.drawBackground(r);
     art.drawArenaObjects(r, sim, ['Base']);
+    // destroyed towers leave the game's rubble on the ground layer
+    for (const u of b.units) {
+      if (u.tower === TOWER_NONE || u.state !== ST_DEAD) continue;
+      const kind = u.tower === TOWER_KING ? 'king' : u.x < 9000 ? 'princessLeft' : 'princessRight';
+      art.drawTowerRuin(r, kind, u.team as Team);
+    }
     this.fx.draw(r, 'Ground');
     this.fx.draw(r, 'GroundAbility');
+    // stop area-effect visuals whose engine object has expired
+    if (this.aeoFx.size) {
+      for (const [id, h] of this.aeoFx) if (!b.areaEffects.some((q) => q.id === id)) { h.stop(); this.aeoFx.delete(id); }
+    }
 
     // unit shadows
     const sh = m.arena.shadow;
@@ -172,9 +178,9 @@ export class ArtWorld implements WorldRenderer {
 
     // towers
     for (const u of b.units) {
-      if (u.tower === TOWER_NONE) continue;
+      if (u.tower === TOWER_NONE || u.state === ST_DEAD) continue;
       const team = u.team as Team;
-      const dead = u.state === ST_DEAD;
+      const dead = false;
       const py = ypx(u.x, u.y);
       if (u.tower === TOWER_KING) {
         let act: number | undefined;
@@ -195,9 +201,9 @@ export class ArtWorld implements WorldRenderer {
       const [px, py] = art.gameToPx(o.x, 32000 - o.y);
       items.push({ y: py, draw: () => r.draw(art.lib(o.sc), o.export, 0, [1, 0, 0, 1, px, py]) });
     }
-    // units
+    // units (0-HP actors such as death bombs and the Rage bottle are drawn too)
     for (const u of b.units) {
-      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling || u.maxHp <= 0) continue;
+      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling) continue;
       const ca = m.characters[u.def.name];
       const x = f.ux(u);
       const y = f.uy(u);
@@ -211,13 +217,14 @@ export class ArtWorld implements WorldRenderer {
       const st = this.unitState(u, f);
       const flying = u.def.flyingHeight > 0;
       const py = ypx(x, y) + (flying ? 2000 : 0);
-      const alpha = u.hidden ? 0.35 : 1;
-      items.push({
-        y: py,
-        draw: () => {
-          art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, { deployMs: st.deployMs, alpha });
-        },
-      });
+      const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: (b.tick - q.startTick) * 50 + f.alpha * 50 })) : undefined;
+      const flashMs = b.tick - u.lastHurtTick < 10 ? (b.tick - u.lastHurtTick) * 50 + f.alpha * 50 : undefined;
+      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, flashMs };
+      if (u.def.hides) {
+        // Tesla: closed while hidden, rising for UpTimeMs, then up
+        if (u.hidden && u.upMs > 0) { o.state = 'appear'; o.stateMs = u.upMs + f.alpha * 50; } else o.state = u.hidden ? 'hidden' : 'up';
+      }
+      items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
     }
     // projectiles
     for (const p of b.projectiles) {
@@ -236,6 +243,14 @@ export class ArtWorld implements WorldRenderer {
     items.sort((a, c) => a.y - c.y);
     for (const it of items) it.draw();
     this.fx.draw(r, 'Above');
+
+    // deploy clocks over deploying troops and buildings (ui troopDeployTimer)
+    for (const u of b.units) {
+      if (u.state !== ST_DEPLOYING || u.tower !== TOWER_NONE || u.tunneling || u.deployTotal <= 0 || u.maxHp <= 0) continue;
+      const [sx, sy] = art.gameToPx(f.ux(u), f.uy(u), u.def.flyingHeight);
+      const frac = Math.min(1, ((u.deployTotal - u.deployTicks) + f.alpha) / u.deployTotal);
+      art.drawDeployTimer(r, u.team as Team, sx, sy - 45, frac);
+    }
 
     // health bars (original HUD art)
     for (const u of b.units) {

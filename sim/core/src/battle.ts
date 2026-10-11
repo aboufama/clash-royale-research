@@ -1937,7 +1937,7 @@ export class Battle {
         return;
       }
     }
-    const inst = new BuffInst(def, sourceId, ticks);
+    const inst = new BuffInst(def, sourceId, ticks, this.tick);
     const raw = this.data.buffs[def.name];
     inst.hitTimer = raw && raw.HitTickFromSource === true ? 0 : def.hitFrequency;
     u.buffs.push(inst);
@@ -2221,6 +2221,7 @@ export class Battle {
         else if (this.dmgPct[i] !== 0) amount = Math.trunc(((Math.max(this.dmgPct[i], -100) + 100) * amount + 99) / 100);
         if (t.tower === TOWER_KING && t.kingState === KING_INACTIVE && amount > 0) this.activateKing(t);
       }
+      if (amount > 0) t.lastHurtTick = this.tick;
       // Shield absorbs first; excess damage on the breaking hit is lost [OBS].
       if (t.shield > 0) {
         t.shield = Math.max(0, t.shield - amount);

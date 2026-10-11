@@ -39,8 +39,9 @@ Logic CSV/TOML (FileName, BlueExportName, Projectile ExportName, ...) are 9-byte
 ## Web bake for the browser renderer (`bake_web.py`)
 
 ```sh
-.venv/bin/python tools/art/bake_web.py                 # default units + Fireball/Arrows, ~50 s
-.venv/bin/python tools/art/bake_web.py --chars Knight,Archers,Giant --format png --downscale 0.5
+.venv/bin/python tools/art/bake_web.py                 # the engine's 70 cards + spawns, ~2 min
+.venv/bin/python tools/art/bake_web.py --cards Knight,Archer,Fireball --units "" --projectiles "" \
+    --aeos "" --buffs "" --format png --downscale 0.5   # a small subset
 .venv/bin/python tools/art/bake_web.py --list-chars    # names accepted by --chars (character or card)
 cd sim && npx esbuild viewer/src/sc-test.ts --bundle --format=esm --outfile=viewer/dist/sc-test.js \
     --servedir=viewer --serve=8090                     # gallery: http://localhost:8090/sc-test.html
@@ -50,8 +51,10 @@ Output goes to `sim/viewer/assets/` (gitignored, rebuilt by the script): one JSO
 (shapes, clips, compacted matrix banks, exports, masks, text fields; format in the script's
 docstring) plus lossless WebP/PNG atlases, `manifest.json` and the HUD fonts. Libraries are
 tree-shaken to the exports the manifest needs; mostly-unused atlases (effects, ui, ui_spells) are
-repacked with a 4-texel border. Default bake: 31 libraries, 4.4 MB JSON, 54 MB lossless WebP
-(74 MB as PNG; `--downscale 0.5` gives 27 MB WebP). The renderer is `sim/viewer/src/sc/` (WebGL2, see `renderer.ts`).
+repacked with a 4-texel border. The default bake covers the engine's 70 cards with every unit,
+building, projectile, area effect and buff they reach (`--cards`, `--units`, `--projectiles`,
+`--aeos`, `--buffs`): 74 libraries, 10.2 MB JSON, 144 MB lossless WebP (`--downscale 0.5` roughly
+halves the atlases). The first 22-unit set alone was 31 libraries / 54 MB. The renderer is `sim/viewer/src/sc/` (WebGL2, see `renderer.ts`).
 
 What the manifest resolves from the build's data: characters (`FileName`, Blue/Red export names,
 actions found as `<prefix>_<action>_<dir>` with frame counts, fps, labels and `action_frame`,
@@ -61,7 +64,15 @@ nested effects, emitters from `legacy_vfx/emitters.json`), towers (`building_tow
 Princess exports, `chr_king.sc` King, destroyed exports), the arena (`locations.csv` ->
 `locations/<arena>.csv` background + objects -> `decos.csv` art), in-battle card icons
 (`IconFile` in `ui_spells.sc` or `IconSWF`) and HUD/health-bar exports (`ui.sc`,
-`health_bars.csv`, `healthbars.toml`).
+`health_bars.csv`, `healthbars.toml`). Buildings: labelled single clips (`clip`: Tesla
+deploy/idle/appear/hide, Tombstone, bombs, Rage bottle, Elixir Collector), clips with a `turret`
+child (Cannon, X-Bow: 19 aim frames over 180 degrees) or direction exports (Inferno Tower, Mortar).
+`areaEffects` (`area_effect_objects`: radius, lifetime, Scaled/Looping/OneShot/Spawn/Hit effects,
+`sourceEffects` = the dying unit's DeathEffect for death explosions) and `buffs`
+(`character_buffs`: filter clip + loop flag, attached effect). Scaled ground circles are authored
+at the data radius in SC pixels (Freeze 3000 -> `spell_freeze_radius_blue` 178 px wide = 2 x 3 x
+29.85), which independently confirms the arena scale. Tower ruins come from the permanent particle
+of the tower DeathEffect (`Tower_destroyed_ground2` King, `Tower_destroyed_ground1` Princess).
 
 ### Arena alignment (Goblin Stadium `goblin_bgr`, export-local SC pixels, scale 1)
 

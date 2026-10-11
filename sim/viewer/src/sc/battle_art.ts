@@ -10,9 +10,11 @@ import type { Col, Mat } from './math.ts';
 import { matMul, WHITE } from './math.ts';
 import { ScLibraryCache } from './library.ts';
 import type { ScLibrary } from './library.ts';
-import type { CharacterArt, Manifest } from './manifest.ts';
+import type { BuildingClip, CharacterArt, Manifest } from './manifest.ts';
 import { loadManifest } from './manifest.ts';
-import type { DrawOptions, ScRenderer } from './renderer.ts';
+import type { DrawOptions } from './renderer.ts';
+import { ScRenderer } from './renderer.ts';
+import type { EffectPlayer } from './effects.ts';
 import { projectileSprite, turretFrame, unitSprite } from './units.ts';
 import type { ActionName, UnitSprite } from './units.ts';
 
@@ -25,6 +27,22 @@ export interface UnitDrawOptions {
   color?: Col;
   loop?: boolean;
   screenAngle?: boolean; // pick directions from the on-screen angle (default: engine angle)
+  /** active buffs with ms since each was applied: their colour filters are combined (Freeze, Rage...) */
+  buffs?: { name: string; ms: number }[];
+  /** ms since the unit was last hit: plays the white hit flash (effects `filter_target`, approximation) */
+  flashMs?: number;
+  /** buildings: turret / aim angle (engine convention) */
+  aim?: number;
+  /** buildings with a labelled clip: label to show / play (e.g. Tesla 'hidden' | 'appear' | 'up' | 'hide',
+   * Tombstone 'deploy', bombs 'attack'); `<state>_start`..`<state>_end` ranges play over stateMs */
+  state?: string;
+  stateMs?: number;
+}
+
+export interface AreaEffectHandle {
+  handles: number[];
+  /** stop everything now (clips fade out) */
+  stop(): void;
 }
 
 export class BattleArt {
@@ -163,6 +181,15 @@ export class BattleArt {
     r.draw(lib, exp, frame, [1, 0, 0, 1, px, py], WHITE, { childFrame: clock, named });
   }
 
+  /** Rubble left by a destroyed tower (manifest towers.*.destroyed; layer Base / Ground: draw it
+   * with the ground pass, under units). Same as drawKingTower/drawPrincessTower(..., destroyed=true). */
+  drawTowerRuin(r: ScRenderer, kind: 'king' | 'princessLeft' | 'princessRight', team: Team): void {
+    const t = kind === 'king' ? this.manifest.towers.king : this.manifest.towers.princess;
+    const [x, y] = this.towerPos(kind, team);
+    const [px, py] = this.gameToPx(x, y);
+    r.draw(this.lib(t.sc), t.destroyed, 0, [1, 0, 0, 1, px, py]);
+  }
+
   /** Princess tower: base, tower princess (character art), top. */
   drawPrincessTower(r: ScRenderer, team: Team, side: 'princessLeft' | 'princessRight', timeMs: number,
     action: ActionName = 'idle', angle?: number, actionMs = timeMs, destroyed = false): void {
@@ -207,10 +234,12 @@ export class BattleArt {
     actionMs: number, o: UnitDrawOptions = {}): UnitSprite | null {
     const art = this.character(name);
     const sp = unitSprite(art, team, action, angle, actionMs, { loop: o.loop, yScale: o.screenAngle ? this.yScale : undefined });
-    if (!sp) return null;
+    if (!sp) {
+      if (art.clip) return this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o });
+      return null;
+    }
     let m = this.unitMatrix(art, sp, x, y, o.z ?? 0);
-    let c: Col = o.color ? [...o.color] as Col : [1, 1, 1, 1, 0, 0, 0];
-    if (o.alpha !== undefined) c[3] *= o.alpha;
+    let c: Col = this.unitColor(o);
     if (o.deployMs !== undefined && art.deployBaseAnimExportName) {
       const f = this.filterAt(art.deployBaseAnimExportName.sc, art.deployBaseAnimExportName.export, o.deployMs);
       if (f) {
@@ -237,7 +266,10 @@ export class BattleArt {
       return;
     }
     const sp = unitSprite(art, team, action, angle, actionMs, { loop: o.loop });
-    if (!sp) return;
+    if (!sp) {
+      if (art.clip) this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o, shadow: true });
+      return;
+    }
     const [px, py] = this.gameToPx(x, y);
     const s = art.scale / 100;
     const sx = ((art.shadowScaleX ?? 100) / 100) * s * (sp.mirror ? -1 : 1);
@@ -245,6 +277,190 @@ export class BattleArt {
     const k = (art.shadowSkew ?? 0) / 100;
     const m: Mat = [sx, 0, -k * sy, sy, px + (art.shadowX ?? 0), py + (art.shadowY ?? 0)];
     r.draw(this.lib(art.sc), sp.export, sp.frame, m);
+  }
+
+  /** Colour transform for a unit from UnitDrawOptions (color, alpha, buff filters, hit flash). */
+  unitColor(o: UnitDrawOptions): Col {
+    let c: Col = o.color ? [...o.color] as Col : [1, 1, 1, 1, 0, 0, 0];
+    if (o.alpha !== undefined) c[3] *= o.alpha;
+    for (const b of o.buffs ?? []) {
+      const bc = this.buffColor(b.name, b.ms);
+      if (bc) c = colMulTo(c, bc);
+    }
+    if (o.flashMs !== undefined && o.flashMs >= 0) {
+      const f = this.filterAt('effects', 'filter_target', o.flashMs);
+      if (f?.c) c = colMulTo(c, f.c);
+    }
+    return c;
+  }
+
+  /**
+   * Colour transform of a buff's filter clip (character_buffs FilterExportName: filter_cold for
+   * Freeze / Zap stun / Ice Wizard slow, filter_rage, filter_poison) `ms` after it was applied.
+   * Pulsing filters loop; easing ones hold their last frame. Null if the buff has no filter.
+   */
+  buffColor(buff: string, ms: number): Col | null {
+    const b = this.manifest.buffs?.[buff];
+    const f = b?.filter;
+    if (!f) return null;
+    const lib = this.libs.get(f.sc);
+    const clip = lib?.clip(f.export);
+    if (!lib || !clip) return null;
+    let fr = Math.floor((Math.max(0, ms) * clip.fps) / 1000);
+    fr = f.loop ? fr % clip.frameCount : Math.min(clip.frameCount - 1, fr);
+    const i = clip.frameStart[fr];
+    if (clip.frameStart[fr + 1] === i) return null;
+    const ci = clip.elements[i * 3 + 2];
+    if (ci < 0) return null;
+    return [...lib.banks[clip.bank].c.subarray(ci * 7, ci * 7 + 7)] as Col;
+  }
+
+  /**
+   * Building (or any unit whose art is one labelled clip): turret aim for clips with a `turret`
+   * child (Cannon, X-Bow: 19 frames over 180 degrees, mirrored for the left half), labelled states
+   * (Tesla hidden/appear/up/hide, Tombstone deploy, bombs attack, Rage bottle deploy), otherwise the
+   * clip loops (Elixir Collector pump). Direction-based buildings (Inferno Tower, Mortar) go through
+   * the unit path with `action` / `aim`. Draws the `top` export too when the data has one.
+   */
+  drawBuilding(r: ScRenderer, name: string, team: Team, x: number, y: number, timeMs: number,
+    o: UnitDrawOptions & { action?: ActionName; actionMs?: number; shadow?: boolean } = {}): UnitSprite | null {
+    const art = this.character(name);
+    const clip: BuildingClip | undefined = team === 1 ? (art.clip?.red ?? art.clip?.blue) : art.clip?.blue;
+    const defAim = team === 0 ? Math.PI / 2 : -Math.PI / 2;
+    if (!clip) {
+      // direction-based building; without a sprite there is nothing to draw (and no recursion)
+      if (!unitSprite(art, team, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, { loop: o.loop })) return null;
+      if (o.shadow) {
+        this.drawUnitShadow(r, name, team, x, y, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, o);
+        return null;
+      }
+      const { state: _s, stateMs: _sm, ...rest } = o;
+      return this.drawUnit(r, name, team, x, y, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, rest);
+    }
+    const lib = this.lib(art.sc);
+    const labels = lib.labels(clip.export);
+    const fps = clip.fps || 30;
+    const clock = Math.floor((timeMs * fps) / 1000);
+    let frame = 0;
+    let done = false;
+    const named: DrawOptions['named'] = {};
+    if (clip.turretChild) {
+      const tf = turretFrame(o.aim ?? defAim, clip.turretFrames ?? clip.frames);
+      frame = clip.frames === (clip.turretFrames ?? clip.frames) ? tf.frame : 0;
+      named[clip.turretChild] = { frame: tf.frame, matrix: tf.mirror ? [-1, 0, 0, 1, 0, 0] : undefined };
+    } else if (o.state) {
+      let st = o.state;
+      if (st === 'up' && labels.appear_end !== undefined) st = 'appear_end';
+      if (st === 'hidden' && labels.idle !== undefined && labels.appear_start !== undefined) st = 'idle';
+      const a = labels[`${st}_start`], b = labels[`${st}_end`];
+      if (a !== undefined && b !== undefined) {
+        frame = Math.min(b, a + Math.floor(((o.stateMs ?? 0) * fps) / 1000));
+        done = frame >= b;
+      } else if (labels[st] !== undefined) {
+        frame = labels[st];
+      }
+    } else {
+      const held = Object.keys(labels).some((l) => l.endsWith('_start') || l === 'idle' || l === 'deploy');
+      frame = held ? 0 : clock % clip.frames;
+    }
+    const [px, py] = this.gameToPx(x, y, (o.z ?? 0) + (art.flyingHeight ?? 0));
+    const s = art.scale / 100;
+    let m: Mat = [s, 0, 0, s, px, py];
+    if (o.shadow) {
+      const sx = ((art.shadowScaleX ?? 100) / 100) * s, sy = ((art.shadowScaleY ?? 100) / 100) * s;
+      const k = (art.shadowSkew ?? 0) / 100;
+      const [gx, gy] = this.gameToPx(x, y);
+      m = [sx, 0, -k * sy, sy, gx + (art.shadowX ?? 0), gy + (art.shadowY ?? 0)];
+    }
+    let c = this.unitColor(o);
+    if (!o.shadow && o.deployMs !== undefined && art.deployBaseAnimExportName) {
+      const f = this.filterAt(art.deployBaseAnimExportName.sc, art.deployBaseAnimExportName.export, o.deployMs);
+      if (f) {
+        m = matMul(m, f.m);
+        c = f.c ? colMulTo(c, f.c) : c;
+      }
+    }
+    r.draw(lib, clip.export, frame, m, c, { childFrame: clip.turretChild ? frame : clock, named });
+    const top = team === 1 ? (art.top?.red ?? art.top?.blue) : art.top?.blue;
+    if (top && !o.shadow) r.draw(lib, top.export, 0, m, c);
+    return { export: clip.export, frame, mirror: false, dir: 0, action: o.state ?? 'clip', frames: clip.frames, fps,
+      done };
+  }
+
+  /**
+   * Area effect object visuals (manifest.areaEffects): OneShotEffect + SpawnEffect once, the
+   * radius-scaled ground circle (ScaledEffect, authored for the data Radius) and the LoopingEffect for
+   * `durationMs` (default LifeDuration; one-shot AEOs like Zap ignore it). Death explosions without
+   * own visuals play `sourceEffect` if given (e.g. the dying unit's deathEffect, see sourceEffects).
+   */
+  playAreaEffect(fx: EffectPlayer, name: string, x: number, y: number,
+    o: { team?: Team; radius?: number; durationMs?: number; z?: number; sourceEffect?: string } = {}): AreaEffectHandle {
+    const a = this.manifest.areaEffects?.[name];
+    const handles: number[] = [];
+    if (a) {
+      const ref = a.radius ?? o.radius ?? 1000;
+      const radius = o.radius ?? ref;
+      const life = o.durationMs ?? a.lifeDuration ?? 0;
+      const longLived = life > 50;
+      const e = a.effects;
+      const base = { team: o.team ?? 0, z: o.z };
+      for (const k of ['oneShotEffect', 'spawnEffect']) {
+        if (e[k]) handles.push(fx.play(e[k], x, y, { ...base, radius, refRadius: ref }));
+      }
+      if (e.scaledEffect) {
+        handles.push(fx.play(e.scaledEffect, x, y, { ...base, radius, refRadius: ref, durationMs: longLived ? life : undefined }));
+      }
+      if (e.loopingEffect && longLived) {
+        handles.push(fx.play(e.loopingEffect, x, y, { ...base, radius, refRadius: ref, durationMs: life }));
+      }
+    }
+    if (o.sourceEffect) handles.push(fx.play(o.sourceEffect, x, y, { team: o.team ?? 0, z: o.z }));
+    const hs = handles.filter((h) => h > 0);
+    return { handles: hs, stop: () => { for (const h of hs) fx.stop(h, true); } };
+  }
+
+  /** Deploy countdown clock over a deploying unit (ui.sc troopDeployTimer_player / _enemy); frac 0..1. */
+  drawDeployTimer(r: ScRenderer, team: Team, px: number, py: number, frac: number, scale = 1): void {
+    const lib = this.libs.get(this.manifest.hud.sc);
+    const exp = team === 0 ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
+    if (!lib || !lib.has(exp)) return;
+    const end = lib.labels(exp).end ?? lib.frameCount(exp) - 1;
+    const f = Math.max(0, Math.min(end, Math.round(frac * end)));
+    r.draw(lib, exp, f, [scale, 0, 0, scale, px, py], WHITE, { childFrame: f });
+  }
+
+  private thumbRenderer: ScRenderer | null = null;
+  private thumbCanvas: HTMLCanvasElement | null = null;
+  private thumbCache = new Map<string, Promise<string>>();
+
+  /**
+   * Render a card (drawCard: frame + original in-battle icon + elixir cost) into an offscreen canvas
+   * and return a PNG data URL for DOM use. width in CSS px (height = width * 198 / 146).
+   */
+  cardThumbnail(card: string, width = 120, opts: { elixir?: number; dim?: boolean; pixelRatio?: number } = {}): Promise<string> {
+    const pr = opts.pixelRatio ?? (typeof devicePixelRatio === 'number' ? devicePixelRatio : 1);
+    const key = `${card}|${width}|${opts.elixir ?? ''}|${opts.dim ? 1 : 0}|${pr}`;
+    let p = this.thumbCache.get(key);
+    if (p) return p;
+    p = (async () => {
+      if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
+      const w = Math.round(width * pr), h = Math.round(((width * 198) / 146) * pr);
+      if (!this.thumbCanvas) {
+        this.thumbCanvas = document.createElement('canvas');
+        this.thumbCanvas.width = w;
+        this.thumbCanvas.height = h;
+        this.thumbRenderer = new ScRenderer(this.thumbCanvas, { alpha: true, antialias: true });
+      }
+      const cv = this.thumbCanvas, r = this.thumbRenderer!;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+      const s = w / 146;
+      r.begin([0, 0, 0, 0]);
+      this.drawCard(r, card, [s, 0, 0, s, w / 2, 110.5 * s], { elixir: opts.elixir, dim: opts.dim });
+      r.end();
+      return cv.toDataURL('image/png');
+    })();
+    this.thumbCache.set(key, p);
+    return p;
   }
 
   /** Matrix + colour of a "filter" clip (single animated element, e.g. the deploy drop/flash). */

@@ -61,6 +61,37 @@ DEFAULT_CHARS = ("Knight,Archer,Giant,Musketeer,MiniPekka,Valkyrie,BabyDragon,Mi
                  "Goblin,SpearGoblin,Bomber,Wizard,Barbarian,Pekka,MegaMinion,Princess,"
                  "DartGoblin,RoyalGiant,Bat,FlyingMachine,EliteBarbarian")
 DEFAULT_SPELLS = "Fireball,Arrows"
+# Everything the engine supports (sim/core, 70 cards): cards, plus units / projectiles / area effects /
+# buffs it spawns. Names that the data chains reach (death spawns, projectile spawns...) are added
+# automatically; these lists make the bake independent of that resolution.
+DEFAULT_CARDS = (
+    "ElectroSpirit,FireSpirits,IceSpirits,Skeletons,BarbLog,Bats,Bomber,Goblins,Log,Rage,Snowball,SpearGoblins,"
+    "Wallbreakers,Zap,Archer,Arrows,BlowdartGoblin,Cannon,ElixirGolem,GoblinBarrel,GoblinGang,IceWizard,Knight,"
+    "MegaMinion,Miner,Minions,SkeletonArmy,SkeletonWarriors,Tombstone,BabyDragon,BattleRam,DarkPrince,DarkWitch,"
+    "ElectroWizard,EliteArcher,Fireball,Freeze,HogRider,InfernoDragon,MiniPekka,Mortar,Musketeer,Poison,"
+    "SkeletonDragons,Tesla,Valkyrie,AxeMan,Balloon,Barbarians,Bowler,ElectroDragon,Giant,InfernoTower,MinionHorde,"
+    "Prince,Rascals,RoyalHogs,Witch,Wizard,AngryBarbarians,BarbarianHut,Elixir Collector,GiantSkeleton,Lightning,"
+    "Rocket,RoyalGiant,Xbow,LavaHound,Pekka,Golem")
+DEFAULT_UNITS = (
+    "ElectroSpirit,FireSpirits,IceSpirits,Skeleton,Barbarian,Bat,Bomber,Goblin_Stab,RageBottle,SpearGoblin,"
+    "Wallbreaker,Archer,BlowdartGoblin,Cannon,ElixirGolem1,ElixirGolem2,ElixirGolem4,BarrelGoblin,IceWizard,Knight,"
+    "MegaMinion,Miner,Minion,SkeletonWarrior,Tombstone,BabyDragon,BattleRam,DarkPrince,DarkWitch,ElectroWizard,"
+    "EliteArcher,HogRider,InfernoDragon,MiniPekka,Mortar,Musketeer,SkeletonDragon,Tesla,Valkyrie,AxeMan,Balloon,"
+    "BalloonBomb,Bowler,ElectroDragon,Giant,InfernoTower,Prince,RascalBoy,RascalGirl,RoyalHog,Witch,Wizard,"
+    "AngryBarbarian,BarbarianHut,ElixirCollector,GiantSkeleton,GiantSkeletonBomb,RoyalGiant,Xbow,LavaHound,"
+    "LavaPups,Pekka,Golem,Golemite,Goblin,DartBarrell,Princess")
+DEFAULT_PROJECTILES = (
+    "ElectroSpiritProjectile,FireSpiritsProjectile,IceSpiritsProjectile,BarbLogProjectile,BarbLogProjectileRolling,"
+    "BombSkeletonProjectile,LogProjectile,LogProjectileRolling,SnowballSpell,SpearGoblinProjectile,"
+    "WallbreakerProjectile,ArcherArrow,ArrowsSpell,BlowdartGoblinProjectile,TowerCannonball,GoblinBarrelSpell,"
+    "ice_wizardProjectile,MegaMinionSpit,MinionSpit,BabyDragonProjectile,EliteArcherArrow,FireballSpell,"
+    "MortarProjectile,MusketeerProjectile,SkeletonDragonProjectile,AxeManProjectile,BowlerProjectile,"
+    "ElectroDragonProjectile,RascalGirlProjectile,WitchProjectile,chr_wizardProjectile,LighningSpell,RocketSpell,"
+    "RoyalGiantProjectile,xbow_projectile,LavaHoundProjectile,LavaPupProjectile,KingProjectile,"
+    "TowerPrincessProjectile")
+DEFAULT_AEOS = ("Rage,RageDamage,Zap,IceWizardCold,ElectroWizardZap,Freeze,Poison,BalloonBombExplosion,"
+                "GiantSkeletonExplosion,Lightning,GolemiteDeathExplosion,GolemDeathExplosion")
+DEFAULT_BUFFS = "ZapFreeze,Freeze,Rage,IceWizardSlowDown,IceWizardCold,Poison"
 # Common names that differ from the build's internal names (card -> character).
 ALIASES = {"DartGoblin": "BlowdartGoblin", "FlyingMachine": "DartBarrell",
            "EliteBarbarian": "AngryBarbarian", "EliteBarbarians": "AngryBarbarian",
@@ -72,9 +103,15 @@ ALIASES = {"DartGoblin": "BlowdartGoblin", "FlyingMachine": "DartBarrell",
 CHAR_EFFECT_FIELDS = ("SpawnEffect", "DeathEffect", "AttackStartEffect", "DamageEffect", "MoveEffect",
                       "ProjectileEffect", "LandingEffect", "ContinuousEffect", "DashEffect",
                       "DashStartEffect", "ChargeEffect", "KamikazeEffect", "TargetedHitEffect",
-                      "AbilityPendingEffect", "ShieldLostEffect", "DamageEffectSpecial")
-CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim")
-PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect")
+                      "AbilityPendingEffect", "ShieldLostEffect", "DamageEffectSpecial", "AppearEffect", "HideEffect",
+                      "LoadAttackEffect1", "LoadAttackEffect2", "LoadAttackEffect3", "LoadAttackEffectReady",
+                      "FlameEffect1", "FlameEffect2", "FlameEffect3", "TargettedDamageEffect1",
+                      "TargettedDamageEffect2", "TargettedDamageEffect3", "DamageLevelTransitionEffect12",
+                      "DamageLevelTransitionEffect23", "SpawnCharacterEffect", "SpawnPathfindEffect",
+                      "IngamePathfindEffect", "ProjectileEffectSpecial", "AttackStartEffect2", "LandingEffect",
+                      "ReflectedAttackEffect", "ReflectedAttackTargetedEffect", "BuffWhenNotAttackingEffect")
+CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim", "DeathSpawnDeployBaseAnim")
+PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect")
 
 HUD_EXPORTS = (
     # bottom panel: hand, elixir bar, next card
@@ -424,6 +461,12 @@ class Baker:
         self.buildings = load_json("buildings")
         self.projs = load_json("projectiles")
         self.aeos = load_json("area_effect_objects")
+        self.buff_tbl = load_json("character_buffs")
+        self.m_chars: dict[str, dict] = {}
+        self.m_projs: dict[str, dict] = {}
+        self.m_aeos: dict[str, dict] = {}
+        self.m_buffs: dict[str, dict] = {}
+        self.m_cards: dict[str, dict] = {}
         self.spells = {}
         for t in ("spells_characters", "spells_other", "spells_buildings"):
             for k, v in load_json(t).items():
@@ -583,19 +626,36 @@ class Baker:
                 d["shadow"] = p["ShadowExportName"]
             if p.get("RedShadowExportName") and self.want(rel, p["RedShadowExportName"]):
                 d["redShadow"] = p["RedShadowExportName"]
-        for k in ("Scale", "Speed", "Gravity", "ConstantHeight", "Radius", "use360Frames", "ShadowDisableRotate",
-                  "Homing", "AlwaysResetAnimation"):
+        for k in ("Scale", "Speed", "Gravity", "ConstantHeight", "Radius", "RadiusY", "use360Frames",
+                  "ShadowDisableRotate", "Homing", "AlwaysResetAnimation", "ProjectileRadius", "ProjectileRadiusY",
+                  "ProjectileRange", "MinDistance", "BuffTime"):
             if k in p:
                 d[k[0].lower() + k[1:]] = p[k]
         for k in PROJ_EFFECT_FIELDS:
             if p.get(k):
                 self.effect(p[k])
                 d[k[0].lower() + k[1:]] = p[k]
+        if p.get("SpawnDeployBaseAnim"):
+            lib = self.want("sc/effects.sc", p["SpawnDeployBaseAnim"])
+            if lib:
+                d["spawnDeployBaseAnim"] = {"sc": lib, "export": p["SpawnDeployBaseAnim"],
+                                            **self.clip_info("sc/effects.sc", p["SpawnDeployBaseAnim"])}
         out[name] = d
-        for k in ("SpawnProjectile", "SpawnChain"):
+        if out is not self.m_projs:
+            self.m_projs[name] = d
+        for k in ("SpawnProjectile",):
             if isinstance(p.get(k), str):
                 self.projectile(p[k], out)
                 d[k[0].lower() + k[1:]] = p[k]
+        if isinstance(p.get("TargetBuff"), str):
+            self.buff(p["TargetBuff"])
+            d["targetBuff"] = p["TargetBuff"]
+        if isinstance(p.get("SpawnCharacter"), str):
+            self.unit(p["SpawnCharacter"])
+            d["spawnCharacter"] = p["SpawnCharacter"]
+        if isinstance(p.get("SpawnAreaEffectObject"), str):
+            self.aeo(p["SpawnAreaEffectObject"])
+            d["spawnAreaEffectObject"] = p["SpawnAreaEffectObject"]
 
     def unit_art(self, name: str, row: dict, projectiles: dict) -> dict | None:
         rel = row.get("FileName")
@@ -656,11 +716,145 @@ class Baker:
                 lib = self.want("sc/effects.sc", row[k])
                 if lib:
                     entry[k[0].lower() + k[1:]] = {"sc": lib, "export": row[k], **self.clip_info("sc/effects.sc", row[k])}
-        for k in ("Projectile", "CustomFirstProjectile"):
-            if row.get(k):
+        for k in ("Projectile", "CustomFirstProjectile", "DeathSpawnProjectile"):
+            if isinstance(row.get(k), str) and row.get(k):
                 self.projectile(row[k], projectiles)
                 entry[k[0].lower() + k[1:]] = row[k]
+        # buildings (and characters whose export is one labelled clip instead of <prefix>_<action>_<dir>)
+        entry["kind"] = "building" if (name in self.buildings and name not in self.chars) else "character"
+        clips = {}
+        for team, exp in (("blue", blue), ("red", red)):
+            if exp and exp in src.sc.exports:
+                self.want(rel, exp)
+                c = {"export": exp, **self.clip_info(rel, exp)}
+                mc = src.sc.movieclips.get(src.sc.exports[exp])
+                if mc and "turret" in mc.children_names:
+                    tid = mc.children_ids[mc.children_names.index("turret")]
+                    tmc = src.sc.movieclips.get(tid)
+                    c["turretChild"] = "turret"
+                    c["turretFrames"] = len(tmc.frames) if tmc else 1
+                clips[team] = c
+        if clips:
+            entry["clip"] = clips
+        tops = {}
+        for team, k in (("blue", "BlueTopExportName"), ("red", "RedTopExportName")):
+            if row.get(k) and self.want(rel, row[k]):
+                tops[team] = {"export": row[k], **self.clip_info(rel, row[k])}
+        if tops:
+            entry["top"] = tops
+        for k in ("TurretMovement", "HasRotationOnTimeline", "LifeTime", "AttachedCharacter", "AttachedCharacterHeight",
+                  "TileSizeOverride", "CustomAnimationPostfix", "DeathSpawnCharacter", "DeathSpawnCount",
+                  "SpawnCharacter", "SpawnNumber", "DeathAreaEffect", "JumpHeight", "Kamikaze", "ShowHealthNumber"):
+            if k in row and row[k] not in ("", None):
+                entry[k[0].lower() + k[1:]] = row[k]
         return entry
+
+    def unit(self, name: str | None) -> dict | None:
+        """Resolve a character/building (and whatever it spawns) into self.m_chars."""
+        if not name or not isinstance(name, str):
+            return None
+        if name in self.m_chars:
+            return self.m_chars[name]
+        row = self.chars.get(name) or self.buildings.get(name)
+        if row is None:
+            self.warnings.append(f"unit {name!r} not found")
+            return None
+        self.m_chars[name] = {}  # recursion guard
+        entry = self.unit_art(name, row, self.m_projs)
+        if entry is None:
+            del self.m_chars[name]
+            return None
+        self.m_chars[name] = entry
+        for k in ("DeathSpawnCharacter", "SpawnCharacter", "DeathSpawnCharacter2", "AttachedCharacter"):
+            if isinstance(row.get(k), str):
+                self.unit(row[k])
+        for k in ("DeathAreaEffect", "SpawnAreaEffectObject", "AreaEffectOnHit"):
+            if isinstance(row.get(k), str):
+                self.aeo(row[k])
+        return entry
+
+    def aeo(self, name: str | None):
+        """Area effect object: radius, lifetime and its visual effects."""
+        if not name or not isinstance(name, str) or name in self.m_aeos:
+            return
+        row = self.aeos.get(name)
+        if row is None:
+            self.warnings.append(f"area effect {name!r} not found")
+            return
+        d: dict = {}
+        self.m_aeos[name] = d
+        for k in ("Radius", "LifeDuration", "HitSpeed", "HitSpeedOffset", "Buff", "BuffTime", "Pushback",
+                  "ProjectileStartHeight", "MaximumTargets", "ScaledEffectFollowAeO", "ParentLoopingEffectToSelf"):
+            if k in row:
+                d[k[0].lower() + k[1:]] = row[k]
+        fx = {}
+        for k in ("ScaledEffect", "LoopingEffect", "OneShotEffect", "SpawnEffect", "HitEffect", "NoFollowObjectEffect"):
+            if row.get(k):
+                self.effect(row[k])
+                fx[k[0].lower() + k[1:]] = row[k]
+        d["effects"] = fx
+        if row.get("FileName") and row.get("ExportName"):
+            lib = self.want(row["FileName"], row["ExportName"])
+            if lib:
+                d["clip"] = {"sc": lib, "export": row["ExportName"], **self.clip_info(row["FileName"], row["ExportName"])}
+        if row.get("SpawnDeployBaseAnim"):
+            lib = self.want("sc/effects.sc", row["SpawnDeployBaseAnim"])
+            if lib:
+                d["spawnDeployBaseAnim"] = {"sc": lib, "export": row["SpawnDeployBaseAnim"]}
+        if isinstance(row.get("Buff"), str):
+            self.buff(row["Buff"])
+        if isinstance(row.get("Projectile"), str):
+            self.projectile(row["Projectile"], self.m_projs)
+            d["projectile"] = row["Projectile"]
+        if isinstance(row.get("SpawnAreaEffectObject"), str) and row["SpawnAreaEffectObject"]:
+            self.aeo(row["SpawnAreaEffectObject"])
+            d["spawnAreaEffectObject"] = row["SpawnAreaEffectObject"]
+        if isinstance(row.get("SpawnCharacter"), str):
+            self.unit(row["SpawnCharacter"])
+            d["spawnCharacter"] = row["SpawnCharacter"]
+        # Is the scaled effect authored at this radius? Effect units are SC px (radius clips match
+        # Radius / 1000 * 29.85 px at scale 1, e.g. Freeze 3000 -> spell_freeze_radius_blue 178 px wide).
+        d["scaleNote"] = "ScaledEffect is authored for `radius`; scale it by radius_now / radius"
+
+    def buff(self, name: str | None):
+        if not name or not isinstance(name, str) or name in self.m_buffs:
+            return
+        row = self.buff_tbl.get(name)
+        if row is None:
+            self.warnings.append(f"buff {name!r} not found")
+            return
+        d: dict = {}
+        self.m_buffs[name] = d
+        for k in ("SpeedMultiplier", "HitSpeedMultiplier", "SpawnSpeedMultiplier", "DamagePerSecond", "HitFrequency",
+                  "HealPerSecond", "DamageReduction", "Invisible", "EnableStacking"):
+            if k in row:
+                d[k[0].lower() + k[1:]] = row[k]
+        if row.get("FilterExportName"):
+            rel = row.get("FilterFile") or "sc/effects.sc"
+            lib = self.want(rel, row["FilterExportName"])
+            if lib:
+                f = {"sc": lib, "export": row["FilterExportName"], **self.clip_info(rel, row["FilterExportName"])}
+                # loop if the clip ends where it starts (filter_rage pulses; filter_cold/poison ease in and hold)
+                src = self.source(rel)
+                mc = src.sc.movieclips.get(src.sc.exports[row["FilterExportName"]])
+                f["loop"] = False
+                if mc and len(mc.frames) > 2:
+                    _m, cols = src.sc.banks[mc.bank]
+
+                    def col_at(fi):
+                        st = mc.frame_starts[fi]
+                        els = mc.elements[st:st + mc.frames[fi].count]
+                        if not els or els[0][2] == NO_INDEX:
+                            return (1, 1, 1, 1, 0, 0, 0)
+                        c = cols[els[0][2]]
+                        return (c.r_mul, c.g_mul, c.b_mul, c.a_mul, c.r_add, c.g_add, c.b_add)
+                    a, b = col_at(0), col_at(len(mc.frames) - 1)
+                    f["loop"] = all(abs(x - y) < (0.05 if i < 4 else 8) for i, (x, y) in enumerate(zip(a, b)))
+                d["filter"] = f
+        for k in ("Effect", "MarkEffect", "BuffEffect", "RemoveEffect"):
+            if isinstance(row.get(k), str) and row[k]:
+                self.effect(row[k])
+                d[k[0].lower() + k[1:]] = row[k]
 
     # -- towers, arena, cards, HUD ---------------------------------------------------------------
     def towers(self, projectiles: dict) -> dict:
@@ -706,8 +900,31 @@ class Baker:
             if row.get("Projectile"):
                 self.projectile(row["Projectile"], projectiles)
                 d["projectile"] = row["Projectile"]
+        # Ruins: the default death effects leave a permanent particle (ParticleMinLife 800000 ms) whose
+        # export is the rubble (King: Tower_destroyed_ground2 on Base, Princess: Tower_destroyed_ground1 on
+        # Ground). kingtower_destroyed / princesstower_destroyed are a shark tower-skin variant.
+        for row, d in ((king, k), (prin, p)):
+            ruin = self.ruin_of(row.get("DeathEffect"))
+            if ruin:
+                d["destroyed"], d["destroyedLayer"] = ruin
+                self.want(bt, ruin[0])
         out["king"], out["princess"] = k, p
         return out
+
+    def ruin_of(self, effect: str | None, depth: int = 0) -> tuple[str, str] | None:
+        e = self.effects.get(effect or "")
+        if not e or depth > 3:
+            return None
+        for c in e.get("RenderableComponents", []):
+            if c.get("Type") == "ParticleEmitter":
+                em = self.emitters.get(c.get("ParticleEmitterName", ""), {})
+                if em.get("ParticleMinLife", 0) >= 100000 and em.get("ParticleExportName"):
+                    return em["ParticleExportName"][0], c.get("Layer") or "Ground"
+            elif c.get("Type") == "Effect":
+                r = self.ruin_of(c.get("Effect"), depth + 1)
+                if r:
+                    return r
+        return None
 
     def arena(self, location: str) -> dict:
         locs = load_json("locations")
@@ -779,12 +996,29 @@ class Baker:
             return None
         d = {"sc": lib, "export": row["IconFile"], "elixir": row.get("ManaCost"), "rarity": row.get("Rarity"),
              "table": row["_table"]}
-        for k in ("SummonCharacter", "SummonNumber", "Projectile", "AreaEffectObject", "Effect", "Radius",
-                  "ProjectileWaves", "ProjectileWaveInterval", "MultipleProjectiles"):
+        for k in ("SummonCharacter", "SummonNumber", "SummonCharacterSecond", "SummonCharacterSecondCount",
+                  "Projectile", "AreaEffectObject", "Effect", "Radius", "ProjectileWaves", "ProjectileWaveInterval",
+                  "MultipleProjectiles", "SpellAsDeploy", "SummonRadius"):
             if k in row:
                 d[k[0].lower() + k[1:]] = row[k]
         if row.get("Effect"):
             self.effect(row["Effect"])
+        for k in ("SummonCharacter", "SummonCharacterSecond"):
+            if isinstance(row.get(k), str):
+                self.unit(row[k])
+        if isinstance(row.get("Projectile"), str):
+            self.projectile(row["Projectile"], self.m_projs)
+        if isinstance(row.get("AreaEffectObject"), str):
+            self.aeo(row["AreaEffectObject"])
+        if row.get("IndicatorEffect"):
+            ind = row["IndicatorEffect"]
+            if ind in self.effects:
+                self.effect(ind)
+                d["indicatorEffect"] = ind
+            elif row.get("IndicatorFileName") and self.want(row["IndicatorFileName"], ind):
+                d["indicator"] = {"sc": Path(row["IndicatorFileName"]).stem, "export": ind,
+                                  **self.clip_info(row["IndicatorFileName"], ind)}
+        self.m_cards[card] = d
         return d
 
     def hud(self) -> dict:
@@ -843,51 +1077,64 @@ class Baker:
     def run(self):
         a = self.args
         t0 = time.time()
-        projectiles: dict = {}
-        characters: dict = {}
-        cards: dict = {}
-        for raw in [s for s in a.chars.split(",") if s.strip()] + ["TowerPrincess"]:
-            name, card = self.resolve_char_name(raw.strip())
+        split = lambda v: [x.strip() for x in (v or "").split(",") if x.strip()]  # noqa: E731
+        projectiles = self.m_projs
+        # characters requested by name (character, card or alias), then cards, then explicit lists
+        for raw in split(a.chars) + ["TowerPrincess"]:
+            name, card = self.resolve_char_name(raw)
             if name is None:
                 self.warnings.append(f"unknown character/card {raw!r}")
                 continue
-            row = self.chars.get(name) or self.buildings.get(name)
-            entry = self.unit_art(name, row, projectiles)
+            entry = self.unit(name)
             if entry is None:
                 continue
             if card:
                 entry["card"] = card
-                c = self.card(card)
-                if c:
-                    cards[card] = c
-            if raw.strip() != name:
-                entry["requestedAs"] = raw.strip()
-            characters[name] = entry
-        spells = {}
-        for raw in [s for s in a.spells.split(",") if s.strip()]:
-            row = self.spells.get(raw.strip())
-            if not row:
-                self.warnings.append(f"unknown spell {raw!r}")
+                self.card(card)
+            if raw != name:
+                entry["requestedAs"] = raw
+        for raw in split(a.cards) + split(a.spells):
+            name = raw if raw in self.spells else ALIASES.get(raw, raw)
+            if name not in self.spells:
+                self.warnings.append(f"unknown card {raw!r}")
                 continue
-            c = self.card(raw.strip())
-            if c:
-                cards[raw.strip()] = c
-            d = {"card": raw.strip()}
-            if row.get("Projectile"):
-                self.projectile(row["Projectile"], projectiles)
-                d["projectile"] = row["Projectile"]
-            if row.get("Effect"):
-                self.effect(row["Effect"])
-                d["effect"] = row["Effect"]
-            if row.get("AreaEffectObject"):
-                aeo = self.aeos.get(row["AreaEffectObject"], {})
-                d["areaEffectObject"] = row["AreaEffectObject"]
-                for k in ("ScaledEffect", "LoopingEffect", "OneShotEffect", "HitEffect", "SpawnEffect"):
-                    if aeo.get(k):
-                        self.effect(aeo[k])
-                        d[k[0].lower() + k[1:]] = aeo[k]
-            spells[raw.strip()] = d
-        towers = self.towers(projectiles)
+            self.card(name)
+        for u in split(a.units):
+            self.unit(ALIASES.get(u, u))
+        for pname in split(a.projectiles):
+            self.projectile(pname, projectiles)
+        for ae in split(a.aeos):
+            self.aeo(ae)
+        for b in split(a.buffs):
+            self.buff(b)
+        characters = self.m_chars
+        cards = self.m_cards
+        # link characters to their card (first card that summons them)
+        for cname, c in cards.items():
+            for k in ("summonCharacter", "summonCharacterSecond"):
+                ch = c.get(k)
+                if isinstance(ch, str) and ch in characters and "card" not in characters[ch]:
+                    characters[ch]["card"] = cname
+        # area effects created by deaths get the dying unit's DeathEffect as their visual source
+        for cname, ch in characters.items():
+            dae = ch.get("deathAreaEffect")
+            if isinstance(dae, str) and dae in self.m_aeos:
+                srcfx = self.m_aeos[dae].setdefault("sourceEffects", {})
+                if ch.get("effects", {}).get("deathEffect"):
+                    srcfx[cname] = ch["effects"]["deathEffect"]
+        spells = {}
+        for cname, c in cards.items():
+            if c.get("table") != "spells_other":
+                continue
+            d = {"card": cname}
+            for k in ("projectile", "effect", "areaEffectObject", "summonCharacter"):
+                if c.get(k):
+                    d[k] = c[k]
+            aeo = self.m_aeos.get(c.get("areaEffectObject") or "")
+            if aeo:
+                d.update(aeo.get("effects", {}))
+            spells[cname] = d
+        towers = self.towers(self.m_projs)
         arena = self.arena(a.location)
         hud = self.hud()
         extra_fx = [s for s in (a.effects or "").split(",") if s.strip()]
@@ -918,10 +1165,12 @@ class Baker:
                     fonts[fam] = f"fonts/{fname}"
         manifest = {
             "version": 1, "build": "160402020", "generatedBy": "tools/art/bake_web.py",
-            "args": {"chars": a.chars, "spells": a.spells, "location": a.location, "format": a.format,
-                     "downscale": a.downscale},
+            "args": {"cards": a.cards, "chars": a.chars, "spells": a.spells, "units": a.units,
+                     "projectiles": a.projectiles, "aeos": a.aeos, "buffs": a.buffs, "location": a.location,
+                     "format": a.format, "downscale": a.downscale},
             "libs": {k: {"json": v["json"]} for k, v in libs.items()},
             "characters": characters, "spells": spells, "projectiles": projectiles,
+            "areaEffects": self.m_aeos, "buffs": self.m_buffs,
             "effects": self.m_effects, "emitters": self.m_emitters, "towers": towers, "arena": arena,
             "cards": cards, "hud": hud, "fonts": fonts,
             "directions": ("export suffix 1 = facing screen up (away), mid = screen right, N = screen down; "
@@ -929,8 +1178,9 @@ class Baker:
             "missingEffects": sorted(self.missing_effects),
         }
         (OUT / "manifest.json").write_text(json.dumps(manifest, indent=1))
-        self.log(f"manifest: {len(characters)} characters, {len(projectiles)} projectiles, {len(self.m_effects)} "
-                 f"effects, {len(self.m_emitters)} emitters, {len(cards)} cards")
+        self.log(f"manifest: {len(characters)} characters/buildings, {len(projectiles)} projectiles, "
+                 f"{len(self.m_aeos)} area effects, {len(self.m_buffs)} buffs, {len(self.m_effects)} effects, "
+                 f"{len(self.m_emitters)} emitters, {len(cards)} cards")
         self.log(f"total: json {total_json / 1e6:.2f} MB, textures {total_tex / 1e6:.1f} MB "
                  f"({a.format}{', downscale %.2f' % a.downscale if a.downscale != 1 else ''}) in {time.time() - t0:.0f} s")
         if self.missing_effects:
@@ -953,8 +1203,14 @@ def main():
     global OUT
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--assets", help="asset zip or unpacked dir (default $CR_ASSETS / game-files/asset-pack)")
-    ap.add_argument("--chars", default=DEFAULT_CHARS, help="comma list of character or card names")
-    ap.add_argument("--spells", default=DEFAULT_SPELLS, help="comma list of spell card names")
+    ap.add_argument("--cards", default=DEFAULT_CARDS, help="comma list of card names (summons, projectiles, area "
+                    "effects, buffs and spawns are resolved from the data)")
+    ap.add_argument("--chars", default=DEFAULT_CHARS, help="extra comma list of character or card names")
+    ap.add_argument("--spells", default=DEFAULT_SPELLS, help="extra comma list of spell card names")
+    ap.add_argument("--units", default=DEFAULT_UNITS, help="extra characters/buildings (e.g. spawned units)")
+    ap.add_argument("--projectiles", default=DEFAULT_PROJECTILES, help="extra projectiles")
+    ap.add_argument("--aeos", default=DEFAULT_AEOS, help="extra area effect objects")
+    ap.add_argument("--buffs", default=DEFAULT_BUFFS, help="extra character buffs")
     ap.add_argument("--effects", default="", help="extra effect names to include")
     ap.add_argument("--location", default="PvP_goblin", help="locations.csv row for the arena (Arena1 = PvP_goblin)")
     ap.add_argument("--format", choices=["webp", "png"], default="webp", help="atlas format (lossless either way)")

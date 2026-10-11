@@ -24,12 +24,15 @@ export class BuffInst {
   ticksLeft: number;
   /** ms until the next damage/heal tick. */
   hitTimer: number;
+  /** Tick the buff was applied (viewer colour filters). */
+  startTick: number;
 
-  constructor(def: BuffDef, sourceId: number, ticks: number) {
+  constructor(def: BuffDef, sourceId: number, ticks: number, tick = 0) {
     this.def = def;
     this.sourceId = sourceId;
     this.ticksLeft = ticks;
     this.hitTimer = 0;
+    this.startTick = tick;
   }
 }
 
@@ -56,6 +59,8 @@ export class Unit {
   atkDelay: number;
   /** Tick of the last hit (for the viewer's attack animation). */
   lastHitTick: number;
+  /** Tick this unit last took damage (viewer hit flash). */
+  lastHurtTick: number;
   /** Path cells in walking order; the remaining path is path[pathIdx..] (native m+0x3c, reversed). */
   path: Int32Array;
   pathIdx: number;
@@ -161,6 +166,7 @@ export class Unit {
     this.atkTimer = def.loadTime;
     this.atkDelay = 0;
     this.lastHitTick = -1000;
+    this.lastHurtTick = -1000;
     this.path = NO_PATH;
     this.pathIdx = 0;
     this.pathBack = false;
