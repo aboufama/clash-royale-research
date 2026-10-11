@@ -10,6 +10,8 @@ export class Overlay {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private dpr = 1;
+  /** Original art active: health bars and deploy drops are drawn by the art renderer. */
+  artMode = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -52,7 +54,7 @@ export class Overlay {
     }
 
     for (const u of b.units) {
-      if (u.state === ST_DEAD) continue;
+      if (u.state === ST_DEAD || this.artMode) continue;
       const x = cam.sx(f.ux(u));
       const yb = cam.sy(f.uy(u));
       const lift = u.isAir ? u.def.flyingHeight * cam.scale * 0.35 : 0;
@@ -112,7 +114,7 @@ export class Overlay {
     const half = ARENA_W / 2;
     const pocketEdge = d.team === 0 ? 25000 : 7000;
     const rect = (x0: number, y0: number, x1: number, y1: number) =>
-      c.fillRect(cam.sx(x0), cam.sy(y1), (x1 - x0) * cam.scale, (y1 - y0) * cam.scale);
+      c.fillRect(cam.sx(x0), cam.sy(y1), (x1 - x0) * cam.scaleX, (y1 - y0) * cam.scaleY);
     for (const [x0, x1, open] of [[0, half, pocketLeft], [half, ARENA_W, pocketRight]] as const) {
       if (!open) rect(x0, yRiver0, x1, yRiver1);
       else if (d.team === 0) rect(x0, pocketEdge, x1, ARENA_H);
@@ -135,8 +137,9 @@ export class Overlay {
     c.fill();
     c.stroke();
     if (!d.isSpell && d.snapped) {
-      const s = 1000 * cam.scale;
-      c.strokeRect(x - s / 2, y - s / 2, s, s);
+      const sw = 1000 * cam.scaleX;
+      const sh = 1000 * cam.scaleY;
+      c.strokeRect(x - sw / 2, y - sh / 2, sw, sh);
     }
   }
 

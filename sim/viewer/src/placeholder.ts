@@ -27,17 +27,18 @@ export class PlaceholderRenderer implements WorldRenderer {
     c.fillStyle = '#0d1a10';
     c.fillRect(0, 0, cam.width, cam.height);
     const flags = b.arena.flags;
-    const s = CELL * cam.scale;
+    const sw = CELL * cam.scaleX;
+    const sh = CELL * cam.scaleY;
     for (let cy = 0; cy < GRID_H; cy++) {
       for (let cx = 0; cx < GRID_W; cx++) {
         const fl = flags[cy * GRID_W + cx];
         const tile = ((cx >> 1) + (cy >> 1)) & 1;
         c.fillStyle = fl & 32 ? '#2f7fd6' : fl & 16 ? '#3d4a35' : fl & 3 ? (tile ? '#c9a46a' : '#d2ae75') : tile ? '#79b84a' : '#83c254';
-        c.fillRect(cam.sx(cx * CELL), cam.sy((cy + 1) * CELL), s + 0.5, s + 0.5);
+        c.fillRect(cam.sx(cx * CELL), cam.sy((cy + 1) * CELL), sw + 0.5, sh + 0.5);
       }
     }
     c.strokeStyle = 'rgba(0,0,0,.25)';
-    c.strokeRect(cam.sx(0), cam.sy(ARENA_H), ARENA_W * cam.scale, ARENA_H * cam.scale);
+    c.strokeRect(cam.sx(0), cam.sy(ARENA_H), ARENA_W * cam.scaleX, ARENA_H * cam.scaleY);
 
     // ground units, then air
     for (const air of [false, true]) {

@@ -59,6 +59,7 @@ class App {
     let world: WorldRenderer | null = null;
     if (this.art) {
       try { world = await this.art.makeRenderer(glCanvas, this.cam); } catch (e) { console.warn('art renderer failed', e); }
+      this.overlay.artMode = world !== null;
     }
     if (!world) {
       // Placeholder needs a 2D context: swap in a fresh canvas.
@@ -157,7 +158,8 @@ class App {
       el.dataset.card = card.name;
       const img = this.art?.cardImage(card.name);
       el.style.backgroundImage = img ? `url(${img})` : '';
-      el.innerHTML = `${small ? '' : `<div class="cost">${card.cost}</div>`}<div class="name">${img ? '' : displayName(card.name)}</div>`;
+      // the original card art carries its own elixir cost
+      el.innerHTML = img ? '' : `${small ? '' : `<div class="cost">${card.cost}</div>`}<div class="name">${displayName(card.name)}</div>`;
     }
   }
 

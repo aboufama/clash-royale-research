@@ -14,7 +14,7 @@
   #board canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
   .hand { display: flex; gap: 6px; align-items: flex-end; padding: 6px 8px; width: 100%; max-width: 560px; justify-content: center; background: linear-gradient(#2a3346, #1b2230); }
   .hand.red { background: linear-gradient(#462a2a, #301b1b); }
-  .card { position: relative; width: 72px; height: 88px; border-radius: 8px; background: #2c3650 center/cover no-repeat; border: 2px solid #5a6a8c; cursor: grab; display: flex; align-items: flex-end; justify-content: center; font-size: 10px; text-align: center; color: #fff; text-shadow: 0 1px 2px #000; overflow: hidden; }
+  .card { position: relative; width: 72px; height: 88px; border-radius: 8px; background: #2c3650 center/contain no-repeat; border: 2px solid #5a6a8c; cursor: grab; display: flex; align-items: flex-end; justify-content: center; font-size: 10px; text-align: center; color: #fff; text-shadow: 0 1px 2px #000; overflow: hidden; }
   .card.next { width: 44px; height: 54px; opacity: .85; cursor: default; }
   .card.disabled { filter: grayscale(.9) brightness(.6); cursor: not-allowed; }
   .card .cost { position: absolute; left: -2px; top: -2px; width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(#ff7cff, var(--elixir)); font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; }

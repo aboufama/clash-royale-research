@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SC Art Gallery</title>
+<style>
+  :root { --bg: #1d2a1d; --fg: #e8f0e8; --muted: #9db09d; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #1d2a1d; --fg: #e8f0e8; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #hud { position: fixed; left: 8px; top: 8px; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 6px; max-width: calc(100vw - 32px); }
+  #hud a { color: #9fd3ff; margin-right: 8px; }
+  #hud .muted { color: var(--muted); }
+  body.shot #hud { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <b>SC art gallery</b>
+  <a href="?mode=arena">arena</a><a href="?mode=units&action=run1">run</a><a href="?mode=units&action=attack1">attack</a><a href="?mode=units&action=idle1">idle</a><a href="?mode=fx">effects</a><a href="?mode=hud">hud</a>
+  <span id="stats" class="muted"></span>
+  <div class="muted">drag to pan, wheel to zoom; ?t=ms freezes time; ?shot hides this box</div>
+</div>
+<script type="module" src="dist/sc-test.js"></script>
+</body>
+</html>
