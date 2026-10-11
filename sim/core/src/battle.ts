@@ -13,7 +13,7 @@
 import { Arena, ARENA_H, ARENA_W, CELL, GRID_W } from './arena.ts';
 import {
   type AreaEffectDef, type BuffDef, Defs, ELIXIR_ONE, type CardDef, type FilterDef, type GameData, type ProjectileDef, TICK_MS,
-  type Timeline, type UnitDef,
+  type SummonEntry, type Timeline, type UnitDef,
 } from './data.ts';
 import {
   AreaEffect, type BattleEvent, BuffInst, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, ST_ACTIVE, ST_DEAD,
@@ -255,6 +255,8 @@ export class Battle {
       const tower = team === 0 ? enemy.princess[sideLeft ? 0 : 1] : enemy.princess[sideLeft ? 1 : 0];
       if (!tower.alive) maxY = 24500;
     }
+    // Cards that may be placed anywhere (Miner, Goblin Drill) skip the zone clamp (D: CanDeployOnEnemySide).
+    if (card.canDeployOnEnemySide) maxY = ARENA_H - 1;
     if (my > maxY) my = maxY;
     mx = clamp(mx, 250, ARENA_W - 250);
     my = clamp(my, 250, ARENA_H - 250);
@@ -367,7 +369,17 @@ export class Battle {
     const card = c.card;
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: c.x, y: c.y, name: card.name, id: -1 });
     if (card.areaEffect) {
+      // SpellAsDeploy cards (Ice Wizard, Electro Wizard) cast their area effect on commit, then summon.
       this.spawnAreaEffect(c.team, card.areaEffect, c.x, c.y);
+      if (card.summon.length === 0) return;
+    }
+    if (card.spellProjectile && card.spellProjectile.pierceRange > 0) {
+      // Rolling spells start at the target point (Log, Barbarian Barrel) (A).
+      this.firePierce(c.team, card.spellProjectile, c.x, c.y, 0, c.team === 0 ? 1000 : -1000, null);
+      return;
+    }
+    if (card.spellProjectile?.spawnProjectile && card.spellProjectile.spawnProjectile.pierceRange > 0) {
+      this.firePierce(c.team, card.spellProjectile.spawnProjectile, c.x, c.y, 0, c.team === 0 ? 1000 : -1000, null);
       return;
     }
     if (card.spellProjectile) {
@@ -378,7 +390,40 @@ export class Battle {
       this.fireSpellWaves();
       return;
     }
-    for (const s of card.summon) this.summon(c.team, card.name, s.unit, s.count, s.radius, s.deployDelay, c.x, c.y);
+    this.summonCard(c.team, card, c.x, c.y);
+  }
+
+  /**
+   * Summon a card's characters: main group (SummonNumber), second group (SummonCharacterSecond),
+   * or a list with explicit offsets and delays (SummonCharactersList). Offsets mirrored for red.
+   * Two-group placement (main at the centre when single, else all on the SummonRadius circle) is A.
+   */
+  private summonCard(team: number, card: CardDef, x: number, y: number): void {
+    const s = team === 0 ? 1 : -1;
+    const second = card.summon.find((e) => e.role === 'second');
+    for (const e of card.summon) {
+      if (e.offsets) {
+        const [ox, oy] = e.offsets[0];
+        const ux = clamp(x + s * ox, 0, this.boundW - 1);
+        const uy = clamp(y + s * oy, 0, this.boundH - 1);
+        const delay = e.delays ? e.delays[0] : 0;
+        const dt = e.deployTime >= 0 ? e.deployTime : e.unit.deployTime;
+        this.createUnit(team, card.name, e.unit, ux, uy, Math.round(dt / TICK_MS) + Math.round(delay / TICK_MS));
+        continue;
+      }
+      if (second && e.role === 'main' && e.count === 1) {
+        this.summon(team, card.name, e.unit, 1, 0, 0, x, y, e);
+      } else if (e.role === 'second' && card.summon[0].count === 1) {
+        this.summon(team, card.name, e.unit, e.count, Math.max(500, e.radius >> 1), e.deployDelay, x, y, e);
+      } else if (second) {
+        // both groups share one circle: main first, then second
+        const total = card.summon.reduce((a, q) => a + q.count, 0);
+        const first = e.role === 'main' ? 0 : card.summon[0].count;
+        this.summon(team, card.name, e.unit, e.count, e.radius > 0 ? e.radius : 500, e.deployDelay, x, y, e, first, total);
+      } else {
+        this.summon(team, card.name, e.unit, e.count, e.radius, e.deployDelay, x, y, e);
+      }
+    }
   }
 
   /**
@@ -387,21 +432,32 @@ export class Battle {
    * staggered by SummonDeployDelay [OBS: Barbarians 145,147,...]. Formation positions on a
    * circle of SummonRadius are an approximation (A).
    */
-  private summon(team: number, card: string, def: UnitDef, count: number, radius: number, delayMs: number, x: number, y: number): void {
-    const r = count > 1 ? (radius > 0 ? radius : 500) : 0;
+  private summon(team: number, card: string, def: UnitDef, count: number, radius: number, delayMs: number, x: number, y: number,
+    entry: SummonEntry | null = null, slot0 = 0, slots = count): void {
+    const r = slots > 1 ? (radius > 0 ? radius : 500) : 0;
+    const deployMs = entry && entry.deployTime >= 0 ? entry.deployTime : def.deployTime;
+    if (def.spawnPathfindSpeed > 0 && !this.fixture) {
+      // Miner / drill: tunnel from the King tower, then deploy at the target (D speed; path A).
+      const king = this.players[team].king;
+      const u = this.createUnit(team, card, def, king.x, king.y, Math.round(deployMs / TICK_MS));
+      u.tunneling = true;
+      u.tunnelX = x;
+      u.tunnelY = y;
+      return;
+    }
     for (let i = 0; i < count; i++) {
       let ux = x;
       let uy = y;
       if (r > 0) {
         // start at 180 deg (left) and go around; team 1 mirrored
-        const deg = 180 + Math.floor((i * 360) / count);
+        const deg = 180 + Math.floor(((slot0 + i) * 360) / slots);
         ux = x + idiv(cos1e6(deg) * r, 1000000) * (team === 0 ? 1 : -1);
         uy = y + idiv(sin1e6(deg) * r, 1000000) * (team === 0 ? 1 : -1);
         ux = clamp(ux, 0, ARENA_W - 1);
         uy = clamp(uy, 0, ARENA_H - 1);
         if (!def.flyingHeight && !this.arena.walkableAt(ux, uy)) { ux = x; uy = y; }
       }
-      this.createUnit(team, card, def, ux, uy, Math.round(def.deployTime / TICK_MS) + Math.round((i * delayMs) / TICK_MS));
+      this.createUnit(team, card, def, ux, uy, Math.round(deployMs / TICK_MS) + Math.round((i * delayMs) / TICK_MS));
     }
   }
 
@@ -531,7 +587,7 @@ export class Battle {
   // ---------------------------------------------------------------- targeting & attack
 
   private canAttack(u: Unit, t: Unit): boolean {
-    if (t.team === u.team || t.state === ST_DEAD || t.maxHp <= 0) return false;
+    if (t.team === u.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling) return false;
     const d = u.def;
     if (t.isAir ? !d.attacksAir : !d.attacksGround) return false;
     if (d.targetOnlyBuildings && !t.isBuilding) return false;
@@ -631,6 +687,7 @@ export class Battle {
     if (u.tower === TOWER_KING && u.kingState !== KING_ACTIVE) return;
     if (u.def.hitSpeed <= 0) return;
     if (u.buffs.length && this.clockDelta(u) === 0) return; // frozen/stunned
+    if (u.hidden || u.tunneling) return;
     let t = u.target;
     if (t !== null && (t.state === ST_DEAD || !this.canAttack(u, t))) {
       t = null;
@@ -642,8 +699,9 @@ export class Battle {
       const nt = this.findTarget(u);
       if (nt !== u.target) {
         // Retarget keeps the attack clock running [OBS native-automatic-combat: the Knight
-        // switched target at tick 3 and still hit at tick 9].
+        // switched target at tick 3 and still hit at tick 9]. The Inferno ramp restarts.
         u.target = nt;
+        u.rampMs = 0;
         u.path = EMPTY_PATH;
         u.pathGoal = -1;
       }
@@ -659,6 +717,7 @@ export class Battle {
         return;
       }
       u.atkTimer += dt;
+      if (u.def.variableDamage) u.rampMs += dt;
       if (u.atkTimer >= u.def.hitSpeed) {
         this.hit(u, t);
         // LOGIC_LOAD_FIRST_HIT_RESET_TIMER_AFTER_ATTACK: timer back to 0 [OBS: 9, 33, 57].
@@ -682,12 +741,43 @@ export class Battle {
       const dmg = u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
       this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, dmg, -1, d.crownTowerDamagePercent, 0, false);
     } else {
-      this.queueDamage(t, u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage, -1, d.crownTowerDamagePercent);
+      let dmg = u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
+      if (d.variableDamage) {
+        // Inferno ramp: Damage, VariableDamage2, VariableDamage3 after VariableDamageTime1/2 (D)
+        const [t1, t2] = d.variableDamageTime;
+        dmg = u.rampMs < t1 ? d.variableDamage[0] : u.rampMs < t1 + t2 ? d.variableDamage[1] : d.variableDamage[2];
+      }
+      this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent);
+      if (d.buffOnDamage) this.applyBuff(t, d.buffOnDamage, d.buffOnDamageTime, u.id);
+      if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
     }
     if (u.charging || u.chargeDist > 0) { u.charging = false; u.chargeDist = 0; }
     if (d.kamikaze) {
       u.hp = 0;
       u.state = ST_DEAD;
+    }
+  }
+
+  /** Electro Wizard: also hit the nearest other enemies in range, up to MultipleTargets (D; order A). */
+  private extraTargets(u: Unit, first: Unit, dmg: number): void {
+    const d = u.def;
+    const units = this.units;
+    const picked: Unit[] = [first];
+    while (picked.length < d.multipleTargets) {
+      let best: Unit | null = null;
+      let bestD = 0;
+      for (let i = 0; i < units.length; i++) {
+        const t = units[i];
+        if (picked.includes(t) || !this.canAttack(u, t) || !this.inRange(u, t, 0)) continue;
+        const dx = t.x - u.x;
+        const dy = t.y - u.y;
+        const d2 = dx * dx + dy * dy;
+        if (best === null || d2 < bestD) { best = t; bestD = d2; }
+      }
+      if (best === null) break;
+      picked.push(best);
+      this.queueDamage(best, dmg, -1, d.crownTowerDamagePercent);
+      if (d.buffOnDamage) this.applyBuff(best, d.buffOnDamage, d.buffOnDamageTime, u.id);
     }
   }
 
@@ -704,12 +794,34 @@ export class Battle {
       sy += idiv(dy * sr, dd);
     }
     sy += u.team === 0 ? u.def.projectileYOffset : -u.def.projectileYOffset;
+    if (def.pierceRange > 0) {
+      const ddx = dd > 0 ? idiv(dx * 1000, dd) : 0;
+      const ddy = dd > 0 ? idiv(dy * 1000, dd) : (u.team === 0 ? 1000 : -1000);
+      const pr = this.firePierce(u.team, def, sx, sy, ddx, ddy, u);
+      if (def.pingpong) pr.rangeLeft = Math.min(def.pierceRange >> 1, Math.max(def.minDistance, dd));
+      return;
+    }
     const pr = new Projectile(this.nextProjId++, def, u.team, sx, sy, this.tick);
     pr.sourceId = u.id;
     pr.tx = t.x;
     pr.ty = t.y;
     if (def.homing) pr.target = t;
     this.projectiles.push(pr);
+  }
+
+  /** Straight piercing flight (Bowler boulder, Executioner axe, Magic Archer arrow, Log). */
+  private firePierce(team: number, def: ProjectileDef, x: number, y: number, dirX: number, dirY: number, src: Unit | null): Projectile {
+    const pr = new Projectile(this.nextProjId++, def, team, x, y, this.tick);
+    pr.pierce = true;
+    pr.dirX = dirX;
+    pr.dirY = dirY;
+    pr.rangeLeft = def.pierceRange;
+    pr.source = src;
+    pr.sourceId = src ? src.id : -1;
+    pr.tx = x + idiv(dirX * def.pierceRange, 1000);
+    pr.ty = y + idiv(dirY * def.pierceRange, 1000);
+    this.projectiles.push(pr);
+    return pr;
   }
 
   private queueDamage(t: Unit, amount: number, towerDamage: number, pct: number): void {
@@ -734,7 +846,7 @@ export class Battle {
       const r = radius + t.radius;
       const d2 = dx * dx + dy * dy;
       if (d2 > r * r) continue;
-      if (t.maxHp <= 0) continue;
+      if (t.maxHp <= 0 || t.hidden || t.tunneling) continue;
       this.queueDamage(t, damage, towerDamage, pct);
       if (buff) this.applyBuff(t, buff, buffTime, sourceId);
       if (pushback > 0 && !t.isBuilding && (pushAll || !t.def.ignorePushback)) {
@@ -753,6 +865,7 @@ export class Battle {
 
   private updateActor(u: Unit): void {
     if (u.state === ST_DEAD) return;
+    if (u.tunneling) { this.tunnel(u); return; }
     if (u.buffs.length) this.updateBuffs(u);
     if (u.state === ST_DEPLOYING) {
       if (u.deployTicks > 0) u.deployTicks--;
@@ -769,6 +882,13 @@ export class Battle {
       return;
     }
     if (u.def.spawn) this.updateSpawner(u);
+    if (u.def.manaCollect > 0 && !this.fixture && --u.manaTimer <= 0) {
+      // Elixir Collector: ManaCollectAmount every ManaGenerateTimeMs (D)
+      u.manaTimer = Math.max(1, Math.round(u.def.manaPeriod / TICK_MS));
+      const p = this.players[u.team];
+      p.elixir = Math.min(this.maxElixir, p.elixir + u.def.manaCollect);
+    }
+    if (u.def.hides) this.updateHiding(u);
     if (u.isBuilding) {
       if (u.def.lifeTime > 0) this.decay(u);
       return;
@@ -831,6 +951,40 @@ export class Battle {
 
   private jumpable(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < ARENA_W && y < ARENA_H && this.arena.isWaterAt(x, y);
+  }
+
+  /** Tunnel at SpawnPathfindSpeed in a straight line, then start deploying (A: straight path). */
+  private tunnel(u: Unit): void {
+    const dx = u.tunnelX - u.x;
+    const dy = u.tunnelY - u.y;
+    const d = isqrt(dx * dx + dy * dy);
+    const sp = u.def.spawnPathfindSpeed;
+    if (d <= sp) {
+      u.x = u.tunnelX;
+      u.y = u.tunnelY;
+      u.tunneling = false;
+      return;
+    }
+    u.x += idiv(dx * sp, d);
+    u.y += idiv(dy * sp, d);
+  }
+
+  /**
+   * Tesla: hidden (untargetable) while idle; with an enemy in range it rises for UpTimeMs before
+   * attacking, and hides again after HideTimeMs without a target (D times; state machine A).
+   */
+  private updateHiding(u: Unit): void {
+    const t = this.findTarget(u);
+    if (t) {
+      u.idleMs = 0;
+      if (u.hidden) {
+        u.upMs += TICK_MS;
+        if (u.upMs >= u.def.upTime) { u.hidden = false; u.upMs = 0; }
+      }
+    } else if (!u.hidden) {
+      u.idleMs += TICK_MS;
+      if (u.idleMs >= u.def.hideTime) { u.hidden = true; u.idleMs = 0; u.target = null; u.locked = false; }
+    }
   }
 
   /**
@@ -960,6 +1114,7 @@ export class Battle {
       u.target = null;
       u.charging = false;
       u.chargeDist = 0;
+      u.rampMs = 0;
     }
   }
 
@@ -994,7 +1149,8 @@ export class Battle {
   }
 
   private filterMatch(f: FilterDef | null, team: number, onlyEnemies: boolean, u: Unit): boolean {
-    if (u.state === ST_DEAD || u.maxHp <= 0) return false;
+    if (u.state === ST_DEAD || u.maxHp <= 0 || u.tunneling) return false;
+    if (u.hidden && (f === null || f.name !== 'aeo_enemy_affects_hidden')) return false;
     if (f === null) return onlyEnemies ? u.team !== team : true;
     if (!((f.enemy && u.team !== team) || (f.own && u.team === team))) return false;
     if (f.towersOnly && u.tower === TOWER_NONE) return false;
@@ -1087,7 +1243,70 @@ export class Battle {
     ps.length = w;
   }
 
+  private movePierce(p: Projectile): void {
+    const def = p.def;
+    let step = def.speed;
+    if (p.returning && p.source && p.source.state !== ST_DEAD) {
+      // fly back toward the thrower
+      const dx = p.source.x - p.x;
+      const dy = p.source.y - p.y;
+      const d = isqrt(dx * dx + dy * dy);
+      if (d <= step) { p.x = p.source.x; p.y = p.source.y; p.alive = false; return; }
+      p.x += idiv(dx * step, d);
+      p.y += idiv(dy * step, d);
+    } else {
+      if (step > p.rangeLeft) step = p.rangeLeft;
+      p.x += idiv(p.dirX * step, 1000);
+      p.y += idiv(p.dirY * step, 1000);
+      p.rangeLeft -= step;
+    }
+    // hit every eligible enemy the hitbox touches, once per pass
+    const rx = def.pierceRadius;
+    const ry = def.pierceRadiusY;
+    const units = this.units;
+    for (let i = 0; i < units.length; i++) {
+      const t = units[i];
+      if (t.team === p.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling) continue;
+      if (t.isAir ? !def.aoeToAir : !def.aoeToGround) continue;
+      if (p.hitIds.includes(t.id)) continue;
+      const dx = t.x - p.x;
+      const dy = t.y - p.y;
+      let inside: boolean;
+      if (ry > 0) inside = Math.abs(dx) <= rx + t.radius && Math.abs(dy) <= ry + t.radius;
+      else { const r = rx + t.radius; inside = dx * dx + dy * dy <= r * r; }
+      if (!inside) continue;
+      p.hitIds.push(t.id);
+      this.queueDamage(t, p.damage, p.towerDamage, p.crownPct);
+      if (def.targetBuff) this.applyBuff(t, def.targetBuff, def.buffTime, p.id);
+      if (def.pushback > 0 && !t.isBuilding && (def.pushbackAll || !t.def.ignorePushback)) {
+        t.pushX = idiv(p.dirX * def.pushback, 1000);
+        t.pushY = idiv(p.dirY * def.pushback, 1000);
+        t.pushTicks = 4;
+      }
+    }
+    if (!p.returning && p.rangeLeft <= 0) {
+      if (def.pingpong && p.source) { p.returning = true; p.hitIds.length = 0; return; }
+      p.alive = false;
+      if (def.spawnUnit) this.spawnFromProjectile(p, null);
+    }
+  }
+
+  /** Characters spawned by a projectile (Goblin Barrel on impact, Barbarian Barrel at the end). */
+  private spawnFromProjectile(p: Projectile, offsets: [number, number][] | null): void {
+    const def = p.def;
+    const u = def.spawnUnit!;
+    const ticks = Math.round((def.spawnDeployTime >= 0 ? def.spawnDeployTime : u.deployTime) / TICK_MS);
+    const s = p.team === 0 ? 1 : -1;
+    for (let i = 0; i < def.spawnCount; i++) {
+      const [ox, oy] = offsets?.[i] ?? [0, 0];
+      const x = clamp(p.x + s * ox, 0, this.boundW - 1);
+      const y = clamp(p.y + s * oy, 0, this.boundH - 1);
+      this.createUnit(p.team, p.spell || u.name, u, x, y, ticks);
+    }
+  }
+
   private moveProjectile(p: Projectile): void {
+    if (p.pierce) { this.movePierce(p); return; }
     const t = p.target;
     if (t !== null) {
       if (t.state === ST_DEAD) p.target = null;
@@ -1115,6 +1334,37 @@ export class Battle {
     } else if (p.target !== null) {
       this.queueDamage(p.target, p.damage, p.towerDamage, p.crownPct);
       if (p.def.targetBuff) this.applyBuff(p.target, p.def.targetBuff, p.def.buffTime, p.id);
+      if (p.def.chainCount > 1) this.chain(p, p.target);
+    }
+    if (p.def.spawnUnit) this.spawnFromProjectile(p, p.spell ? this.defs.card(p.spell, this.levels[p.team]).spawnOffsets : null);
+  }
+
+  /**
+   * Chain lightning: from the first target, hop to the nearest enemy not yet hit within
+   * ChainedHitRadius, up to ChainedHitCount targets in all; hops are instantaneous (A).
+   */
+  private chain(p: Projectile, first: Unit): void {
+    const hit: Unit[] = [first];
+    let last = first;
+    const units = this.units;
+    while (hit.length < p.def.chainCount) {
+      let best: Unit | null = null;
+      let bestD = 0;
+      for (let i = 0; i < units.length; i++) {
+        const t = units[i];
+        if (t.team === p.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling || hit.includes(t)) continue;
+        const dx = t.x - last.x;
+        const dy = t.y - last.y;
+        const d2 = dx * dx + dy * dy;
+        const r = p.def.chainRadius + t.radius;
+        if (d2 > r * r) continue;
+        if (best === null || d2 < bestD) { best = t; bestD = d2; }
+      }
+      if (best === null) break;
+      hit.push(best);
+      this.queueDamage(best, p.damage, p.towerDamage, p.crownPct);
+      if (p.def.targetBuff) this.applyBuff(best, p.def.targetBuff, p.def.buffTime, p.id);
+      last = best;
     }
   }
 
@@ -1157,6 +1407,10 @@ export class Battle {
     if (t.isBuilding) this.arena.setOcclusion(t.team, t.x, t.y, t.radius, false);
     if (t.def.deathAreaEffect) this.spawnAreaEffect(t.team, t.def.deathAreaEffect, t.x, t.y);
     if (t.def.deathSpawn) this.deathSpawn(t);
+    if (t.def.manaOnDeath > 0 && !this.fixture) {
+      const p = this.players[t.team];
+      p.elixir = Math.min(this.maxElixir, p.elixir + t.def.manaOnDeath);
+    }
     if (t.def.manaOnDeathForOpponent > 0 && !this.fixture) {
       // ManaOnDeathForOpponent read as elixir x1000 (A)
       const p = this.players[1 - t.team];
@@ -1235,12 +1489,14 @@ export class Battle {
       h.add(u.deployTicks); h.add(u.atkTimer); h.add(u.atkDelay); h.add(u.target ? u.target.id : -1);
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.pushTicks);
       h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.chargeDist); h.add(u.charging ? 1 : 0);
-      h.add(u.lifeTicks); h.add(u.decayed);
+      h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaTimer); h.add(u.hidden ? 1 : 0);
+      h.add(u.idleMs); h.add(u.upMs); h.add(u.tunneling ? 1 : 0);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }
     for (const a of this.areaEffects) { h.add(a.id); h.add(a.age); h.add(a.nextHit); }
     for (const p of this.projectiles) {
       h.add(p.id); h.add(p.x); h.add(p.y); h.add(p.tx); h.add(p.ty); h.add(p.target ? p.target.id : -1);
+      h.add(p.rangeLeft); h.add(p.returning ? 1 : 0); h.add(p.hitIds.length);
     }
     for (const c of this.commands) { h.add(c.team); h.add(c.x); h.add(c.y); h.add(c.submitTick); }
     for (const s of this.rng.state()) h.add(s);

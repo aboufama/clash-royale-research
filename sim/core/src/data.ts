@@ -82,6 +82,22 @@ export interface ProjectileDef {
   /** Buff applied to everything the projectile damages (Ice Spirit freeze, Snowball slow...). */
   targetBuff: BuffDef | null;
   buffTime: number; // ms
+  /** Chain lightning: total targets and hop radius (Electro Dragon, Electro Spirit). */
+  chainCount: number;
+  chainRadius: number;
+  /** Piercing projectile: travel range, hitbox half-sizes (Bowler, Executioner, Magic Archer, Log). */
+  pierceRange: number;
+  pierceRadius: number;
+  pierceRadiusY: number;
+  minDistance: number;
+  /** Returns to the thrower (Executioner axe). */
+  pingpong: boolean;
+  /** Characters spawned on impact or at the end of the roll (Goblin Barrel, Barbarian Barrel). */
+  spawnUnit: UnitDef | null;
+  spawnCount: number;
+  spawnDeployTime: number;
+  /** Follow-up projectile spawned on impact (Log -> rolling log). */
+  spawnProjectile: ProjectileDef | null;
 }
 
 /** Object filter (game_object_filters.toml): which actors an area effect touches. */
@@ -183,8 +199,39 @@ export interface UnitDef {
   chargeSpeedMul: number;
   damageSpecial: number;
   manaOnDeathForOpponent: number;
+  /** Elixir Collector: elixir per period (x10000) and period ms; elixir to owner on death (x10000). */
+  manaCollect: number;
+  manaPeriod: number;
+  manaOnDeath: number;
+  /** Inferno ramp: damage stages and stage lengths (ms). */
+  variableDamage: [number, number, number] | null;
+  variableDamageTime: [number, number];
+  /** Extra targets per attack and buff on damage (Electro Wizard). */
+  multipleTargets: number;
+  buffOnDamage: BuffDef | null;
+  buffOnDamageTime: number;
+  /** Tesla: hides underground when idle. */
+  hides: boolean;
+  hideTime: number;
+  upTime: number;
+  /** Miner / Goblin Drill: tunnels from the King tower at this speed (units per tick). */
+  spawnPathfindSpeed: number;
   /** Mechanics this definition uses that the engine does not implement yet. */
   unsupported: string[];
+}
+
+export interface SummonEntry {
+  unit: UnitDef;
+  count: number;
+  radius: number;
+  deployDelay: number; // ms between members
+  /** Explicit offsets (SummonCharactersOffsets) and per-member delays (SummonCharactersDelayList). */
+  offsets: [number, number][] | null;
+  delays: number[] | null;
+  /** CustomDeployTime override (ms), -1 = the unit's own DeployTime. */
+  deployTime: number;
+  /** Placement role for two-group cards: 'main' | 'second'. */
+  role: 'main' | 'second';
 }
 
 export interface CardDef {
@@ -193,9 +240,11 @@ export interface CardDef {
   rarity: string;
   cost: number; // elixir
   level: number;
-  summon: { unit: UnitDef; count: number; radius: number; deployDelay: number }[];
+  summon: SummonEntry[];
   /** Spell projectile (Fireball, Arrows...) */
   spellProjectile: ProjectileDef | null;
+  /** Offsets for characters spawned by the spell projectile (Goblin Barrel). */
+  spawnOffsets: [number, number][] | null;
   spellRadius: number;
   /** Area effect spell (Zap, Freeze, Poison, Lightning...). */
   areaEffect: AreaEffectDef | null;
@@ -219,7 +268,9 @@ const UNIT_FIELDS_OK = new Set([
   'DeathAreaEffect', 'DeathSpawnCharacter', 'DeathSpawnCount', 'DeathSpawnRadius', 'DeathSpawnDeployTime',
   'DeathSpawnPushback', 'SpawnCharacter', 'SpawnNumber', 'SpawnPauseTime', 'SpawnInterval', 'SpawnStartTime',
   'ShieldHitpoints', 'JumpEnabled', 'JumpHeight', 'JumpSpeed', 'ChargeRange', 'ChargeSpeedMultiplier', 'DamageSpecial',
-  'AttackShakeTime', 'ManaOnDeathForOpponent',
+  'AttackShakeTime', 'ManaOnDeathForOpponent', 'ManaCollectAmount', 'ManaGenerateTimeMs', 'ManaOnDeath',
+  'VariableDamage2', 'VariableDamage3', 'VariableDamageTime1', 'VariableDamageTime2', 'VisualHitSpeed', 'MultipleTargets',
+  'AllTargetsHit', 'BuffOnDamage', 'BuffOnDamageTime', 'HidesWhenNotAttacking', 'HideTimeMs', 'UpTimeMs', 'SpawnPathfindSpeed',
 ]);
 /** Starting actions known to be cosmetic or covered by native rules (no gameplay change needed). */
 const IGNORABLE_ACTIONS = new Set(['JumpHack_Check_Jump_Interval']);
@@ -227,6 +278,9 @@ const PROJECTILE_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Speed', 'Damage', 'Radius', 'Homing', 'AoeToAir', 'AoeToGround', 'OnlyEnemies', 'Gravity',
   'CrownTowerDamagePercent', 'DeflectBehaviour', 'DeflectRadius', 'Pushback', 'PushbackAll', 'DamageScalingMode',
   'ConstantHeight', 'HideWhenDelayed', 'MinDistance', 'ShakesTargets', 'TargetBuff', 'BuffTime',
+  'ChainedHitCount', 'ChainedHitRadius', 'ProjectileRange', 'ProjectileRadius', 'ProjectileRadiusY', 'PingpongVisualTime',
+  'SpawnCharacter', 'SpawnCharacterCount', 'SpawnCharacterDeployTime', 'SpawnConstPriority', 'AlwaysResetAnimation',
+  'SpawnProjectile', 'SpawnChain', 'RadiusY', 'ProjectileStartExtraRadius', 'HomingMinDistance', 'HomingTime',
 ]);
 const AEO_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Radius', 'LifeDuration', 'HitSpeed', 'HitSpeedOffset', 'Damage', 'Buff', 'BuffTime',
@@ -370,8 +424,23 @@ export class Defs {
       pushbackAll: bool(r, 'PushbackAll'),
       targetBuff: tb ? this.buff(tb, level) : null,
       buffTime: num(r, 'BuffTime'),
+      chainCount: num(r, 'ChainedHitCount'),
+      chainRadius: num(r, 'ChainedHitRadius'),
+      pierceRange: num(r, 'ProjectileRange') > 1 ? num(r, 'ProjectileRange') : 0,
+      pierceRadius: num(r, 'ProjectileRadius'),
+      pierceRadiusY: num(r, 'ProjectileRadiusY'),
+      minDistance: num(r, 'MinDistance'),
+      pingpong: r.PingpongVisualTime !== undefined,
+      spawnUnit: null,
+      spawnCount: num(r, 'SpawnCharacterCount', 1),
+      spawnDeployTime: num(r, 'SpawnCharacterDeployTime', -1),
+      spawnProjectile: null,
     };
     this.projCache.set(key, def);
+    const sc = str(r, 'SpawnCharacter');
+    if (sc) def.spawnUnit = this.unit(sc, level);
+    const sp = str(r, 'SpawnProjectile');
+    if (sp) def.spawnProjectile = this.projectile(sp, level);
     return def;
   }
 
@@ -464,6 +533,20 @@ export class Defs {
       chargeSpeedMul: num(r, 'ChargeSpeedMultiplier'),
       damageSpecial: scaleStat(this.data, num(r, 'DamageSpecial'), level, rarity),
       manaOnDeathForOpponent: num(r, 'ManaOnDeathForOpponent'),
+      manaCollect: num(r, 'ManaCollectAmount') * ELIXIR_ONE,
+      manaPeriod: num(r, 'ManaGenerateTimeMs'),
+      manaOnDeath: num(r, 'ManaOnDeath') * ELIXIR_ONE,
+      variableDamage: r.VariableDamage2 !== undefined
+        ? [scaleStat(this.data, dmg.base, level, rarity), scaleStat(this.data, num(r, 'VariableDamage2'), level, rarity), scaleStat(this.data, num(r, 'VariableDamage3'), level, rarity)]
+        : null,
+      variableDamageTime: [num(r, 'VariableDamageTime1', 2000), num(r, 'VariableDamageTime2', 2000)],
+      multipleTargets: num(r, 'MultipleTargets', 1),
+      buffOnDamage: str(r, 'BuffOnDamage') ? this.buff(str(r, 'BuffOnDamage')!, level) : null,
+      buffOnDamageTime: num(r, 'BuffOnDamageTime'),
+      hides: bool(r, 'HidesWhenNotAttacking'),
+      hideTime: num(r, 'HideTimeMs'),
+      upTime: num(r, 'UpTimeMs'),
+      spawnPathfindSpeed: num(r, 'SpawnPathfindSpeed'),
       unsupported,
     };
     this.unitCache.set(key, def);
@@ -496,6 +579,17 @@ export class Defs {
       pushbackAll: false,
       targetBuff: null,
       buffTime: 0,
+      chainCount: 0,
+      chainRadius: 0,
+      pierceRange: 0,
+      pierceRadius: 0,
+      pierceRadiusY: 0,
+      minDistance: 0,
+      pingpong: false,
+      spawnUnit: null,
+      spawnCount: 0,
+      spawnDeployTime: -1,
+      spawnProjectile: null,
     };
     const def: UnitDef = {
       name,
@@ -538,6 +632,18 @@ export class Defs {
       chargeSpeedMul: 0,
       damageSpecial: 0,
       manaOnDeathForOpponent: 0,
+      manaCollect: 0,
+      manaPeriod: 0,
+      manaOnDeath: 0,
+      variableDamage: null,
+      variableDamageTime: [0, 0],
+      multipleTargets: 1,
+      buffOnDamage: null,
+      buffOnDamageTime: 0,
+      hides: false,
+      hideTime: 0,
+      upTime: 0,
+      spawnPathfindSpeed: 0,
       unsupported: [],
     };
     this.unitCache.set(key, def);
@@ -553,17 +659,44 @@ export class Defs {
     const unsupported: string[] = [];
     const summon: CardDef['summon'] = [];
     const sc = str(r, 'SummonCharacter');
+    const pushUnit = (n: string): UnitDef => {
+      const unit = this.unit(n, level);
+      unsupported.push(...unit.unsupported.map((u) => `${n}.${u}`));
+      return unit;
+    };
+    const offs = (): [number, number][] | null => {
+      const ox = r.SummonCharactersOffsetsX as number[] | undefined;
+      const oy = r.SummonCharactersOffsetsY as number[] | undefined;
+      return ox && oy ? ox.map((x, i) => [x, oy[i] ?? 0]) : null;
+    };
+    const customDeploy = num(r, 'CustomDeployTime', -1);
     if (sc) {
-      const unit = this.unit(sc, level);
-      unsupported.push(...unit.unsupported.map((u) => `${sc}.${u}`));
       summon.push({
-        unit,
-        count: num(r, 'SummonNumber', 1),
-        radius: num(r, 'SummonRadius'),
-        deployDelay: num(r, 'SummonDeployDelay'),
+        unit: pushUnit(sc), count: num(r, 'SummonNumber', 1), radius: num(r, 'SummonRadius'),
+        deployDelay: num(r, 'SummonDeployDelay'), offsets: null, delays: null, deployTime: customDeploy, role: 'main',
       });
     }
-    for (const k of ['SummonCharacterSecond', 'SummonCharactersList', 'Mirror', 'SpellAsDeploy', 'FullLaneDeploy']) {
+    const sc2 = str(r, 'SummonCharacterSecond');
+    if (sc2) {
+      summon.push({
+        unit: pushUnit(sc2), count: num(r, 'SummonCharacterSecondCount', 1), radius: num(r, 'SummonRadius'),
+        deployDelay: num(r, 'SummonDeployDelaySecond', num(r, 'SummonDeployDelay')), offsets: null, delays: null,
+        deployTime: customDeploy, role: 'second',
+      });
+    }
+    const list = r.SummonCharactersList as string[] | undefined;
+    if (list) {
+      const o = offs();
+      const dl = r.SummonCharactersDelayList as number[] | undefined;
+      const step = num(r, 'SummonDeployDelay');
+      list.forEach((n, i) => {
+        summon.push({
+          unit: pushUnit(n), count: 1, radius: 0, deployDelay: 0, offsets: o ? [o[i] ?? [0, 0]] : null,
+          delays: [dl ? (dl[i] ?? 0) : i * step], deployTime: customDeploy, role: 'main',
+        });
+      });
+    }
+    for (const k of ['Mirror', 'FullLaneDeploy']) {
       if (r[k] !== undefined) unsupported.push(k);
     }
     const projName = str(r, 'Projectile');
@@ -578,7 +711,7 @@ export class Defs {
     if (areaEffect) unsupported.push(...areaEffect.unsupported);
     if (spellProjectile?.targetBuff) unsupported.push(...spellProjectile.targetBuff.unsupported);
     const type = (r._type as CardDef['type']) ?? 'troop';
-    if (!sc && !projName && !aeoName) unsupported.push('no SummonCharacter/Projectile/AreaEffectObject');
+    if (!sc && !projName && !aeoName && !list) unsupported.push('no SummonCharacter/Projectile/AreaEffectObject');
     const def: CardDef = {
       name,
       type,
@@ -587,6 +720,7 @@ export class Defs {
       level,
       summon,
       spellProjectile,
+      spawnOffsets: spellProjectile?.spawnUnit ? offs() : null,
       spellRadius: num(r, 'Radius'),
       areaEffect,
       waves: num(r, 'ProjectileWaves', 1),

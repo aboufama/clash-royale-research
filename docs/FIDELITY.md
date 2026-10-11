@@ -72,7 +72,17 @@ Engine: `sim/core` (TypeScript, 20 Hz, integer game units). Tests: `cd sim && np
 | Special | River jump (Hog, Prince, Royal Hogs…) | A | JumpEnabled units may path through water (water cost 7) at JumpSpeed over water; jump arc, targetability during the jump not modelled | – | |
 | Special | Charge (Prince, Dark Prince, Battle Ram) | D/A | ChargeSpeedMultiplier, DamageSpecial (D); ChargeRange read as data × 10 game units (A); reset by stopping without a target or by stun (A) | – | |
 | Special | Elixir to opponent on death | A | ManaOnDeathForOpponent read as elixir × 1000 | – | |
-| Special | Dash, chain, piercing projectiles, evolutions, champions, scripted actions | – | Planned | | |
+| Special | Multi-character summons | D/A | SummonCharacterSecond(+Count, delay), SummonCharactersList with SummonCharactersOffsets and delay list, CustomDeployTime (D); two-group placement (A) | – | |
+| Special | Deploy-time spells (Ice Wizard, Electro Wizard) | D/A | SpellAsDeploy card AreaEffectObject cast at commit, then the summon (A: timing of the cast) | – | |
+| Special | Multiple targets + stun on damage (Electro Wizard) | D/A | MultipleTargets, BuffOnDamage/Time (D); extra targets = nearest others in range (A) | – | |
+| Special | Inferno ramp | D | Damage → VariableDamage2 → VariableDamage3 after VariableDamageTime1/2 ms of attacking; reset on retarget/stun (A) | – | |
+| Special | Chain lightning (Electro Dragon, Electro Spirit) | D/A | ChainedHitCount/Radius, TargetBuff (D); nearest unhit enemy from the last target, instantaneous hops (A) | – | |
+| Special | Piercing projectiles (Bowler, Executioner, Magic Archer, Log, Barbarian Barrel) | D/A | ProjectileRange, ProjectileRadius(/Y rectangle), Pushback (D); straight flight from shooter (rolling spells from the target point toward the enemy) (A); Executioner out to max(MinDistance, target) ≤ range/2 then back (A) | – | |
+| Special | Projectile spawns (Goblin Barrel, Barbarian Barrel) | D | SpawnCharacter/Count/DeployTime, card SummonCharactersOffsets | – | |
+| Special | Elixir Collector | D | ManaCollectAmount every ManaGenerateTimeMs, ManaOnDeath | – | |
+| Special | Tesla hiding | D/A | HidesWhenNotAttacking, HideTimeMs, UpTimeMs (D); untargetable while hidden, state machine (A) | – | |
+| Special | Miner tunnelling | D/A | SpawnPathfindSpeed from the King tower, straight line, untargetable while underground (A) | – | |
+| Special | Dash, scripted actions (heroes, champions, newer cards), attack sequences, evolutions | – | Planned | | |
 | Scaling | Level and rarity scaling | D | floor(base × M[L−1−rel]/100), towers from tower scaling | Known L11 values ✓ | |
 
 ## Rendering (viewer)

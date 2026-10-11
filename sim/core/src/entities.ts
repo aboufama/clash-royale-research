@@ -88,6 +88,18 @@ export class Unit {
   /** Charge: distance travelled uninterrupted, charging flag. */
   chargeDist: number;
   charging: boolean;
+  /** Inferno ramp: ms spent attacking the current target. */
+  rampMs: number;
+  /** Elixir Collector: ms until the next elixir. */
+  manaTimer: number;
+  /** Tesla: hidden underground; ms idle; ms until up. */
+  hidden: boolean;
+  idleMs: number;
+  upMs: number;
+  /** Miner: tunnelling toward (tunnelX, tunnelY) before deploying. */
+  tunneling: boolean;
+  tunnelX: number;
+  tunnelY: number;
 
   constructor(id: number, def: UnitDef, card: string, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -136,6 +148,14 @@ export class Unit {
     this.spawnIndex = 0;
     this.chargeDist = 0;
     this.charging = false;
+    this.rampMs = 0;
+    this.manaTimer = Math.round(def.manaPeriod / 50);
+    this.hidden = def.hides;
+    this.idleMs = 0;
+    this.upMs = 0;
+    this.tunneling = false;
+    this.tunnelX = 0;
+    this.tunnelY = 0;
   }
 
   get alive(): boolean {
@@ -172,6 +192,14 @@ export class Projectile {
   spell: string;
   born: number;
   alive: boolean;
+  /** Piercing flight: direction x1000, distance left, units already hit, return trip. */
+  pierce: boolean;
+  dirX: number;
+  dirY: number;
+  rangeLeft: number;
+  hitIds: number[];
+  returning: boolean;
+  source: Unit | null;
 
   constructor(id: number, def: ProjectileDef, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -195,6 +223,13 @@ export class Projectile {
     this.spell = '';
     this.born = tick;
     this.alive = true;
+    this.pierce = false;
+    this.dirX = 0;
+    this.dirY = 1000;
+    this.rangeLeft = 0;
+    this.hitIds = [];
+    this.returning = false;
+    this.source = null;
   }
 }
 
