@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "classification": "Original full-data finalizer and one built-in runner tick under explicit modeled platform conditions; not an accepted simulator",
+  "private_report_sha256": "fe0cf3a9d532a64f82bdf7b01602dc5868f5f3255f968728bc4c71b9e1ee6607",
+  "private_setup_report_sha256": "b6ad54739375c3cef22805dbe6665cb287c031aa7868a421377be7c490d508e9",
+  "review": {
+    "reports_and_frozen_sources_independently_reviewed": true,
+    "full_421_input_execution_independently_replayed": false,
+    "modeled_asset_boundary_synthetic_controls_independently_passed": 5,
+    "frozen_authored_sources_verified": 44,
+    "source_closure_manifest_sha256": "1e543e46d56f6b0cecf878b801f760cd17edb551422630939ad9a10d98ff081b",
+    "terminal_source_closure": {
+      "manifest_sha256": "69fcaebe404ffd1ff9105e4f50a33cacc5aaf00701b0952d92f7fc662c8217d4",
+      "initial_source_pins_still_match": true,
+      "new_task_source_count": 0,
+      "new_module_name_count": 21,
+      "terminal_module_count": 316
+    }
+  },
+  "binary_identity": {
+    "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "asset_pack_sha256": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3",
+    "stdlib_sha256": "4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4"
+  },
+  "data_initialization": {
+    "original_constructors_returned": 763,
+    "native_manifest_inputs_ingested": 421,
+    "native_parser_counts": {
+      "original_csv": 111,
+      "original_toml": 308,
+      "original_json": 2
+    },
+    "decoded_input_bytes": 19209601,
+    "native_phase_entry_counts": {
+      "prepare_ids": 158,
+      "first": 164,
+      "second": 158,
+      "third": 157
+    },
+    "phase_limit": "Counts observe entries; the enclosing finalizer return is separately checked.",
+    "original_finalizer_entry_elf_va": "0xe16984",
+    "original_finalizer_returned": true,
+    "original_linked_records": [
+      {
+        "kind": 34,
+        "name": "Knight",
+        "id": 34000000,
+        "vtable": "0x191b410"
+      },
+      {
+        "kind": 14,
+        "name": "Common",
+        "id": 14000000,
+        "vtable": "0x1920588"
+      },
+      {
+        "kind": 72,
+        "name": "Friendly",
+        "id": 72000007,
+        "vtable": "0x191dfd8"
+      },
+      {
+        "kind": 121,
+        "name": "Normal",
+        "id": 121000000,
+        "vtable": "0x1922f88"
+      },
+      {
+        "kind": 169,
+        "name": "TrainingCamp",
+        "id": 54000000,
+        "vtable": "0x1919aa8"
+      }
+    ],
+    "knight_readback": {
+      "hitpoints": 690,
+      "damage": 79,
+      "sequence_count": 1,
+      "rarity_is_original_common": true
+    }
+  },
+  "built_in_test": {
+    "scenario": "Normal",
+    "scenario_index": 0,
+    "seed": 1131,
+    "native_config": {
+      "scenario": "Normal",
+      "seed": 1131,
+      "option": -1,
+      "named_mode": false,
+      "record_flag_word_0x68": 0,
+      "secondary_verification_enabled": true
+    },
+    "original_runner_constructor_returned": true,
+    "original_account_count": 2,
+    "original_player_actor_count": 2,
+    "native_training_map": {
+      "assets": [
+        {
+          "path": "locations/training_arena.csv",
+          "sha256": "484462bdd07b940d6f3ab0c1193436a87b86f3b96ac3f9c4ea3e661833711c6a"
+        },
+        {
+          "path": "tilemaps/tilemap.csv",
+          "sha256": "93af091258a3d57081c50d638eb98ea45f4ea8dd21a0893cc35a0e32ba3a457f"
+        }
+      ],
+      "scope": "Original map geometry; complete match parity is unverified.",
+      "index": 1,
+      "width": 36,
+      "height": 64,
+      "native_objects": 204,
+      "native_effects": 0,
+      "cells_sha256": "b26825cb1f47f5508eff8b3ac117e6c5689978429020932f89ae9eb95fb8cb01",
+      "flags_sha256": "eb5a66d6e07980b493d18e96ac844a19b1da82296c5cff195bfa4fbe4bafe69f"
+    },
+    "original_runner_step_entry_elf_va": "0x11d6398",
+    "steps_returned": 1,
+    "frame_after_step": 1,
+    "step_counter_after_step": 1,
+    "result_classification": "continuing",
+    "result_pointer_null": true,
+    "native_end_gate_raw": 0,
+    "test_module8_present": false,
+    "original_test_global": 1,
+    "secondary_verification_context_created": true,
+    "legal_card_deployment_demonstrated": false,
+    "completed_match": false
+  },
+  "integrity": {
+    "post_constructor_game_text_sha256": "8e97f87eec24190d2a7af446cc1d2b959263bc84a4a2baa3bd4cec993f26d473",
+    "game_text_unchanged_since_data_start": true,
+    "original_constructor_self_erasure_preserved": true,
+    "shipped_libcxx_executable_code_unchanged": true,
+    "pinned_bionic_executable_code_unchanged": true,
+    "diagnostic_callbacks": 0,
+    "import_data_guard_events": 0
+  },
+  "environment_limits": [
+    "One exact missing AAssetManager_open result is modeled after separately hashing all 29 archived APKs. An unmapped opaque token enters through the original setter; no real Android manager executes in this run.",
+    "Android errno, caller-saved registers, locking, cache state and other side effects at that modeled call are not reproduced.",
+    "The virtual application/update directory and virtual working directory are explicitly selected empty namespaces, not observed device state.",
+    "Original Bionic fopen/stat supply their own failure handling after the finite read-only kernel -ENOENT boundary.",
+    "Original parsers receive pinned bytes through explicit bundle/file-result linkage; the original empty sound manager retains an explicit wrapper.",
+    "Synthetic TLS/thread inputs, fixed clocks/capabilities, modeled allocation and other recorded platform imports remain.",
+    "The original built-in test chooses synthetic account identities, random decks and tournament card levels. Equivalence to ordinary account/network matches is unverified.",
+    "Complete VM state, deterministic reset, independent Android battle comparison and training remain absent."
+  ],
+  "native_android_asset_manager_executed": false,
+  "byte_exact_gate_satisfied": false
+}

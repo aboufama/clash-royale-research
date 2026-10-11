@@ -30,16 +30,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | All 763 original constructors and 421 native manifest inputs complete ingestion; original resource promise/wait reaches the final postprocessor. Full finalization still stops at filesystem prerequisites. Original owner/provider/directory setup and narrow native file-error handling are independently reproduced; no complete match yet. |
+| Supporting native runtime | Partial | Original finalizer returns after 763 constructors and all 421 native inputs; built-in Normal runner constructs accounts/players/map and advances one tick under explicit modeled platform conditions. Frozen sources/reports reviewed; full run not independently replayed. Separately, genuine empty Android asset-manager execution is independently reproduced. Legal deployment, full match and Android equivalence remain unvalidated. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus. |
+| Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Original TrainingCamp geometry (36x64) is now loaded into the built-in Normal runner, which returns one tick under explicit diagnostic conditions. Full-match movement and original-device comparison remain unvalidated. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
 | Combat interactions | Partial | Original-loaded Knight/KingTower records drive 400 world ticks, 62 damage applications, projectile processing and lethal Knight removal; complete selected reports match separate runs with executable regions unchanged. Synthetic arena/context/player setup remains. |
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **15** · **2026-10-11T09:41:22Z** · Reviewed the 421-input native ingestion run and its unreturned filesystem postprocessor. Independently reproduced original owner, provider and directory setup, plus ten native Bionic file-error controls with identical public-helper reports. Published narrow file-boundary and stopped-memory diagnostics; 211 tests pass with native dependencies. Full match, Android asset-manager state and byte-identical battle equivalence remain unvalidated.
+Review **16** · **2026-10-11T10:08:13Z** · Reviewed original 421-input finalizer return and first built-in Normal runner tick under explicit modeled platform conditions. Independently reproduced genuine empty Android asset-manager execution and 400-tick actor insertion observations. Published bounded evidence and limitations; full-run replay, legal deployment, complete matches and byte-identical battle equivalence remain pending.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -51,13 +51,28 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
-- The full native data run ingests **421 manifest inputs** and passes original
-  resource promise completion, then stops in the final postprocessor because
-  application filesystem setup is missing. Independent probes reproduce the
-  original file-owner/provider constructors and directory setter, preserving
-  the exact optional-file path. Narrow original Bionic file-error handling has
-  ten native controls and 22 public asset-free tests. Full finalization and a
-  complete match remain pending. See [file prerequisite evidence](research/evidence/native-file-prerequisites.json).
+- The original full-data finalizer now **returns after all 421 inputs**, and
+  the original built-in `Normal` runner constructs its accounts, players and
+  TrainingCamp map and advances **one tick**. This diagnostic still models one
+  missing Android asset result and other explicit platform inputs. Its frozen
+  sources and reports are reviewed; the complete run has not yet been
+  independently replayed. No legal card deployment or completed match is
+  established. See [data and runner evidence](research/evidence/native-data-runner-tick.json).
+- Independently reproduced a **real Android asset-manager constructor** and
+  missing-file lookup using six original libraries from a verified official
+  Android 15 ARM64 image. All six executable regions remain unchanged. The
+  manager is empty; attaching the game's APKs and integrating this code into
+  the game process remain pending. This is an isolated native slice with
+  modeled allocation/memory and synthetic TLS, not full Android startup.
+  See [platform evidence and limits](research/evidence/native-android-empty-manager.json).
+- Independent 400-tick fixture runs reproduce **44 returned live actor
+  insertions**, distinguishing them from queued actors and registration
+  requests. This corrects the event observer; it does not demonstrate legal
+  card placement. See [insertion evidence](research/evidence/native-actor-insertion-observer.json).
+- Original filesystem constructors, directory setup and Bionic file-error
+  handling are independently reproduced. Ten native file-error controls and
+  22 public asset-free tests preserve the narrow boundary. See
+  [file prerequisite evidence](research/evidence/native-file-prerequisites.json).
 - [Stopped-memory capture](scripts/native_failure_capture.py) and its
   [offline reader](scripts/read_failure_capsule.py) preserve diagnostic bytes
   and reject corrupted or missing regions. Seven synthetic tests verify their
@@ -67,8 +82,8 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   original pinned Bionic routines. All 763 constructors still return, and
   original resource code completes an **empty-resource** promise and wait.
   Actual incomplete waits fail instead of receiving fabricated completion.
-  The later 421-input run also passes this resource stage; its final
-  postprocessor and a playable match remain pending. See
+  The later 421-input diagnostic also passes this resource stage and its final
+  postprocessor; a playable match remains pending. See
   [threading and resource evidence](research/evidence/native-bionic-threading.json).
 - A locally compiled, authored memory observer preserves full-interval import
   checks. In a 50-parse native CSV microbenchmark, it takes 1.41 seconds versus
@@ -86,8 +101,9 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   Android Bionic code passes 2,016 integer-conversion cases and 2,024 decimal
   cases. This exposed a real limitation in the older decimal adapter: matching
   result bits did not preserve floating-point status flags. The new integration
-  routes these calls to original Bionic. Complete data finalization, match setup
-  and original-device runtime equivalence remain unverified. See
+  routes these calls to original Bionic. Full data finalization and built-in
+  match setup now return under the diagnostic conditions above; original-device
+  runtime equivalence remains unverified. See
   [startup evidence](research/evidence/native-startup-constructors.json) and
   [platform evidence](research/evidence/native-bionic-boundary.json).
 

@@ -640,6 +640,10 @@ does not change.
 
 ## Full data ingestion and original filesystem prerequisites
 
+This section records the earlier strict filesystem stop. The subsequent
+diagnostic finalizer return is recorded in the following section; it does not
+resolve the Android runtime equivalence limit.
+
 The full run with original thread keys and synchronization ingests all 421
 native-manifest inputs: 308 TOML, 111 CSV and two JSON inputs, totaling
 19,209,601 decoded bytes. Original resource promise completion and waiting
@@ -694,3 +698,81 @@ manager initialization is established by that field. Original code remains
 unchanged relative to the recorded post-constructor baseline. Full finalization,
 Android asset-provider setup, complete matches and battle equivalence remain
 unvalidated.
+
+## Full data finalizer and first built-in runner tick
+
+The next diagnostic run completes all 763 original constructors, ingests all
+421 manifest inputs and returns from the original enclosing data finalizer
+at `0xe16984`. Original collection lookups resolve Knight, Common, Friendly,
+Normal and TrainingCamp records. The original built-in Normal configuration
+and runner constructors return, creating two accounts and two player actors.
+Original loaders provide the 36 by 64 TrainingCamp map with the previously
+reproduced cell and flag hashes. One original `0x11d6398` step returns with
+frame and counter both one, a null result and a zero end gate: continuing,
+not a completed battle.
+
+This is explicitly a diagnostic environment. The exact optional asset path is
+absent from all 29 rehashed archived APKs, but the Android API result for that
+one observed call is still modeled. An unmapped opaque handle enters through
+the original setter; no fabricated Android object is dereferenced. Changed
+handles, paths, modes or callers stop, and five independent synthetic controls
+pass. Android register, errno, locking and cache side effects are not supplied.
+Separate virtual update and working directories are explicitly empty; these
+are selected inputs, not observed device filesystems. Original Bionic handles
+the subsequent finite kernel file errors.
+
+Original resource-result linkage, an explicit empty sound-manager wrapper,
+synthetic thread/TLS inputs, selected clocks and modeled allocation remain.
+The built-in test sets its original test global, creates synthetic identities
+and random decks, and produces a secondary verification context. These test
+conditions have not been shown equivalent to ordinary match setup. No card
+placement, natural battle result, complete state/reset or training is claimed.
+
+The [data/runner checkpoint](evidence/native-data-runner-tick.json) records the
+whole private report hashes, 44 verified frozen authored sources and terminal
+source inventory. Integration review independently checks the reports and
+source copies; the expensive complete run has not yet been independently
+replayed. Game text matches its baseline after the original self-erasing
+constructors, shipped C++ and Bionic executable regions remain unchanged, and
+no diagnostic callback or import-data guard event occurs.
+
+## Original Android empty asset-manager execution
+
+A verified official Android 15 ARM64 image provides a separate, pinned native
+platform build. Read-only GPT, logical-partition and ext4 extraction preserves
+the same-image system libraries and runtime APEX Bionic. The game runtime's
+older Bionic and these newer libraries remain separate experiments.
+
+The actual JNI registration identifies `nativeCreate` at `0x18c6b0` in
+`libandroid_runtime.so`. Calling that original function constructs a genuine
+592-byte manager through original AssetManager2, String8 and lazy guard code.
+The original `AAssetManager_open` then locks the genuine object and returns
+null for the optional path. This probe uses mode 2; the game's observed call
+uses mode 0. No APK is configured in the manager, so the result establishes
+only the empty-manager native path.
+
+The [platform checkpoint](evidence/native-android-empty-manager.json) pins the
+official image, six selected libraries, sources and complete report. An
+independent run reproduces the report hash; all six executable regions remain
+unchanged. Thirteen synthetic relocation and access-interval controls pass.
+Allocation, memory primitives and a single-thread gettid boundary are modeled;
+TLS is synthetic, global initializers are not run, and unresolved imports or
+TLS accesses stop. This is neither an original Android process nor a configured
+game asset namespace. APK loading and integration are the next prerequisites.
+
+## Distinguishing queued actors from native insertion
+
+The read-only observer now distinguishes the original request wrapper and
+enqueue path from the returned insertion helper at `0xf8c50c`. A new live
+insertion requires a nonzero insertion argument, a returned call, actor
+occurrences changing from zero to one and a live-vector count increment.
+The insertion argument is not a bit-zero test: two original king insertions
+use value 2.
+
+Independent execution of the existing synthetic 400-tick fixture reproduces
+the entire new report, including 124 events: 44 live insertions, 40 enqueues
+and 40 calls without insertion. No event remains pending and original
+executable regions are unchanged. These are selected observation checks, not
+complete VM noninterference or legal card deployment. The
+[observer checkpoint](evidence/native-actor-insertion-observer.json) retains
+the fixture's limitations.

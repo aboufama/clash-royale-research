@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 15,
-    "reviewed_at": "2026-10-11T09:41:22Z",
-    "summary": "Reviewed the 421-input native ingestion run and its unreturned filesystem postprocessor. Independently reproduced original owner, provider and directory setup, plus ten native Bionic file-error controls with identical public-helper reports. Published narrow file-boundary and stopped-memory diagnostics; 211 tests pass with native dependencies. Full match, Android asset-manager state and byte-identical battle equivalence remain unvalidated."
+    "sequence": 16,
+    "reviewed_at": "2026-10-11T10:08:13Z",
+    "summary": "Reviewed original 421-input finalizer return and first built-in Normal runner tick under explicit modeled platform conditions. Independently reproduced genuine empty Android asset-manager execution and 400-tick actor insertion observations. Published bounded evidence and limitations; full-run replay, legal deployment, complete matches and byte-identical battle equivalence remain pending."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "All 763 original constructors and 421 native manifest inputs complete ingestion; original resource promise/wait reaches the final postprocessor. Full finalization still stops at filesystem prerequisites. Original owner/provider/directory setup and narrow native file-error handling are independently reproduced; no complete match yet."
+        "Original finalizer returns after 763 constructors and all 421 native inputs; built-in Normal runner constructs accounts/players/map and advances one tick under explicit modeled platform conditions. Frozen sources/reports reviewed; full run not independently replayed. Separately, genuine empty Android asset-manager execution is independently reproduced. Legal deployment, full match and Android equivalence remain unvalidated."
       ]
     },
     {
@@ -63,7 +63,7 @@
       "id": "movement",
       "status": "partial",
       "evidence": [
-        "Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus."
+        "Original movement runs for 60 synthetic world ticks. Original TrainingCamp geometry (36x64) is now loaded into the built-in Normal runner, which returns one tick under explicit diagnostic conditions. Full-match movement and original-device comparison remain unvalidated."
       ]
     },
     {

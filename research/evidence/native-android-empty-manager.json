@@ -1,0 +1,347 @@
+{
+  "schema_version": 1,
+  "classification": "Independently reproduced original Android 15 native empty asset-manager slice; not an APK-configured or full Android runtime",
+  "official_archive": {
+    "url": "https://dl.google.com/android/repository/sys-img/android/arm64-v8a-35_r02.zip",
+    "archive_bytes": 769099654,
+    "archive_sha1": "2026a06409db630b56711afdbffb457c1dbaed49",
+    "archive_sha256": "1e6ae4fca6449c07278a333311f0ef29c5101d1e3e18ba48fbe9bd2dc5006926",
+    "official_manifest_sha1_matched": true
+  },
+  "build_fingerprint": "Android/sdk_phone64_arm64/emu64a:15/AE3A.240806.019/12368160:userdebug/test-keys",
+  "system_image_sha256": "794b4c44ed71c18399fdc20027212e2cdbb2cb9c8616daf2996983d79bccf1ff",
+  "extraction": "Read-only verified GPT and Android logical-partition metadata, ext4 files and same-image runtime APEX payload. No foreign code executed on the host; APEX signatures were not separately verified.",
+  "source_manifest_sha256": "fa30a4515a64c85405f823b50ce010012c9b6b3009f0ae4e4fed63f07ccd7a23",
+  "private_report_sha256": "3673a52df7f2ffa8163382c74daeb27f4802b3cb000d3bfe2d93a851db4a8df7",
+  "independent_whole_report_sha256_matches": true,
+  "synthetic_relocation_and_interval_controls_passed": 13,
+  "libraries": [
+    {
+      "sha256": "d7674face2379aeb556a6a3e2846662612f73a060bf44fc89e5431893a891640",
+      "bytes": 236472,
+      "needed": [
+        "android.hardware.power-V5-ndk.so",
+        "liblog.so",
+        "libhidlbase.so",
+        "libcutils.so",
+        "libandroidfw.so",
+        "libinput.so",
+        "libutils.so",
+        "libbinder.so",
+        "libbinder_ndk.so",
+        "libui.so",
+        "libgui.so",
+        "libharfbuzz_ng.so",
+        "libsensor.so",
+        "libactivitymanager_aidl.so",
+        "libandroid_runtime.so",
+        "libminikin.so",
+        "libnetd_client.so",
+        "libhwui.so",
+        "libxml2.so",
+        "libEGL.so",
+        "libGLESv2.so",
+        "libpowermanager.so",
+        "android.hardware.configstore@1.0.so",
+        "android.hardware.configstore-utils.so",
+        "android.os.flags-aconfig-cc.so",
+        "libnativedisplay.so",
+        "libfmq.so",
+        "libc++.so",
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "relocation_counts": {
+        "1026": 342,
+        "257": 411,
+        "1025": 15
+      },
+      "relr_count": 347,
+      "initializers": 7,
+      "name": "libandroid.so"
+    },
+    {
+      "sha256": "92d438da7bf79d8a4c4bdf2088e6edd8a42db44cf50cc77afbfb752028f82afe",
+      "bytes": 2624248,
+      "needed": [
+        "libbase.so",
+        "libharfbuzz_ng.so",
+        "liblog.so",
+        "libminikin.so",
+        "libz.so",
+        "android.database.sqlite-aconfig-cc.so",
+        "android.media.audiopolicy-aconfig-cc.so",
+        "android.media.audio.common.types-V3-cpp.so",
+        "audioclient-types-aidl-cpp.so",
+        "audioflinger-aidl-cpp.so",
+        "audiopolicy-types-aidl-cpp.so",
+        "spatializer-aidl-cpp.so",
+        "av-types-aidl-cpp.so",
+        "android.hardware.camera.device@3.2.so",
+        "libandroid_net.so",
+        "libbattery.so",
+        "libnetdutils.so",
+        "libmemtrack.so",
+        "libandroidfw.so",
+        "libappfuse.so",
+        "libcrypto.so",
+        "libcutils.so",
+        "libdebuggerd_client.so",
+        "libutils.so",
+        "libbinder.so",
+        "libbinderdebug.so",
+        "libbinder_ndk.so",
+        "libui.so",
+        "libgraphicsenv.so",
+        "libgui.so",
+        "libhwui.so",
+        "libmediandk.so",
+        "libpermission.so",
+        "libPlatformProperties.so",
+        "libsensor.so",
+        "libinput.so",
+        "libicu.so",
+        "libcamera_client.so",
+        "libcamera_metadata.so",
+        "libprocinfo.so",
+        "libsqlite.so",
+        "libEGL.so",
+        "libGLESv1_CM.so",
+        "libGLESv2.so",
+        "libGLESv3.so",
+        "libincfs.so",
+        "libdataloader.so",
+        "libvulkan.so",
+        "libETC1.so",
+        "libjpeg.so",
+        "libhardware.so",
+        "libhardware_legacy.so",
+        "libselinux.so",
+        "libmedia.so",
+        "libmedia_helper.so",
+        "libmediametrics.so",
+        "libmeminfo.so",
+        "libaudioclient.so",
+        "libaudioclient_aidl_conversion.so",
+        "libaudiofoundation.so",
+        "libaudiopolicy.so",
+        "libusbhost.so",
+        "libpdfium.so",
+        "libimg_utils.so",
+        "libnetd_client.so",
+        "libprocessgroup.so",
+        "libnativebridge_lazy.so",
+        "libnativeloader_lazy.so",
+        "libmemunreachable.so",
+        "libhidlbase.so",
+        "libnativedisplay.so",
+        "libnativewindow.so",
+        "libdl_android.so",
+        "libtimeinstate.so",
+        "server_configurable_flags.so",
+        "libimage_io.so",
+        "libultrahdr.so",
+        "libperfetto_c.so",
+        "libtracing_perfetto.so",
+        "libc++.so",
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "relocation_counts": {
+        "1026": 2658,
+        "257": 2242,
+        "1025": 303,
+        "1031": 9
+      },
+      "relr_count": 8989,
+      "initializers": 15,
+      "name": "libandroid_runtime.so"
+    },
+    {
+      "sha256": "531aeb9ca7669816dff2d93cb31e3fe1051d3d844b3bc7a389358549ff49bced",
+      "bytes": 880552,
+      "needed": [
+        "libbase.so",
+        "libbinder.so",
+        "liblog.so",
+        "libcutils.so",
+        "libincfs.so",
+        "libutils.so",
+        "libz.so",
+        "libc++.so",
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "relocation_counts": {
+        "1026": 785,
+        "257": 122,
+        "1025": 90,
+        "1031": 1
+      },
+      "relr_count": 291,
+      "initializers": 8,
+      "name": "libandroidfw.so"
+    },
+    {
+      "sha256": "f231ef8701b9ae7e2571be5d95568228aaf58934fa778f3811b70f204c08e1e5",
+      "bytes": 151792,
+      "needed": [
+        "libcutils.so",
+        "liblog.so",
+        "libvndksupport.so",
+        "libc++.so",
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "relocation_counts": {
+        "1026": 89,
+        "257": 19,
+        "1025": 6
+      },
+      "relr_count": 143,
+      "initializers": 4,
+      "name": "libutils.so"
+    },
+    {
+      "sha256": "794eb8fafd7be35da3725e9ec0b15189c6f4f2544f5b78afd8a647dde5b69195",
+      "bytes": 1083168,
+      "needed": [
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "relocation_counts": {
+        "1027": 449,
+        "1031": 1,
+        "1025": 190,
+        "257": 1923,
+        "1026": 471
+      },
+      "relr_count": 0,
+      "initializers": 3,
+      "name": "libc++.so"
+    },
+    {
+      "sha256": "1c793885eb53259c0777f235161ca21667cbf57f786ec0a2edd65a3cc535b3c5",
+      "bytes": 1109904,
+      "needed": [
+        "ld-android.so",
+        "libdl.so"
+      ],
+      "relocation_counts": {
+        "1027": 1019,
+        "1030": 1,
+        "1025": 32,
+        "257": 7,
+        "1026": 515
+      },
+      "relr_count": 0,
+      "initializers": 7,
+      "name": "libc.so"
+    }
+  ],
+  "native_create_registration": {
+    "entry_elf_va": "0x18c6b0",
+    "table_elf_va": "0x264430",
+    "name": "nativeCreate",
+    "signature": "()J",
+    "registration_bytes_checked": true
+  },
+  "constructor_returned": true,
+  "native_constructed_manager_bytes": 592,
+  "native_constructed_manager_sha256": "e5ba39775ef1d6277fbfac91fed759e1fbbe6129814a1631f5f53fece58aab8b",
+  "open": {
+    "entry_elf_va": "0x1cef8",
+    "name": "AAssetManager_open",
+    "path": "csv_logic/globalIdDb.csv",
+    "mode": 2,
+    "returned_null": true,
+    "configured_apk_count": 0
+  },
+  "native_function_entries": {
+    "libandroid_runtime.so:<NativeCreate>": 1,
+    "libandroidfw.so:_ZN7android13AssetManager2C1Ev": 1,
+    "libutils.so:_ZN7android7String8C1Ev": 2,
+    "libc++.so:__cxa_guard_acquire": 1,
+    "libc.so:pthread_mutex_lock": 3,
+    "libc.so:pthread_mutex_unlock": 3,
+    "libc++.so:__cxa_guard_release": 1,
+    "libandroid.so:AAssetManager_open": 1
+  },
+  "executable_regions": [
+    {
+      "address": "0x10001c000",
+      "bytes": 82400,
+      "before_sha256": "09d0ddc5b954449f10b15734bc090d4fea891ed5e5bd8057b1c094000b6b597c",
+      "after_sha256": "09d0ddc5b954449f10b15734bc090d4fea891ed5e5bd8057b1c094000b6b597c",
+      "unchanged": true
+    },
+    {
+      "address": "0x1010d0000",
+      "bytes": 1560464,
+      "before_sha256": "c07d42a8daeec892369a7ccce4c37f0204b06d440d1d65581f5dd6990e83c255",
+      "after_sha256": "c07d42a8daeec892369a7ccce4c37f0204b06d440d1d65581f5dd6990e83c255",
+      "unchanged": true
+    },
+    {
+      "address": "0x102044000",
+      "bytes": 570112,
+      "before_sha256": "e86b56c2d230780e68e7193a1283a0c3cf745b28f235a33a2b9b6fdd8e7cee61",
+      "after_sha256": "e86b56c2d230780e68e7193a1283a0c3cf745b28f235a33a2b9b6fdd8e7cee61",
+      "unchanged": true
+    },
+    {
+      "address": "0x103010000",
+      "bytes": 60912,
+      "before_sha256": "cd6e2d1bb7b9335c002ac978caf87147d3a9baf51fe94bdf6b03516ca359102b",
+      "after_sha256": "cd6e2d1bb7b9335c002ac978caf87147d3a9baf51fe94bdf6b03516ca359102b",
+      "unchanged": true
+    },
+    {
+      "address": "0x104088d60",
+      "bytes": 497864,
+      "before_sha256": "1c6d13aebaef80a28c9375fe6c9924648785afd0b4e401c1a51415f03c2f2f59",
+      "after_sha256": "1c6d13aebaef80a28c9375fe6c9924648785afd0b4e401c1a51415f03c2f2f59",
+      "unchanged": true
+    },
+    {
+      "address": "0x105044000",
+      "bytes": 565600,
+      "before_sha256": "dcaafcb520d99839bc889834fea9f9f51e2bc328ca1552027d51e0980a0199e9",
+      "after_sha256": "dcaafcb520d99839bc889834fea9f9f51e2bc328ca1552027d51e0980a0199e9",
+      "unchanged": true
+    }
+  ],
+  "modeled_memory_and_allocator_calls": {
+    "malloc": 5,
+    "memset": 2,
+    "strlen": 1,
+    "memcpy": 1,
+    "memmove": 1,
+    "free": 2
+  },
+  "platform_inputs": {
+    "thread_id": 1,
+    "TLS": "zero-filled synthetic region; no full Bionic startup",
+    "apk_set": [],
+    "kernel_calls_supported": [
+      "ARM64 gettid(178) -> 1"
+    ]
+  },
+  "deferred_tls_relocation_count": 12,
+  "unresolved_import_or_tls_guard_events": 0,
+  "initializers_executed": [],
+  "limits": [
+    "Six selected libraries use a bounded experimental relocation loader, not the original Android dynamic linker, JVM or full process startup.",
+    "Original NativeCreate, AssetManager2, String8, libc++ lazy guards and Bionic mutex routines execute in isolated Unicorn; allocator/memory functions and gettid remain explicit modeled boundaries.",
+    "The real manager is empty. No APK set, framework assets, overlays or game lookup namespace are configured.",
+    "This probe uses open mode 2; the observed game call uses mode 0. It is not yet the exact game call.",
+    "The Android 15 platform libraries are a separate pinned build from the older Bionic used in the game diagnostic. They have not been integrated into one runtime.",
+    "Original code preservation and matching reports do not establish Android state equivalence or byte-identical battle behavior."
+  ],
+  "byte_exact_gate_satisfied": false
+}
