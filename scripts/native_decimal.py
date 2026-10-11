@@ -1,7 +1,9 @@
 """Bounded decimal-to-binary64 libc model; integer rounding, no game mechanics.
 
 Only complete finite decimal literals, signed zero or normal binary64 outputs,
-and default FPCR are supported. This is a runtime model, not recovered Bionic.
+and default FPCR are supported. This is a value-only runtime model, not
+recovered Bionic. It does not reproduce floating-point status flags: original
+Bionic sets FPSR for inputs such as 0.1, while this integer calculation does not.
 """
 
 import re

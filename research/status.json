@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 12,
-    "reviewed_at": "2026-10-11T08:09:48Z",
-    "summary": "Read-only receipts reproduce all mapped guest-region hashes over 400 ticks, 87 explicit ARM64 registers and typed adapter observations in two separate runs; previous combat fields remain unchanged. All 21 synthetic controls pass. Full VM coverage, normal-match setup and Android equivalence remain unvalidated."
+    "sequence": 13,
+    "reviewed_at": "2026-10-11T08:32:55Z",
+    "summary": "Independently reproduced all 763 original startup constructors with audited native and authenticated-metadata writes; original Bionic passes 2,016 integer and 2,024 decimal cases. Fixed crossing import-stub access guards and documented the old decimal FPSR gap. All 144 tests pass with optional native dependencies. Full match and battle equivalence remain unvalidated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Original parser accepts 297/297 TOMLs; native manifest yields 158 bundles/421 paths. Original match-context constructor now creates world/level/services under explicit platform models. Complete data/bootstrap initialization remains incomplete."
+        "All 763 original startup constructors return under explicit platform inputs, with every executable-region change accounted for. Pinned AOSP Bionic conversions and full-interval import-data guards are independently reproduced. Complete data finalization and match initialization remain incomplete."
       ]
     },
     {

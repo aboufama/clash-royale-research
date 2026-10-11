@@ -1,0 +1,418 @@
+{
+  "schema_version": 1,
+  "claim": "Pinned original AOSP Bionic locale, integer and decimal conversion execute under the existing native probe; original imported data objects are bound and stub data accesses fail.",
+  "scope": "Platform recovery checkpoint. This libc has not been identified as the APK device runtime, and no complete match or Android equivalence is established.",
+  "provenance": {
+    "repository": "https://android.googlesource.com/platform/prebuilts/runtime/",
+    "commit": "070571b455076f77a01c7b07154a15e545d2b428",
+    "source_path": "mainline/runtime/apex/com.android.runtime-arm64.apex",
+    "apex_sha256": "83bf0dce249728dae48149b80d28b48115c54adad95a352120d58a6ac669d1fc",
+    "libc_sha256": "9f1f93bbd186af5c40a93f6ca4425bfdce82b7f3b9c730e59bb5c7fa598593cf",
+    "sdk_stub_rejected": true
+  },
+  "attachment": {
+    "libc_sha256": "9f1f93bbd186af5c40a93f6ca4425bfdce82b7f3b9c730e59bb5c7fa598593cf",
+    "base": "0x20000000",
+    "ifunc_abi_source": "https://android.googlesource.com/platform/bionic/+/46cce4899/libc/include/sys/ifunc.h",
+    "ifunc_inputs": {
+      "size": 24,
+      "hwcap": 3,
+      "hwcap2": 0,
+      "extended_bit": 62
+    },
+    "ifuncs": {
+      "strncmp": {
+        "resolver": "0xc2398",
+        "target": "0x53980"
+      },
+      "memcpy": {
+        "resolver": "0xc22d4",
+        "target": "0x52a40"
+      },
+      "strcmp": {
+        "resolver": "0xc2360",
+        "target": "0x53500"
+      },
+      "strlen": {
+        "resolver": "0xc2378",
+        "target": "0x53840"
+      },
+      "strchr": {
+        "resolver": "0xc2320",
+        "target": "0x53400"
+      },
+      "strrchr": {
+        "resolver": "0xc23b0",
+        "target": "0x53d40"
+      },
+      "memcmp": {
+        "resolver": "0xc22c8",
+        "target": "0x52840"
+      },
+      "memchr": {
+        "resolver": "0xc22a8",
+        "target": "0x52740"
+      },
+      "memmove": {
+        "resolver": "0xc22f4",
+        "target": "0x52a40"
+      },
+      "stpcpy": {
+        "resolver": "0xc2314",
+        "target": "0x53040"
+      },
+      "strcpy": {
+        "resolver": "0xc236c",
+        "target": "0x53640"
+      },
+      "strnlen": {
+        "resolver": "0xc23a4",
+        "target": "0x53b40"
+      }
+    },
+    "relocations": {
+      "1027": 924,
+      "1030": 1,
+      "1025": 35,
+      "257": 7,
+      "1026": 515
+    },
+    "unsupported_tlsdesc_sites": [
+      "0xcc910"
+    ],
+    "stub_data_reads_fail_closed": true,
+    "platform_calls": {
+      "modeled_existing_allocator:malloc": 1
+    },
+    "native_entries": {
+      "__errno": 1,
+      "newlocale": 1,
+      "ifunc_body:strcmp": 2,
+      "ifunc_body:strchr": 1,
+      "strtoull_l": 2016
+    },
+    "synthetic_tls": {
+      "tls": "0x80000000",
+      "thread": "0x80100000",
+      "errno": "0x80100300"
+    },
+    "executable_code_unchanged": true,
+    "scope": "Original official AOSP libc, not identified APK-device libc; existing platform allocator and synthetic TLS/thread, fixed IFUNC capabilities; no native code patches"
+  },
+  "guard": {
+    "imported_data_objects": [
+      {
+        "consumer": "libg",
+        "symbol": "_ZNSt6__ndk15ctypeIcE2idE",
+        "provider": "libcxx",
+        "object_bytes": 16,
+        "site": "0x1197eae0",
+        "value": "0x3014d6f8"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZNSt6__ndk17collateIcE2idE",
+        "provider": "libcxx",
+        "object_bytes": 16,
+        "site": "0x1197eae8",
+        "value": "0x3014d468"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZSt7nothrow",
+        "provider": "libcxx",
+        "object_bytes": 1,
+        "site": "0x1197ed30",
+        "value": "0x30059f2f"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVNSt6__ndk114basic_ofstreamIcNS_11char_traitsIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 80,
+        "site": "0x1197f910",
+        "value": "0x3013df70"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTTNSt6__ndk114basic_ofstreamIcNS_11char_traitsIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 32,
+        "site": "0x1197f918",
+        "value": "0x3013dfc0"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVNSt6__ndk114basic_ifstreamIcNS_11char_traitsIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 80,
+        "site": "0x1197f920",
+        "value": "0x3013de98"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTTNSt6__ndk114basic_ifstreamIcNS_11char_traitsIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 32,
+        "site": "0x1197f928",
+        "value": "0x3013dee8"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVNSt6__ndk118basic_stringstreamIcNS_11char_traitsIcEENS_9allocatorIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 120,
+        "site": "0x11980000",
+        "value": "0x3013daf0"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTTNSt6__ndk118basic_stringstreamIcNS_11char_traitsIcEENS_9allocatorIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 80,
+        "site": "0x11980008",
+        "value": "0x3013db68"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVNSt6__ndk115basic_stringbufIcNS_11char_traitsIcEENS_9allocatorIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 128,
+        "site": "0x11980010",
+        "value": "0x3013d7d0"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVNSt6__ndk119basic_ostringstreamIcNS_11char_traitsIcEENS_9allocatorIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 80,
+        "site": "0x11980878",
+        "value": "0x3013dce8"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTTNSt6__ndk119basic_ostringstreamIcNS_11char_traitsIcEENS_9allocatorIcEEEE",
+        "provider": "libcxx",
+        "object_bytes": 32,
+        "site": "0x11980880",
+        "value": "0x3013dd38"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZNSt6__ndk14coutE",
+        "provider": "libcxx",
+        "object_bytes": 160,
+        "site": "0x11980be8",
+        "value": "0x3014ce10"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVNSt6__ndk117__assoc_sub_stateE",
+        "provider": "libcxx",
+        "object_bytes": 48,
+        "site": "0x11980c40",
+        "value": "0x3013d370"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "stderr",
+        "provider": "bionic",
+        "object_bytes": 8,
+        "site": "0x11980c60",
+        "value": "0x200cef58"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "_ZTVSt12length_error",
+        "provider": "libcxx",
+        "object_bytes": 40,
+        "site": "0x11980ec8",
+        "value": "0x301394d8"
+      },
+      {
+        "consumer": "libg",
+        "symbol": "__sF",
+        "provider": "bionic",
+        "object_bytes": 456,
+        "site": "0x11981928",
+        "value": "0x200ced80"
+      },
+      {
+        "consumer": "libcxx",
+        "symbol": "__sF",
+        "provider": "bionic",
+        "object_bytes": 456,
+        "site": "0x30141ab0",
+        "value": "0x200ced80"
+      }
+    ],
+    "changed_data_bindings": [
+      {
+        "site": "0x11980c60",
+        "previous": "0x50000230",
+        "target": "0x200cef58"
+      },
+      {
+        "site": "0x11981928",
+        "previous": "0x500004e0",
+        "target": "0x200ced80"
+      },
+      {
+        "site": "0x30141ab0",
+        "previous": "0x500004e0",
+        "target": "0x200ced80"
+      }
+    ],
+    "events": [],
+    "guest_access_observation": "all native reads and writes; full interval intersection",
+    "guarded_stub_ranges": [
+      [
+        "0x50000000",
+        "0x50100000"
+      ],
+      [
+        "0x22000000",
+        "0x22010000"
+      ]
+    ],
+    "adapter_depth": 0,
+    "scope": "Original imported objects bound from shipped libc++ or pinned official AOSP Bionic. Stub accesses fail during native execution and host adapters; trusted host inspection outside execution remains allowed. Bionic stream/runtime startup is not modeled."
+  },
+  "hex_conversion": {
+    "cases": 2016,
+    "all_results_end_pointers_and_errno_match": true,
+    "report_sha256": "161bdc3374b69cac1b74b5e48e4a30f82c8fcce343c9a0de2939b865951cf7ae",
+    "separate_process_full_report_identical": true
+  },
+  "decimal_conversion": {
+    "cases": 2024,
+    "observed_bootstrap_literals": 16,
+    "native_entries": 2024,
+    "all_result_bits_match_rational_model": true,
+    "native_fpsr_counts": {
+      "0x0": 58,
+      "0x10": 1966
+    },
+    "existing_model_hook_fpsr_discrepancies": [
+      {
+        "input": "0.8",
+        "corpus": true,
+        "native_bits": "0x3fe999999999999a",
+        "model_bits": "0x3fe999999999999a",
+        "match": true,
+        "fpsr": "0x10",
+        "errno": 77,
+        "model_hook_bits": "0x3fe999999999999a",
+        "model_hook_fpsr": "0x0",
+        "fpsr_matches_model_hook": false
+      },
+      {
+        "input": "0.35",
+        "corpus": true,
+        "native_bits": "0x3fd6666666666666",
+        "model_bits": "0x3fd6666666666666",
+        "match": true,
+        "fpsr": "0x10",
+        "errno": 77,
+        "model_hook_bits": "0x3fd6666666666666",
+        "model_hook_fpsr": "0x0",
+        "fpsr_matches_model_hook": false
+      },
+      {
+        "input": "0.45",
+        "corpus": true,
+        "native_bits": "0x3fdccccccccccccd",
+        "model_bits": "0x3fdccccccccccccd",
+        "match": true,
+        "fpsr": "0x10",
+        "errno": 77,
+        "model_hook_bits": "0x3fdccccccccccccd",
+        "model_hook_fpsr": "0x0",
+        "fpsr_matches_model_hook": false
+      },
+      {
+        "input": "0.1",
+        "corpus": true,
+        "native_bits": "0x3fb999999999999a",
+        "model_bits": "0x3fb999999999999a",
+        "match": true,
+        "fpsr": "0x10",
+        "errno": 77,
+        "model_hook_bits": "0x3fb999999999999a",
+        "model_hook_fpsr": "0x0",
+        "fpsr_matches_model_hook": false
+      },
+      {
+        "input": "1.2",
+        "corpus": true,
+        "native_bits": "0x3ff3333333333333",
+        "model_bits": "0x3ff3333333333333",
+        "match": true,
+        "fpsr": "0x10",
+        "errno": 77,
+        "model_hook_bits": "0x3ff3333333333333",
+        "model_hook_fpsr": "0x0",
+        "fpsr_matches_model_hook": false
+      }
+    ],
+    "bionic_platform_calls": {},
+    "original_code_unchanged": true,
+    "report_sha256": "d82394549f053232b2fc4f40e62677ca5daaf652ce8c2792e5731dac57ec7e38",
+    "note": "Return-value equality is not complete ABI-state equality. Direct existing model-hook calls leave FPSR unchanged for five observed asset literals. Native Bionic executes its own register effects. This final checkpoint uses the corrected full-interval import guard.",
+    "separate_process_full_report_identical": true
+  },
+  "controls": [
+    {
+      "case": "native_read_generic_stub",
+      "error": "UNSUPPORTED_IMPORT_STUB_DATA_GUEST_ACCESS address=0x50001c20 size=8"
+    },
+    {
+      "case": "host_strlen_reads_stub",
+      "error": "UNSUPPORTED_IMPORT_STUB_DATA_ADAPTER_READ address=0x50001c20 size=256"
+    },
+    {
+      "case": "host_memcpy_reads_stub",
+      "error": "UNSUPPORTED_IMPORT_STUB_DATA_ADAPTER_READ address=0x50001c20 size=8"
+    },
+    {
+      "case": "trusted_inspection_outside_execution",
+      "read": true
+    },
+    {
+      "case": "original_atof_return_and_fpsr",
+      "bits": "0x3fb999999999999a",
+      "fpsr": "0x10"
+    }
+  ],
+  "controls_report_sha256": "e487378d74b03c4afb6fc5274372eaf9c3a69f398903b99bb19c96314da255b6",
+  "controls_separate_process_full_report_identical": true,
+  "private_harness_source_sha256": {
+    "original_bionic_locale_v4.py": "4ce406ae156c0f5b3bbd298d75cbddd6803247372c664808b4eebe99492135cb",
+    "native_import_data_guard_v2.py": "9eb5e0227cdd8d3609687a8e1e82e195a2a2b4bd17b91e47458726bc04844119",
+    "probe_attachment_guarded_v2.py": "c02374f5613a44944c51eb872740f16f85e1dab98bb2f614851aba5c8d9c9d28",
+    "test_import_data_guard_v2.py": "7c3b5218cfa0ae360e73e33d45b1131f28fcebfdc02131c3e9e9c52c5906b73c",
+    "probe_bionic_decimal_guarded.py": "309bc94dc2d47b72ad2bd593bcd41cca89a186382b5be5b8f7d12ec738f0d474"
+  },
+  "limitations": [
+    "Original APK-device libc identity is unknown.",
+    "Bounded allocator, synthetic TLS/thread layout, fixed IFUNC capabilities and other existing platform adapters remain explicit.",
+    "No Android linker, stream startup, multithreaded runtime or complete match is claimed.",
+    "An imported bound mem_read method retained before guard installation can bypass the host wrapper; current adapters use dynamic uc.mem_read access.",
+    "Trusted memory inspection outside emu_start is permitted, and complete emulator state remains unverified.",
+    "Original inputs and raw native memory stay private; integration drivers are exploratory local tools."
+  ],
+  "public_helpers": [
+    {
+      "path": "scripts/original_bionic_locale.py",
+      "sha256": "9e050470fb63c53ca827bea37605c698e9cd7eacd24dc669e699f9e9494141bf",
+      "ast_identical_to_frozen_source": true
+    },
+    {
+      "path": "scripts/native_import_data_guard.py",
+      "sha256": "07b44c9da9321563d0d32eee3b1d57b374787cd0072302304a2ca08d151febf4",
+      "ast_identical_to_frozen_source": true
+    }
+  ],
+  "synthetic_guard_controls": 14,
+  "guard_audit_finding": "Range-filtered Unicorn memory hooks match access start and missed a load/store beginning before the stub interval. Execute-only permissions also failed to reject the tested crossing load. Final guard observes all guest reads/writes and tests full interval overlap; crossing load/store regression cases are mandatory."
+}

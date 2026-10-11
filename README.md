@@ -30,7 +30,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Original parser accepts 297/297 TOMLs; native manifest yields 158 bundles/421 paths. Original match-context constructor now creates world/level/services under explicit platform models. Complete data/bootstrap initialization remains incomplete. |
+| Supporting native runtime | Partial | All 763 original startup constructors return under explicit platform inputs, with every executable-region change accounted for. Pinned AOSP Bionic conversions and full-interval import-data guards are independently reproduced. Complete data finalization and match initialization remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -39,7 +39,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **12** · **2026-10-11T08:09:48Z** · Read-only receipts reproduce all mapped guest-region hashes over 400 ticks, 87 explicit ARM64 registers and typed adapter observations in two separate runs; previous combat fields remain unchanged. All 21 synthetic controls pass. Full VM coverage, normal-match setup and Android equivalence remain unvalidated.
+Review **13** · **2026-10-11T08:32:55Z** · Independently reproduced all 763 original startup constructors with audited native and authenticated-metadata writes; original Bionic passes 2,016 integer and 2,024 decimal cases. Fixed crossing import-stub access guards and documented the old decimal FPSR gap. All 144 tests pass with optional native dependencies. Full match and battle equivalence remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -50,6 +50,19 @@ Every push must review and update it, including pushes with no decompilation
 advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
+
+- Independently reproduced **all 763 original startup constructors**, in their
+  original table order under explicit platform inputs. The game's own writes
+  to already-run constructors and authenticated metadata restoration are fully
+  accounted for; this does not establish complete application startup.
+  Separately, pinned official
+  Android Bionic code passes 2,016 integer-conversion cases and 2,024 decimal
+  cases. This exposed a real limitation in the older decimal adapter: matching
+  result bits did not preserve floating-point status flags. The new integration
+  routes these calls to original Bionic. Complete data finalization, match setup
+  and original-device runtime equivalence remain unverified. See
+  [startup evidence](research/evidence/native-startup-constructors.json) and
+  [platform evidence](research/evidence/native-bionic-boundary.json).
 
 - Inspected Android version **160402020**, listed on APKMirror on October 7,
   2026, and retrieved on October 11, 2026.
@@ -341,6 +354,12 @@ Bionic floating-point conversion is not executed: the explicit `atof` model
 supports a bounded decimal grammar and computes normal binary64 results using
 exact rational arithmetic and nearest-even rounding. Unsupported operations stop
 the probe. See [parser evidence](research/evidence/native-toml-corpus.json).
+
+This older command's decimal adapter does **not** reproduce Bionic's floating-point
+status flags. Direct comparison now demonstrates that difference for five
+observed asset literals, including `0.1`. The newer local bootstrap executes
+original pinned Bionic conversion instead; that update is not retroactively
+part of this older parser checkpoint. See [platform evidence](research/evidence/native-bionic-boundary.json).
 
 The newer [native-loaded Knight experiment](research/evidence/native-loaded-knight.json)
 and [asset-manifest experiment](research/evidence/native-asset-manifest.json)

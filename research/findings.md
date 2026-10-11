@@ -491,3 +491,74 @@ outside the receipt. It is not a validated reset/restore mechanism. The original
 fixture's synthetic arena/player/context and platform-model limitations still
 apply, and it still lacks the original outer match loop and a full live-game
 reference. The exactness gate remains unvalidated.
+
+## Original startup and Android conversion boundaries
+
+All 763 original `DT_INIT_ARRAY` entries now return in their exact table order.
+Separate executions reproduce the entire report at SHA-256
+`33c6c3c7870dac02e028b14171923c54f9db7cf1138e5fe07c2b192cb2a6af72`.
+This checkpoint uses explicit auxiliary-vector, property, clock, loaded-image
+and isolated synchronization inputs, plus the previously authenticated support
+metadata-extraction adapter. It does not establish complete Android or game
+initialization. See the [ordered entries and source pins](evidence/native-startup-constructors.json).
+
+The original initializer at index 739 rewrites 736 already-run constructor
+entrypoints to return instructions. Every write comes from original guest PC
+`0x1462adc`; the destinations are precisely initializer indices 3 through 738.
+No later constructor entrypoint is overwritten by these writes. They change
+2,899 bytes in the original main executable segment. Separately, ten
+authenticated metadata-adapter writes change 5,027 bytes in the protection
+segment. An independent replay from the canonical image verifies every recorded
+before-state and exactly reconstructs both final executable-region hashes.
+Original libc++ and Bionic executable bytes remain unchanged. Raw original
+instruction and memory bytes stay private; the public evidence records hashes,
+addresses, write origins and counts. These guest writes must be preserved as
+part of the original startup behavior, not concealed by an unchanged-text claim.
+
+A pinned official AOSP runtime APEX supplies executable ARM64 Bionic code;
+the SDK library was inspected and rejected because its routines were stubs.
+Original `newlocale`, `strtoull_l` and `__errno` now run through the game probe's
+existing import route. All 2,016 deterministic hexadecimal cases match exact
+return values, end pointers and preseeded errno. Independent processes reproduce
+the complete report, including unchanged original executable bytes.
+
+Original Bionic `atof` also runs through that route. Its return bits match the
+bounded rational model for 2,024 normal finite decimal cases, including all
+16 distinct literals observed in the current bootstrap. The comparison also
+finds a concrete mismatch in the old adapter: original conversion sets FPSR to
+`0x10` for five observed literals while the adapter leaves it at zero. Both
+implementations were invoked through the same import entry with cleared initial
+FPSR. These literals are `0.8`, `0.35`, `0.45`, `0.1` and `1.2`.
+The newer attachment executes the original conversion rather than adding a
+special-case flag model. Earlier parser/combat checkpoints retain their stated
+modeled-platform limitations.
+
+An import audit identifies 18 undefined data-object relocations across the game
+and its shipped libc++. Fifteen already resolve to original libc++ exports;
+the remaining three now resolve to original Bionic `stderr`/`__sF` objects.
+Unresolved callable stubs may no longer silently serve zero bytes as data:
+guards reject native data accesses and host-adapter reads/writes during guest
+execution. Controls verify native and adapter failures while allowing trusted
+inspection outside execution. No original native code was patched.
+
+The [Bionic attachment](../scripts/original_bionic_locale.py) and
+[import data guard](../scripts/native_import_data_guard.py) are public, with
+the same Python ASTs as the frozen verified implementations. Fourteen additional
+synthetic tests exercise guest/adapter reads and writes, overlapping boundaries,
+data binding, unknown objects and cleanup after failure without original game
+inputs. The end-to-end integration drivers remain local while startup is incomplete.
+
+The audit also caught a boundary weakness in Unicorn's range-filtered hooks:
+a native access starting before a stub could cross into its bytes without
+triggering the hook. Execute-only permissions did not reject the tested
+crossing load either. The final guard observes all guest reads/writes and
+checks the complete accessed interval. Regression controls cover crossing
+native loads and stores at both stub regions. This observation adds execution
+overhead; no speedup is claimed.
+
+The [platform checkpoint](evidence/native-bionic-boundary.json) records provenance,
+inputs, counts, discrepancies and controls. This AOSP libc is not identified as
+the runtime of the APK's original device. Allocation, synthetic thread/TLS
+state, IFUNC feature inputs and other platform adapters remain explicit;
+Android stream startup, full loader behavior and battle equivalence remain
+unvalidated. These are bootstrap improvements, not a completed match.
