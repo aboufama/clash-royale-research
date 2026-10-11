@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 4,
-    "reviewed_at": "2026-10-11T06:34:32Z",
-    "summary": "Recovered 416 original selector records and original libg text; independent runs match 12 native pathfinding cases and 14 attack-clock fixtures. Published pinned recovery/probe tools with explicit synthetic/runtime limits. Full matches, damage and towers remain unvalidated; next visual demo requires a full original-engine match."
+    "sequence": 5,
+    "reviewed_at": "2026-10-11T06:42:51Z",
+    "summary": "Public support recovery now generates parent/child IPC and code images from the original ELF without private prerequisites. Root independently reproduced the canonical image, 160/160 checksums and all 4,860,456 cipher bytes; complete original battle initialization remains open."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Support main code independently matches all 4,860,456 bytes; 416/416 original selector records decode. Original libg initializer recovers a 17,877,920-byte text region through an explicit selector-data adapter. Full native/Android initialization remains incomplete."
+        "Public tools recover support image, 416 selector records and libg code directly from pinned original inputs; independent cipher/checksum/image checks pass. Parent/child OS behavior and selector delivery remain explicitly modeled; full native/Android initialization is incomplete."
       ]
     },
     {

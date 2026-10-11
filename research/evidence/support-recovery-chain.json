@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "scope": "Original native support-text recovery under explicit OS models; Android/JNI initialization remains incomplete.",
+  "library_sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+  "image_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+  "image_bytes": 7155712,
+  "constructor_image_sha256": "406d4627953b5b9bd4bcfa4312a545dbff4d5a456b5102662afe8d0052de5913",
+  "main_text": {
+    "start": "0x18d0a0",
+    "end": "0x62fac8",
+    "length": 4860456,
+    "before_sha256": "956f1d5e1cd84bed6aaaebdc3e0824f5d46c116b7dda3f4ed1ecd979377d2b66",
+    "after_sha256": "821a8deac13d24121f199db16c3395d4f4703913aad10e6a3015d68b9f49b78a",
+    "changed_bytes": 4841564
+  },
+  "stages": [
+    {
+      "name": "parent_blocked",
+      "constructor_returned": true,
+      "jni_returned": false,
+      "stop_reason": "IPC read requires peer activity: pipe:5",
+      "pc": "0x2065a9dc",
+      "image_sha256": "306dad9fe245c14717a692c975b979a7d301277b93f3afc0c748c78e6885c035",
+      "ipc_written_lengths": [
+        4
+      ],
+      "ipc_replayed_lengths": [],
+      "thread_states": {
+        "0": {
+          "status": "ready",
+          "condition": "0x206cac74"
+        },
+        "36865": {
+          "entry": "0x206487a8",
+          "arg": "0x0",
+          "status": "waiting",
+          "condition": "0x206cab88"
+        }
+      }
+    },
+    {
+      "name": "child_replied",
+      "constructor_returned": true,
+      "jni_returned": false,
+      "stop_reason": "unmodelled import time",
+      "pc": "0x50000150",
+      "image_sha256": "5847886a482ed8ba9967d999e63ce169ca3344ebce3ce6bb75cec08dc3b31765",
+      "ipc_written_lengths": [
+        4,
+        32
+      ],
+      "ipc_replayed_lengths": [
+        4
+      ],
+      "thread_states": {
+        "0": {
+          "status": "ready",
+          "condition": "0x206cac74"
+        },
+        "36865": {
+          "entry": "0x206487a8",
+          "arg": "0x0",
+          "status": "absent-in-fork-child",
+          "condition": "0x206cab88"
+        }
+      }
+    },
+    {
+      "name": "parent_decoded",
+      "constructor_returned": true,
+      "jni_returned": false,
+      "stop_reason": "unmodelled import getauxval",
+      "pc": "0x500009b0",
+      "image_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+      "ipc_written_lengths": [
+        4
+      ],
+      "ipc_replayed_lengths": [
+        4,
+        32
+      ],
+      "thread_states": {
+        "0": {
+          "status": "ready",
+          "condition": "0x206cac74"
+        },
+        "36865": {
+          "entry": "0x206487a8",
+          "arg": "0x0",
+          "status": "ready",
+          "condition": "0x206cab88"
+        }
+      }
+    }
+  ],
+  "assumptions": [
+    "Synthetic libc symbol ELF, Android process/maps/sysfs files, SDK35, empty kernel version, deterministic research entropy",
+    "Original worker code cooperatively scheduled; mutex operations no-op, condition waits/signals modeled, no real parallel execution",
+    "Fork branches rerun from deterministic initial state; generated original IPC writes replayed in order",
+    "Child ptrace reads/writes only an in-memory blocked-parent snapshot; continued blocked threads do not execute",
+    "Synthetic PID/TID/UID values, pipes, socketpair, epoll registrations, signals, and process-control state",
+    "Bump allocation with no reclamation; mapped memory permissions accessible, mprotect modeled as success",
+    "Unknown imports/syscalls/interrupts stop; only the three pinned partial-initialization boundaries accepted",
+    "No host syscall forwarding, actual fork/ptrace, Android ART/Bionic, account, game network, or battle simulation"
+  ],
+  "native_cipher_calls": [
+    {
+      "entry": "0x2068192c",
+      "length": 455,
+      "rounds": 8,
+      "input_sha256": "cec70448bbb8c8cb76c7a86a01849a828470c25a5c1a04120dae42a518cf159a"
+    },
+    {
+      "entry": "0x2068192c",
+      "length": 184872,
+      "rounds": 8,
+      "input_sha256": "c31724e3d9e2c067fcc84140a02f229a2534225d1104e4e478e5937b5da79559"
+    },
+    {
+      "entry": "0x2068192c",
+      "length": 399136,
+      "rounds": 8,
+      "input_sha256": "04437a0f374fd2dbe142f16289b5e6e215f6bee8429888f3ff0bdd7ba0cc45c7"
+    },
+    {
+      "entry": "0x2068192c",
+      "length": 4860456,
+      "rounds": 8,
+      "input_sha256": "956f1d5e1cd84bed6aaaebdc3e0824f5d46c116b7dda3f4ed1ecd979377d2b66"
+    }
+  ],
+  "private_outputs": [
+    "runtime-memory.bin",
+    "constructor-memory.bin",
+    "capture-private.json"
+  ],
+  "independent_reproduction": {
+    "whole_image_matches_previous_capture": true,
+    "source": "Original pinned support ELF; no preexisting private snapshot or transcript input."
+  },
+  "verification": {
+    "cipher": {
+      "schema_version": 1,
+      "library_sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+      "capture_report_sha256": "913c8c54f49427acc457e8bea4cf09a8c28f2ccbdef6d93b00e26e95a6e24075",
+      "memory_sha256": "406d4627953b5b9bd4bcfa4312a545dbff4d5a456b5102662afe8d0052de5913",
+      "decoded_memory_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+      "scope": "Original isolated cipher agreement; not Android/runtime/gameplay validation.",
+      "native_entry_elf_va": "0x68192c",
+      "native_trials": [
+        {
+          "rounds": 8,
+          "length": 0,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "rounds": 8,
+          "length": 1,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+        },
+        {
+          "rounds": 8,
+          "length": 63,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "8b098afcfe9ffc74a454c839e8c955201d4877a2a0728eaa54b90ddd8dc34f8b"
+        },
+        {
+          "rounds": 8,
+          "length": 64,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "f57d7ac7d5c58fa04da73342bc8ba77db7f49f6d7c6f94d2707f0dc86d4f8205"
+        },
+        {
+          "rounds": 8,
+          "length": 65,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "dae9cd4229d5ee3e61a7828e7f696634772e3adb61646f54edebf6b256b15c29"
+        },
+        {
+          "rounds": 8,
+          "length": 1024,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "ee8628fcfd652a015307a937501dce87d89ad2b1181e8535408a317f68df3eb2"
+        },
+        {
+          "rounds": 20,
+          "length": 0,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "rounds": 20,
+          "length": 1,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "5e1effe9b7bab73dce628ccd9f0cbbb16c1e6efc6c4f311e59992a467bc119fd"
+        },
+        {
+          "rounds": 20,
+          "length": 63,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "ebddb96f0a7e83bf7b05e340867979f8de0e952deda8f2c1a6f821c47b2d2f53"
+        },
+        {
+          "rounds": 20,
+          "length": 64,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "cac813977dfffcd23dc793457b5ed282d41ec182cf868a5b8de1717edc9d2ba6"
+        },
+        {
+          "rounds": 20,
+          "length": 65,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "4ae307625b4fe0ceb42b8273810298ddd4f12387c125f779cf968e2bf3f334d1"
+        },
+        {
+          "rounds": 20,
+          "length": 1024,
+          "native_returned": true,
+          "matches": true,
+          "output_sha256": "21450e7ae388c1c2970bd77247b344424eca99db6e640d155d94e732ec45b6cc"
+        }
+      ],
+      "captured_transform": {
+        "input_elf_va": "0x18d0a0",
+        "output_elf_va": "0x18d0a0",
+        "size": 4860456,
+        "rounds": 8,
+        "ciphertext_sha256": "956f1d5e1cd84bed6aaaebdc3e0824f5d46c116b7dda3f4ed1ecd979377d2b66",
+        "portable_plaintext_sha256": "821a8deac13d24121f199db16c3395d4f4703913aad10e6a3015d68b9f49b78a",
+        "native_plaintext_sha256": "821a8deac13d24121f199db16c3395d4f4703913aad10e6a3015d68b9f49b78a",
+        "byte_identical": true,
+        "matching_bytes": 4860456
+      },
+      "verified": true
+    },
+    "integrity": {
+      "input_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+      "region_start_elf_va": "0x62fac8",
+      "region_size": 184872,
+      "region_sha256": "e4a705ef1a562a1f1ce230272d6a739ab50d074b23f0fb40f909c0b9f9bacd71",
+      "algorithm": "Original seeded Fletcher-64 over little-endian uint32 words",
+      "blocks": 160,
+      "matching_blocks": 160,
+      "complete_region_covered": true,
+      "scope": "Protection-runtime region only; not gameplay equivalence or cryptographic authentication."
+    }
+  },
+  "end_to_end_consumers": {
+    "metadata_selector_records": 416,
+    "libg_image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "pathfinding_cases_match": 12,
+    "attack_clock_fixtures_match": 14,
+    "inputs": "Original pinned support/libg ELF, base APK and install-time assets; no preexisting private captures."
+  }
+}

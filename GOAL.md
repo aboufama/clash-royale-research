@@ -62,9 +62,9 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 
 1. Pinned install-time asset pack acquired and verified; still establish which
    fingerprint and cache overrides the reference runtime selects.
-2. Support code, original selector records and `libg` code are recovered with
-   explicit runtime models. Package the remaining private stage-two capture
-   prerequisite; complete original initialization without forced success.
+2. Support code, original selector records and `libg` code are recovered from
+   original inputs through public tools with explicit runtime models. Complete
+   original game initialization without forced success or synthetic battle state.
 3. Original pathfinding and attack-clock functions execute on synthetic fixtures.
    Follow their original callers, data loaders and native state initialization
    to exercise movement, attack execution and a complete battle update.
