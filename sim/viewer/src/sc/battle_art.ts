@@ -657,8 +657,8 @@ export class BattleArt {
   }
 
   /**
-   * Classic health bar (health_bars.csv: hp_player_* / hp_enemy_*). frac 0..1 selects the `bar`
-   * child's frame (100 frames). Placement above the unit is approximate.
+   * Classic health bar (health_bars.csv: hp_player_* / hp_enemy_*). The `bar` child's frame 0 is
+   * full and frame 99 empty; the client picks 99 - floor(hp * 99 / maxHp), clamped (0x83c268).
    */
   drawHealthBar(r: ScRenderer, type: string, team: Team, px: number, py: number, frac: number,
     level?: number, hp?: number): void {
@@ -667,7 +667,7 @@ export class BattleArt {
     const exp = (team === 0 ? hb.playerExportName : hb.enemyExportName) as string | undefined;
     if (!exp) return;
     const lib = this.lib(this.manifest.hud.sc);
-    const barFrame = Math.max(0, Math.min(99, Math.round(frac * 99)));
+    const barFrame = Math.max(0, Math.min(99, 99 - Math.floor(frac * 99 + 1e-9)));
     const text: Record<string, string> = {};
     if (level !== undefined) text.level = String(level);
     if (hp !== undefined) text.hpNumber = String(Math.max(0, Math.round(hp)));
