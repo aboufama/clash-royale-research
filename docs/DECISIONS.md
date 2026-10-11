@@ -32,6 +32,6 @@ change it.
 - **Why:** one codebase for both the renderer and training. Node 26 is
   available, and no Rust toolchain was installed on the Mac.
 - **Open:** whether to fork an existing open-source engine instead of starting
-  from scratch. See "Open decisions" in [HANDOFF.md](../HANDOFF.md). If
+  from scratch. See "Open questions for the owner" in [STATE.md](../STATE.md). If
   throughput is too low for training, port the core to Rust or C++ (with WASM
   for the browser) behind the same interface.

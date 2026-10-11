@@ -9,7 +9,7 @@ engine runs headless far faster than real time to train a reinforcement-learning
 policy. Fidelity is judged by an expert player's smell test, with every mechanic's
 source tracked; byte-identical replication is not required. See [GOAL.md](GOAL.md).
 
-**Start here:** [HANDOFF.md](HANDOFF.md) (current state, next steps, open
+**Start here:** [STATE.md](STATE.md) (current state, next steps, open
 decisions) · [AGENTS.md](AGENTS.md) (rules) · [docs/FIDELITY.md](docs/FIDELITY.md)
 (mechanics tracker) · [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -18,14 +18,14 @@ decisions) · [AGENTS.md](AGENTS.md) (rules) · [docs/FIDELITY.md](docs/FIDELITY
 | Path | What |
 | --- | --- |
 | `game-files/` | Pinned original inputs: APK bundle and unpacked install-time asset pack, with SHA-256 manifest |
-| `tools/` | Extraction scripts for gameplay data and art |
+| `tools/` | Extraction scripts for gameplay data (`tools/data`) and art (`tools/art`); outputs go to ignored `extracted/` |
 | `sim/` | Simulator: TypeScript engine, browser viewer, training bridge (not started) |
 | `docs/` | Fidelity tracker, decisions, prior-work notes |
 | `research/`, `scripts/`, `tests/` | Paused exact native-engine research track (reference and verification oracle) |
 
 ## Status
 
-Milestone M0 (inputs and extraction) is in progress. No engine code exists yet.
+Milestone M0 (inputs and extraction) is done: data and art decoders work on `game-files/`. The engine (M1) is next; see [STATE.md](STATE.md).
 
 ---
 

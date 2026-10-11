@@ -1,6 +1,6 @@
 # Agent rules
 
-Read [GOAL.md](GOAL.md) first, then [HANDOFF.md](HANDOFF.md) for the current
+Read [GOAL.md](GOAL.md) first, then [STATE.md](STATE.md) for the current
 state and next steps.
 
 ## Repository privacy (hard rule)
@@ -28,7 +28,7 @@ state and next steps.
   reproduce the match exactly.
 - The engine must not depend on the renderer; headless and browser use the
   same core.
-- Keep [HANDOFF.md](HANDOFF.md) current when the state, next steps or open
+- Keep [STATE.md](STATE.md) current when the state, next steps or open
   decisions change, so a fresh agent can continue.
 - Record decisions with their reasons in [docs/DECISIONS.md](docs/DECISIONS.md).
 

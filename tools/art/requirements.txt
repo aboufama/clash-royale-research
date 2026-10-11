@@ -1,0 +1,8 @@
+zstandard>=0.22
+numpy>=1.26
+Pillow>=10
+flatbuffers>=24
+texture2ddecoder>=1.0.5
+# optional, only for experimenting with converted 3D glTF
+# pygltflib
+# trimesh

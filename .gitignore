@@ -36,3 +36,6 @@ __pycache__/
 node_modules/
 dist/
 .vite/
+
+# Extraction outputs
+extracted/
