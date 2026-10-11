@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 9,
-    "reviewed_at": "2026-10-11T07:32:21Z",
-    "summary": "Original TOML probe accepts all 297 pinned assets; separate runs reproduce 158 native manifest bundles, 421 ordered paths and 80 reciprocal Knight world ticks using original-loaded records, rarity, sequences and IDs. Evidence preserves runtime models and synthetic-world limits; full-match parity remains unvalidated."
+    "sequence": 10,
+    "reviewed_at": "2026-10-11T07:47:29Z",
+    "summary": "Separate runs reproduce 400 native world ticks with automatic target selection, projectile damage and lethal troop removal. Additional original calls reproduce TrainingCamp geometry and native match-object construction. All remain scoped fixtures; complete match and byte-identical state validation are not established."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Public original-parser probe accepts 297/297 pinned logic TOMLs. Original manifest merge yields 158 bundles/421 ordered asset paths. Full native data dependencies and Android asset-provider initialization remain incomplete."
+        "Original parser accepts 297/297 TOMLs; native manifest yields 158 bundles/421 paths. Original match-context constructor now creates world/level/services under explicit platform models. Complete data/bootstrap initialization remains incomplete."
       ]
     },
     {
@@ -63,14 +63,14 @@
       "id": "movement",
       "status": "partial",
       "evidence": [
-        "Original movement and actor state updates execute for 60 native world ticks on a synthetic single-actor arena; all recorded fields match independent runs. Real arenas, complete troop state and full-match equivalence remain unvalidated."
+        "Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus."
       ]
     },
     {
       "id": "targeting",
-      "status": "not_recovered",
+      "status": "partial",
       "evidence": [
-        "No target acquisition algorithm has been recovered."
+        "Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated."
       ]
     },
     {
@@ -84,14 +84,14 @@
       "id": "combat",
       "status": "partial",
       "evidence": [
-        "Original loaders now supply Knight statistics, Common rarity, attack sequence and IDs; two actors exchange six native melee hits over 80 world ticks, with identical separate reports and unchanged executable regions. Arena/context/targets remain fixtures; full battle parity is unvalidated."
+        "Original-loaded Knight/KingTower records drive 400 world ticks, 62 damage applications, projectile processing and lethal Knight removal; complete selected reports match separate runs with executable regions unchanged. Synthetic arena/context/player setup remains."
       ]
     },
     {
       "id": "towers",
-      "status": "not_recovered",
+      "status": "partial",
       "evidence": [
-        "Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated."
+        "Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated."
       ]
     },
     {

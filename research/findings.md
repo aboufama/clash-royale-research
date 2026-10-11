@@ -392,3 +392,66 @@ parsing and merging are subsequently invoked as separate original calls.
 This establishes the native asset-load plan, not a completed Android asset
 cache/provider or successful typed loading of every asset. See
 [manifest evidence](evidence/native-asset-manifest.json).
+
+
+## Automatic acquisition, projectiles and lethal removal
+
+A frozen extension of the native-loaded combat probe executes 400 world ticks
+with original Knight, KingTower, projectile, action and statistic records.
+Original actor factories create the actors; the original level spawn routine
+creates both KingTowers and fills the level's tower slots. No host call to the
+target setter occurs in this automatic mode. The original world code enters
+that setter seven times during execution.
+
+The run records 62 original damage applications, 22 melee executions and 53
+projectile-update entries. These are function-entry counts, not a claim of 53
+separate projectiles. The original world removes the target Knight at zero-based
+tick 270 and the source Knight at 271. Both KingTowers remain in the live actor
+list at every captured tick and finish with 1231 HP each. Dead Knights are
+reported absent; leftover allocation contents are not treated as live state.
+
+A separate process reproduces the entire JSON report, including all 400 selected
+tick records, imported-operation counts, original entry counts and executable
+hashes. All three libg/libc++ executable regions remain unchanged. See
+[the complete selected trace](evidence/native-automatic-combat.json).
+
+This is still an explicit synthetic fixture: empty 5x5 arena, selected globals
+materialized from CSV, manual context links, original default mode constructor,
+synthetic player-level records and explicit frame-index writes. The original
+KingTower starting-action pointer resolves and its enqueue path runs, but normal
+inactive/activation semantics remain unverified. The newly recovered real map
+and match constructor described below are separate experiments. Neither has
+been integrated into this frozen combat run. Complete ordered event/state
+capture and an independent Android reference are still missing.
+
+## Original map and match-object construction
+
+Native arena loaders combine 163 base and 201 alternate arena records into 364
+native records. The location loaders resolve TrainingCamp from the original
+location CSV, while selected Default timeline and Friendly mode records pass
+all three native loader phases. The original filename getters select unchanged
+`locations/training_arena.csv` and `tilemaps/tilemap.csv`; original CSV parsing
+and map constructor `0xe1a4f4` produce a 36x64 map.
+
+Independent execution reproduces both complete map-array hashes: cells
+`b26825cb1f47f5508eff8b3ac117e6c5689978429020932f89ae9eb95fb8cb01`
+and flags `eb5a66d6e07980b493d18e96ac844a19b1da82296c5cff195bfa4fbe4bafe69f`.
+This subset lacks the map's object/effect dependencies, so both such counts are
+zero; only geometry is established by this result.
+
+Original match-context constructor `0x10c9514` now returns and creates its world,
+level, observer and match-service objects, including their native links. The
+harness allocates the observed context size and calls the original constructor;
+it does not fill those context/world/service fields itself. Earlier data-owner
+and sound-manager wrapper setup remains explicit harness orchestration.
+
+The platform adapter supplies two monotonic-clock reads and one epoch-time read,
+all explicitly zero for this fixture. Original RNG initialization executes with
+those inputs. App-wide clock/static initialization and Android runtime parity
+are not established. Bounded allocation, libc primitives, decimal conversion
+and uncontended synchronization remain modeled dependencies.
+
+Separate executions reproduce the entire construction report with unchanged
+original libg text and shipped libc++ text. No world tick runs here, and no
+players, decks or playable mode/map configuration is installed on the constructed
+match. See [construction inputs, hashes and limitations](evidence/native-match-construction.json).

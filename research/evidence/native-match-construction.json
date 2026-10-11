@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "claim": "Original loaders construct TrainingCamp map geometry; original match-context constructor creates and links world, level, observer and service objects.",
+  "scope": "Original map and match object construction only; incomplete record set, no playable match or parity claim",
+  "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+  "library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+  "stdlib_sha256": "4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4",
+  "global_ids_sha256": "fdc55ba97ce21aadaec9b34c72607db1c5a6e2bbea84a051d56fc5a0669f25c6",
+  "assets": [
+    {
+      "kind": 99,
+      "name": "trophy_road.csv",
+      "sha256": "e0cd420e2855ce14c909ab73e15602f98b2ac4d089ba5e444738c8219a7cd3ec"
+    },
+    {
+      "kind": 167,
+      "name": "trophy_road_alt.csv",
+      "sha256": "4a7258216fd3334b65e4ec83c30ff7f4b3b8a3674a1a79873c00479f6b73099a"
+    },
+    {
+      "kind": 196,
+      "name": "trophy_road_seasonal.csv",
+      "sha256": "2628bde5c0a4cd2685496d3ab6f6ba17503c8b8908622dd8d05b5e45138a67d4"
+    },
+    {
+      "kind": 19,
+      "name": "treasure_chests.csv",
+      "sha256": "a15948bd415a543792316bbefdeb392862b57f735de26979441ffdbf16439f0a"
+    },
+    {
+      "kind": 54,
+      "name": "arenas.csv",
+      "sha256": "bc96439a9400916143f80a3d474124fcd381ade7e2d36f3768ca565dd87e3055"
+    },
+    {
+      "kind": 168,
+      "name": "arenas_alt.csv",
+      "sha256": "d05b5484e282d2d6dfbc6aa375850fbd7334671c8e0c340e2641595d63d56d4d"
+    },
+    {
+      "kind": 15,
+      "name": "locations.csv",
+      "sha256": "be1e7912bc97d9cc23b0e93c10d7c5df35b1e5e5bbdd6d520cb2c270517ce880"
+    },
+    {
+      "kind": 72,
+      "name": "game_modes.csv",
+      "sha256": "fcc2dfd1e69b0302b15c215ffff0c6475035576905f310b27566ffe314c3c693"
+    },
+    {
+      "kind": 108,
+      "name": "battle_timelines.csv",
+      "sha256": "b4406d31879ac29d92a6ced4b4fa2cccd0976545f62bebf6a962359c2b6021f2"
+    },
+    {
+      "kind": 217,
+      "name": "realm_themes.toml",
+      "sha256": "8685a626137a09b1e8562bcc745379b03b4f3eaca1723d77986e7f365ac68102"
+    }
+  ],
+  "map": {
+    "assets": [
+      {
+        "path": "locations/training_arena.csv",
+        "sha256": "484462bdd07b940d6f3ab0c1193436a87b86f3b96ac3f9c4ea3e661833711c6a"
+      },
+      {
+        "path": "tilemaps/tilemap.csv",
+        "sha256": "93af091258a3d57081c50d638eb98ea45f4ea8dd21a0893cc35a0e32ba3a457f"
+      }
+    ],
+    "scope": "Original map geometry; complete match parity is unverified.",
+    "index": 1,
+    "width": 36,
+    "height": 64,
+    "native_objects": 0,
+    "native_effects": 0,
+    "cells_sha256": "b26825cb1f47f5508eff8b3ac117e6c5689978429020932f89ae9eb95fb8cb01",
+    "flags_sha256": "eb5a66d6e07980b493d18e96ac844a19b1da82296c5cff195bfa4fbe4bafe69f"
+  },
+  "context": {
+    "pointer": "0x60999040",
+    "world": "0x609992d0",
+    "level": "0x609a4300",
+    "tables_link_matches": true,
+    "observer": "0x609a6170",
+    "service": "0x609992b0",
+    "clock_word": 0
+  },
+  "collections": {
+    "3": {
+      "records": 0,
+      "vtable": "0x191e840"
+    },
+    "54": {
+      "records": 163,
+      "vtable": "0x191c5e0"
+    },
+    "168": {
+      "records": 201,
+      "vtable": "0x191c5e0"
+    },
+    "169": {
+      "records": 364,
+      "vtable": "0x191beb8"
+    },
+    "15": {
+      "records": 209,
+      "vtable": "0x191c5e0"
+    },
+    "72": {
+      "records": 537,
+      "vtable": "0x191c5e0"
+    },
+    "108": {
+      "records": 29,
+      "vtable": "0x191c5e0"
+    }
+  },
+  "clock_inputs": [
+    {
+      "clock": 1,
+      "nanoseconds": 0,
+      "caller": "0x1467420"
+    },
+    {
+      "clock": 1,
+      "nanoseconds": 0,
+      "caller": "0x1467420"
+    },
+    {
+      "clock": "epoch_seconds",
+      "seconds": 0,
+      "caller": "0x1294b74"
+    }
+  ],
+  "original_text_unchanged": true,
+  "original_libcxx_text_unchanged": true,
+  "diagnostics": [],
+  "original_entry_points": {
+    "map_file_csv_constructor": "0x1288f2c",
+    "location_filename_getters": [
+      "0xe48cb0",
+      "0xe48cc0"
+    ],
+    "map_constructor": "0xe1a4f4",
+    "match_context_constructor": "0x10c9514"
+  },
+  "independent_execution": {
+    "result": "Entire JSON reports match exactly in separate emulator processes, including both map byte-array hashes, native links, clock inputs and import counts.",
+    "report_sha256": "a68add74cf0e6d6d42c518a5326519a3cb2b3f26148fcce94451b1d7ddf8dda1",
+    "complete_battle_state_compared": false,
+    "independent_live_game_reference": false
+  },
+  "harness_sha256": {
+    "bounded_format.py": "e0f22a400f31bc2872f5a66c249c2f59057e1dac6b23578bc45afacffb624aa0",
+    "native_csv_tags.py": "93fbdb678ff44091ca29a18df81f807a2f8d1dc9c4770f203e2d12c45cf5b5e3",
+    "native_data.py": "7e0a1827cb044bf9b1f6db4ef131838a04b63ece90c92682160a043c484ffe86",
+    "native_decimal.py": "8ca2c4866668766de604a6bd922b6740401032a628f164017ad8c436a5de022a",
+    "native_global_ids.py": "294ddadd87ce410d1ba6ef2593b732d2a3e4acb1893529e67abeb6719b982cee",
+    "native_location_map.py": "98bdad4975d92aee0322ea2b2e4581dd5f61b50d39bab278069f3d97e5eb9eed",
+    "native_match_engine.py": "542c1dca9615cebc555129622dca913a3f79e3fa596efca1c7297aea9cf20bc1",
+    "native_match_setup.py": "059ce0328745ee7ff408dd6b2f8d1e39195dc06c20342dd81b4d1946c64ba869",
+    "native_rarity_records.py": "badd5a78a4a941a7a362fb3cdde9c7a4f934b53b6b23635c5b80386a5bf84c9b",
+    "native_setup_engine.py": "2f00c05566197fe597285e1e4adb1fdaf74540fce0a49ff73f5270d7f16c3859",
+    "probe_csv.py": "e3ca663210ba795e0a4da5e87184443c6f11285516482fb4864357c93f00f040",
+    "probe_match_context.py": "db29e4ba08cefed33cc2eab1b3db973e0ad5c47de5e3b2072e6392525dca2972",
+    "probe_original_pathfinding.py": "51c587cf8d8d1aeded645abb3acd07861dfc037b0275822eb582372294aefb34",
+    "sc_lzma.py": "96e9b3d5c80cecc4085bb3a2c20f9f59ab529afe9d63429cdfbab36d7dcf20d4"
+  },
+  "imports": {
+    "strlen": 70593,
+    "original_libc++:_ZNSt6__ndk119__shared_mutex_baseC1Ev": 4,
+    "original_libc++:_ZNSt6__ndk119__shared_mutex_base11lock_sharedEv": 420,
+    "pthread_mutex_lock": 844,
+    "pthread_mutex_unlock": 844,
+    "original_libc++:_ZNSt6__ndk119__shared_mutex_base13unlock_sharedEv": 420,
+    "original_libc++:_ZNSt6__ndk119__shared_weak_count4lockEv": 1,
+    "original_libc++:__cxa_guard_acquire": 2,
+    "modeled_gettid": 2,
+    "__cxa_atexit": 9,
+    "original_libc++:__cxa_guard_release": 2,
+    "memcpy": 443832,
+    "memcmp": 79194,
+    "_ZNSt6__ndk112__next_primeEm": 168,
+    "strncasecmp": 543,
+    "atoi": 21273,
+    "strcasecmp": 4816,
+    "vsnprintf": 3703,
+    "strnlen": 1386,
+    "bounded_atof": 1246,
+    "strcmp": 2556,
+    "__strlen_chk": 692,
+    "memchr": 418,
+    "explicit_monotonic_clock": 2,
+    "explicit_epoch_clock": 1,
+    "memset": 108,
+    "_Znwm": 18317,
+    "_Znam": 81299,
+    "_ZdaPv": 45382,
+    "_ZdlPv": 955,
+    "memmove": 836
+  },
+  "limitations": [
+    "Original game code unmodified; allocator and bounded platform primitives modeled",
+    "Explicit isolated clock inputs monotonic_ns=0 and epoch_seconds=0",
+    "Selected original asset tables loaded; complete dependency initialization not established",
+    "Map object/effect references absent from this subset; map geometry only is checked",
+    "Original collection constructors are invoked for kinds 1 through 222; only the listed asset subsets are populated. Complete native manifest/bootstrap finalization is absent.",
+    "The harness attaches the original sound manager through an observed wrapper link, but has no loaded sound resource metadata.",
+    "All three phases run for locations and selected Default timeline/Friendly mode records. Other records may have unresolved references.",
+    "Explicit zero external clocks are test inputs. App-wide clock/static initialization and original Android clock parity are unverified; the preserved native RNG initialization can depend on these inputs.",
+    "The map is created but this run does not configure players, decks, deployment, mode or map on a playable match.",
+    "No troop or world tick executes in this construction probe. The map and constructor are not integrated into the separate 400-tick combat fixture.",
+    "Allocator/free, bounded libc primitives, exact-rational normal-binary64 atof, uncontended mutexes and gettid are explicit models. Selected original shipped libc++ exports execute.",
+    "Unchanged text and repeatable selected observations do not establish complete state or battle equivalence.",
+    "Exploratory self-contained harness is retained locally by hash and has not yet joined the public command set."
+  ]
+}

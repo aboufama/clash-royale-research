@@ -6,11 +6,11 @@ reinforcement learning.
 
 The target is behavioral equivalence for a specific build and asset set.
 Extracted card statistics and plausible-looking movement do not establish that
-equivalence. The original native world loop now drives movement and melee
-combat on synthetic fixtures. Original data loaders now supply the Knight's
-record, rarity, attack sequence and ID, and the original TOML parser accepts
-all 297 shipped logic TOML assets. A complete battle environment is still
-unavailable.
+equivalence. The original native world loop now drives movement, automatic
+target selection, melee/projectile damage and lethal troop removal in synthetic
+fixtures using original-loaded Knight and KingTower records. Separate probes
+construct the original TrainingCamp map geometry and native match objects.
+These pieces are not yet combined into a complete battle environment.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
 towers. No approximation counts as success.** The [active goal and acceptance
@@ -30,16 +30,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Public original-parser probe accepts 297/297 pinned logic TOMLs. Original manifest merge yields 158 bundles/421 ordered asset paths. Full native data dependencies and Android asset-provider initialization remain incomplete. |
+| Supporting native runtime | Partial | Original parser accepts 297/297 TOMLs; native manifest yields 158 bundles/421 paths. Original match-context constructor now creates world/level/services under explicit platform models. Complete data/bootstrap initialization remains incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Partial | Original movement and actor state updates execute for 60 native world ticks on a synthetic single-actor arena; all recorded fields match independent runs. Real arenas, complete troop state and full-match equivalence remain unvalidated. |
-| Target acquisition | Not recovered | No target acquisition algorithm has been recovered. |
+| Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus. |
+| Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
-| Combat interactions | Partial | Original loaders now supply Knight statistics, Common rarity, attack sequence and IDs; two actors exchange six native melee hits over 80 world ticks, with identical separate reports and unchanged executable regions. Arena/context/targets remain fixtures; full battle parity is unvalidated. |
-| Tower interactions | Not recovered | Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated. |
+| Combat interactions | Partial | Original-loaded Knight/KingTower records drive 400 world ticks, 62 damage applications, projectile processing and lethal Knight removal; complete selected reports match separate runs with executable regions unchanged. Synthetic arena/context/player setup remains. |
+| Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
 
-Review **9** · **2026-10-11T07:32:21Z** · Original TOML probe accepts all 297 pinned assets; separate runs reproduce 158 native manifest bundles, 421 ordered paths and 80 reciprocal Knight world ticks using original-loaded records, rarity, sequences and IDs. Evidence preserves runtime models and synthetic-world limits; full-match parity remains unvalidated.
+Review **10** · **2026-10-11T07:47:29Z** · Separate runs reproduce 400 native world ticks with automatic target selection, projectile damage and lethal troop removal. Additional original calls reproduce TrainingCamp geometry and native match-object construction. All remain scoped fixtures; complete match and byte-identical state validation are not established.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -111,8 +111,23 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   merging, yielding **158 bundles and 421 ordered paths**, all present in the
   pinned asset pack. Complete reports match separate runs; Android asset-provider
   initialization is still incomplete.
-- Complete troop-data dependency loading, deployment, autonomous target acquisition, towers,
-  complete match rules and complete per-tick equivalence remain unvalidated.
+- Extended native combat to **400 world ticks with automatic target selection**,
+  original-loaded KingTower/projectile/action records and native actor factories.
+  Original code applies 62 damage events and removes the two Knights at ticks
+  270 and 271. All selected records match separate execution; native executable
+  regions remain unchanged. The arena, context and player setup are fixtures;
+  ordinary tower activation remains unverified. See
+  [the complete selected trace and limits](research/evidence/native-automatic-combat.json).
+- Separately constructed **36x64 TrainingCamp map geometry** from unchanged
+  original map assets, and executed the original match-context constructor to
+  create its world, level, observer and service links. Separate reports match
+  exactly. Explicit zero clock inputs and incomplete data references limit the
+  result; no playable match is configured. See
+  [construction evidence](research/evidence/native-match-construction.json).
+- Complete dependency loading, player/deck setup, deployment, ordinary tower
+  activation, complete match rules and complete per-tick equivalence remain
+  unvalidated. The real map and native match constructor are not yet integrated
+  into the 400-tick fixture.
 
 See [the build record](research/builds/160402020.json) and
 [the investigation notes](research/findings.md). Findings distinguish direct
