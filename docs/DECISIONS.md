@@ -138,3 +138,21 @@ change it.
 - **Why:** the owner asked for a demo they can play on their phone and chose
   public Pages after being told it publishes Supercell's art and data. The
   repository itself stays private and the public-repo guard stays in CI.
+- **Update (same day):** the owner made the repository public so Pages could be
+  served; the demo deploys from `main` with Pages source "GitHub Actions". The
+  public-repo guard in the Checks workflow is left in place and now fails by
+  design while `game-files/` is in a public repository.
+
+## 2026-10-11 — Sixteen focus cards, quality over coverage
+
+- **Decision:** the demo plays two fixed 8-card decks: Knight, Archers, Giant,
+  Musketeer, Mini P.E.K.K.A, Spear Goblins, Fireball, Arrows (blue) and
+  Valkyrie, Baby Dragon, Hog Rider, Skeleton Army, Minions, Cannon, Goblin
+  Barrel, The Log (red). Engine logic, animation, projectile, spell and UI work
+  is finished and verified for these 16 (plus the crown towers) before any
+  other card. The engine keeps supporting the other cards.
+- **Why:** the owner judged the 70-card viewer sloppy ("quality over
+  quantity"). The 16 cover melee, ranged, tank, splash, air, swarm, building,
+  river jump, a lobbed spell, a scatter spell, a projectile spawn spell and a
+  rolling spell, so each mechanic family is exercised.
+- **Would change if:** the owner names other cards to bring to the same bar.
