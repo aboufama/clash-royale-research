@@ -799,3 +799,93 @@ executable regions are unchanged. These are selected observation checks, not
 complete VM noninterference or legal card deployment. The
 [observer checkpoint](evidence/native-actor-insertion-observer.json) retains
 the fixture's limitations.
+
+
+## Original Android manager configured from the pinned APK
+
+An independent replay now loads the actual asset pack through original
+`ApkAssets::Load`, creates the original manager, and installs that single APK
+through original `SetApkAssets`. Original mode-0 lookup returns null for the
+absent optional global-ID file. A present stored member opens, reports length
+2,088, returns all 2,088 bytes, reaches EOF and closes. Its bytes exactly match
+independent ZIP extraction. All twelve selected executable regions remain
+unchanged, with no unresolved-boundary or indirect-function entry events.
+Forty-one synthetic boundary controls and two native negative controls pass.
+
+The [configured-manager evidence](evidence/native-android-configured-manager.json)
+pins sources and complete independent receipts. The relocation audit now also
+compares all 13,718 RELR destinations across these twelve objects against the
+unchanged original AOSP C++ bodies: every destination tuple and complete
+resulting mapped image matches. This host-compiled source differential shares
+ELF mapping/tag extraction and does not establish complete linker behavior.
+
+Original early-thread initialization, one original ZIP initializer, an original
+TLS template and the original static TLS resolver now execute. Their input
+layout, auxiliary vector, thread identifiers, virtual file metadata, signal
+state and allocator remain explicit diagnostic conditions. Only one APK is
+configured; this is not the complete application's namespace or Android
+process startup. The Android guest is still separate from the running game.
+
+A fresh same-image Bionic prerequisite probe also reproduces 2,016 integer
+conversion cases and 2,024 decimal cases including exact binary64 bits, FPSR
+and errno. The latter reference is earlier original-Bionic execution, not an
+Android device. Original linker dispatch calls all fifteen native indirect
+function resolvers. Original temporary thread-storage initialization, thread
+keys, once and seven uncontended synchronization calls return. Eight synthetic
+kernel-admission controls pass. These results support a future single-guest
+integration; they do not yet establish game or complete startup equivalence.
+
+## Read-only visual sampling prerequisite
+
+A separately versioned sampler has been independently replayed on the existing
+400-tick synthetic combat fixture. Before and after each sample, hashes of all
+17 mapped regions (51,617,792 bytes), region bounds/permissions and 87 named
+registers match. The entire older fixture report is also unchanged. Nine
+synthetic controls pass. The [sampler evidence](evidence/native-visual-sampler-validation.json)
+records the exact scope and source identities.
+
+Only constructor-proven actor classes expose raw positions and data IDs.
+Unknown classes remain unpositioned; no health values or interpolation are
+invented. Opaque VM state, unlisted registers and host/external state are not
+covered by this receipt. The full-bootstrap adapter and full-match capture
+still need validation. This component check is not the requested full-match
+demo, and no observer was injected into an already running game process.
+
+
+## First completed original built-in battle
+
+An independent full initialization reproduces the prior selected asset and
+linked-record receipts, including all 421 inputs and the original finalizer.
+The unchanged original Normal runner then returns 904 steps. Its native end
+handler enters at primary frame 903, returns with the end gate changed from
+zero to one and winner index one, and the runner's returned frame is 904 with
+status zero. The secondary verification context reaches the same winner.
+A separate review applies the frozen termination validator successfully.
+The queued later advance requests execute no further native steps after the
+terminal result. Closing the process passes final executable and source-pin
+checks, with no newly loaded task source paths.
+
+The [completed diagnostic record](evidence/native-complete-diagnostic-match.json)
+pins final reports and retained conditions. This is the original built-in test:
+it sets test global one, creates test accounts and native random decks, and
+maintains a secondary context. Its module-8 shortened-timer object is absent.
+The optional Android asset response remains modeled and full Android startup
+is absent. Native termination is a concrete recovery milestone, not proof of
+ordinary-match equivalence or satisfaction of the byte-identical gate.
+
+Actual command execution corrected two assumptions in the earlier offline
+checker: the native commit branch tests flag bit one, so the observed value two
+is valid; and a native authoritative-frame value of minus one must remain
+signed. The original running controller was not changed. A separately versioned
+[offline checker](../scripts/native_placement_lineage_v2.py), with 39 synthetic
+controls, checks the original predicate and exact observer occurrence stream.
+Eight accepted primary commands produce twelve selected actor associations.
+Command-to-debit-to-spawn links are nested original calls; later insertion is
+a same-actor/world temporal association. Matching earlier hand descriptors,
+queued command fields and execution-time hand getters do not observe the
+native command clone operation or establish complete object causality.
+
+The entire match has not yet been independently replayed, and this first run
+has no per-frame visual-position stream. A fresh run with a validated read-only
+sampler is required for the requested full-match demo. Complete state/reset,
+Android differential validation and policy training remain open.

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "classification": "Read-only visual-state sampler validation in the prior isolated400tick fixture; no full-match demo",
+  "independently_reproduced_report_sha256": "4e5210581c8c33d2425d0b08320ed72874d47aade243bc1e535a12cd5e14a109",
+  "unchanged_fixture_report_sha256": "447aa9f88c5ec8abc8a47cea083746a0c96d793edb5c75ba473013f1225924bf",
+  "frozen_manifest_sha256": "5abc797140e13f749ed9507b33a60b3e941290f4fc7a210fd776d8ca269c74d9",
+  "sampler_source_sha256": "14e933f976110e6af7fd889c3654cea5299fc33fffcdffc6886f911f44041378",
+  "samples": 400,
+  "synthetic_controls_passed": 9,
+  "before_after_each_sample": {
+    "mapped_regions": 17,
+    "mapped_bytes": 51617792,
+    "named_registers": 87,
+    "all_region_hashes_permissions_bounds_and_listed_registers_identical": true
+  },
+  "observed_class_rows": {
+    "player_tower": 800,
+    "character": 541,
+    "projectile": 53
+  },
+  "limits": [
+    "Synthetic5x5 arena, partial game data and authored context/player linkage remain from the fixture.",
+    "Only constructor-proven classes yield position/data fields; unknown classes remain unpositioned. No health fields or interpolation.",
+    "Mapped bytes and listed registers do not cover opaque CPU/JIT state, all registers, host closures or external state.",
+    "Separate full-bootstrap adapter and arbitrary full-match class coverage still require live validation. No sampler was injected into the current running process."
+  ],
+  "byte_exact_gate_satisfied": false
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "classification": "Independent original Android35 configured asset-manager slice; separate from the game guest; not complete Android startup",
+  "independently_reproduced_whole_report_sha256": "225ee5a7abcd96ffc230aa2f18a6170fb7d32cb81c006e976d9109fbdc287098",
+  "source_manifest_sha256": "fd5c837a66926375735292ce06e4f325f2095cdd9a4417def932a1a2e99df411",
+  "asset_pack_sha256": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3",
+  "asset_pack_bytes": 913096301,
+  "observed": {
+    "original_apk_assets_load_returned_nonnull": true,
+    "original_native_create_returned": true,
+    "original_set_apk_assets_returned_true": true,
+    "configured_apk_count": 1,
+    "original_open_access_mode": 0,
+    "absent_member": "csv_logic/globalIdDb.csv",
+    "absent_member_returned_null": true,
+    "present_member": "csv_logic/game_tags.csv",
+    "native_length": 2088,
+    "native_read_count": 2088,
+    "native_eof_read_count": 0,
+    "native_close_returned": true,
+    "native_output_equals_independent_zip_bytes": true,
+    "output_sha256": "c275d7b87dee5c0d460b2097b75832e167a1f35f07795ff6faf59a1acc191356",
+    "member_compression": "ZIP_STORED",
+    "original_executable_regions_unchanged": 12,
+    "unresolved_guard_events": 0,
+    "ifunc_resolver_entries": 0
+  },
+  "validation": {
+    "synthetic_controls_passed": 41,
+    "native_ifunc_negative_controls_passed": 2,
+    "native_ifunc_negative_report_sha256": "da65b538b5f6bd1865c9c353d01db320c7d5a34dfb4e5df38c5d997187c8ddd8",
+    "original_source_relr_differential": {
+      "private_report_sha256": "63706e9c33fa44e298517f3c3c650a9646ae12f32b07cde7c1a1d3b1fa28e138",
+      "aosp_commit": "361ba86734fb2821a6adcfdf775db8abd04e0de0",
+      "objects": 12,
+      "destinations": 13718,
+      "original_six_object_destinations": 9770,
+      "all_destination_tuples_and_complete_mapped_image_bytes_match": true,
+      "scope": "Unchanged original AOSP C++ relocation bodies compiled on the host; not execution of the original ARM64 linker. ELF mapping/tag extraction shared with candidate loader."
+    }
+  },
+  "platform_conditions": [
+    "Original linker early main-thread initializer executes with explicit argc/argv, empty environment, PID/TID1000 and auxv page4096/HWCAP3/HWCAP2zero. Late/full process startup is not established.",
+    "Original libandroidfw ZIP page-size initializer executes; remaining library initializers have not all executed.",
+    "Original incfs TLS template receives explicit static placement; original linker static TLSDESC resolver executes. General process TLS/provider ordering is not established.",
+    "Finite read-only virtual kernel exposes pinned APK bytes and declared file metadata, mappings, statfs, signal registration and mask state. No real Android kernel or filesystem is present.",
+    "Allocation and memory primitives remain modeled; selected images have RWX mappings. No worker threads or delivered signals.",
+    "Only one APK is configured; framework resources, overlays, other APK splits and live updates are not represented. Compressed member reading is not demonstrated.",
+    "This separate guest is not yet integrated into game execution; ordinary-match, reset, complete-state and Android equivalence remain unvalidated."
+  ],
+  "byte_exact_gate_satisfied": false,
+  "separate_same_image_bionic_prerequisites": {
+    "independently_reproduced_report_sha256": "186c63073e0331febb09d90c46e5d6daa86b2781f3e4807522ab29154ee91619",
+    "source_manifest_sha256": "64ff65615575c9e722a4021476dbb96ac12e90715e117bf2e9a67d1c91de193a",
+    "original_linker_dispatch_resolver_calls": 15,
+    "original_temporary_bionic_tls_allocator_and_pointer_initializer_returned": true,
+    "original_thread_key_roundtrip_and_once_returned": true,
+    "original_uncontended_mutex_condition_calls": 7,
+    "hex_integer_cases": 2016,
+    "decimal_exact_bits_fpsr_errno_cases": 2024,
+    "synthetic_kernel_admission_controls": 8,
+    "original_executable_regions_unchanged": 7,
+    "scope": "Fresh separate native guest. Decimal outputs compare prior original-Bionic receipts, not an Android device oracle. Explicit kernel/TLS inputs and modeled allocator/memory remain. No game attachment or full late-thread startup."
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "classification": "Completed original built-in Normal test battle under explicit diagnostic platform conditions; not accepted byte-exact ordinary gameplay",
+  "binary_identity": {
+    "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "asset_pack_sha256": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3"
+  },
+  "independent_initialization_replay": {
+    "original_constructors_returned": 763,
+    "original_native_data_inputs": 421,
+    "original_finalizer_returned": true,
+    "prior_selected_initialization_receipts_match": true,
+    "comparison_report_sha256": "39b040b1aef9e1159de03cc8fcb119965cc870534d5af82d4ae688abcebc14a1"
+  },
+  "private_receipts_sha256": {
+    "report-private.json": "c2b8be310ca93a4baec2a5b339a7c9151fbaef2a342da38eb7e065690edc37cf",
+    "test-setup/report-private.json": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+    "control-state.json": "56e9e29367018aa9fbe3213c89cf2da877317d54b7e7fb7e22c721f3d7521afc",
+    "native-events.json": "719a70e46b005762dbf5bcb61a0193495bdc2b76ac3f1d6979495c7c47f5750d",
+    "native-hand-events.json": "700ab06ce28af39ed3c82f783fa86a37d414cbfc2320ac8c4246e28fab58a4b7",
+    "placement-lineage-v2.json": "eb17b2eac40c856d5d6da6d391029fadd5a0f65778fdd46196d7117924131ede"
+  },
+  "native_test_run": {
+    "scenario": "Normal",
+    "seed": 1131,
+    "returned_steps": 904,
+    "final_primary_frame": 904,
+    "native_runner_counter": 903,
+    "native_result_status": 0,
+    "native_winner_index": 1,
+    "primary_end_event_id": 2549,
+    "primary_end_event_entry_frame": 903,
+    "original_end_commit_elf_va": "0xd3e360",
+    "original_context_caller_lr": "0x110cb1d0",
+    "account_override_argument": 0,
+    "end_gate_before": 0,
+    "end_gate_after": 1,
+    "native_termination_validator_passed": true,
+    "independent_second_termination_review_passed": true,
+    "original_secondary_context_end_agrees": true,
+    "test_mode_global": 1,
+    "module8_shortened_timer_object_present": false,
+    "native_terminal_result_prevented_further_advancement": true
+  },
+  "selected_deployment_observations": {
+    "accepted_primary_execution_commands": 8,
+    "observed_flags": [
+      2
+    ],
+    "native_execution_predicate": "w2 bit1, preserved at0xd77530 and branched at0xd7774c/0xd7787c",
+    "correction": "Earlier observer tally incorrectly required flags==3; actual native commit calls use2. Original frozen controller was preserved, and a separate offline checker follows the original bit1 predicate. Native authoritative-frame sentinel-1 is retained.",
+    "selected_created_actor_insertion_associations": 12,
+    "associations_with_live_hand_source_match": 12,
+    "direct_command_debit_spawn_parent_links_observed": true,
+    "fully_parent_linked_command_to_insertion_observed": false,
+    "native_clone_transition_observed": false,
+    "limits": "Native creation return and sibling registration are associated within the same debit call. Later insertion matches the actor/world pointer. Earlier queued and executed command objects match selected descriptor/account/sequence/frame/coordinate fields and a live hand getter; native cloning and complete object lifetime/causality remain unobserved. These are selected associations, not a complete ordered gameplay trace."
+  },
+  "terminal_integrity": {
+    "game_text_unchanged_since_original_self_erasing_constructors": true,
+    "game_text_sha256": "8e97f87eec24190d2a7af446cc1d2b959263bc84a4a2baa3bd4cec993f26d473",
+    "shipped_cpp_text_unchanged": true,
+    "terminal_integrity_passed": true,
+    "initial_source_closure": {
+      "task_source_count": 49,
+      "external_runtime_module_count": 252,
+      "manifest_sha256": "17b44c75dc4dbcced9d48d054d9c8c175bd457f63649afb0dc28d3f6511a9f4c"
+    },
+    "terminal_source_closure": {
+      "manifest_sha256": "56ca32f7ee9f7820d5434646dc2d5c226282a2c9e7b1acd7da6ac09424ef9bd0",
+      "initial_source_pins_still_match": true,
+      "new_task_source_count": 0,
+      "new_module_name_count": 21,
+      "terminal_module_count": 321
+    }
+  },
+  "offline_checker": {
+    "public_script": "scripts/native_placement_lineage_v2.py",
+    "sha256": "a0925e60462c7b20c80405525949d7d0b33c059b0a656725158add7130914726",
+    "synthetic_controls_passed": 39,
+    "scope": "Checks selected recorded relationships only; cannot authenticate source execution or prove complete match/Android equivalence."
+  },
+  "limits": [
+    "Original built-in test creates native random decks and test account identities, sets test global1 and uses secondary verification. Ordinary-game setup equivalence remains unproved.",
+    "The one absent Android asset call is modeled; newer genuine Android asset-manager execution is separate and not yet integrated.",
+    "Declared filesystem, clocks, thread/TLS, allocation and other platform boundaries remain. Host orchestration is not complete original Android startup.",
+    "No complete state/reset/oracle, independently replayed whole match, training throughput or trained policy is established.",
+    "This first completed run did not capture visual positions every frame. A fresh read-only full-match capture and comparison is required before a demo."
+  ],
+  "byte_exact_gate_satisfied": false
+}
