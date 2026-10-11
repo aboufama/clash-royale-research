@@ -37,7 +37,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Not recovered | Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated. |
 | Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
 
-Review **6** · **2026-10-11T06:57:41Z** · Original CSV parsing loads 62 tags; independent world-loop fixtures match 60 movement ticks and 240 melee tick records, including shield and no-attack controls. Published native parser and combat probes remain explicitly synthetic and do not establish full-match equivalence.
+Review **7** · **2026-10-11T07:23:21Z** · Reviewed REA source at 21650455 across native providers, Android/runtime and evidence workflows. Useful Ghidra tracing and provenance patterns are documented with integration limits. This tooling review advances no native recovery or battle-equivalence milestone.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -101,6 +101,9 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 See [the build record](research/builds/160402020.json) and
 [the investigation notes](research/findings.md). Findings distinguish direct
 observations, inferences, and untested hypotheses.
+
+The [REA source review](research/rea-review.md) assesses its Ghidra, Android,
+runtime and evidence tooling against this project's exactness requirements.
 
 ## Reproduce the baseline
 

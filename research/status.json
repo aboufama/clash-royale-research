@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 6,
-    "reviewed_at": "2026-10-11T06:57:41Z",
-    "summary": "Original CSV parsing loads 62 tags; independent world-loop fixtures match 60 movement ticks and 240 melee tick records, including shield and no-attack controls. Published native parser and combat probes remain explicitly synthetic and do not establish full-match equivalence."
+    "sequence": 7,
+    "reviewed_at": "2026-10-11T07:23:21Z",
+    "summary": "Reviewed REA source at 21650455 across native providers, Android/runtime and evidence workflows. Useful Ghidra tracing and provenance patterns are documented with integration limits. This tooling review advances no native recovery or battle-equivalence milestone."
   },
   "milestones": [
     {
