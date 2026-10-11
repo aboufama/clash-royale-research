@@ -85,9 +85,8 @@ export class Unit {
   spawnLeft: number;
   spawnSub: number;
   spawnIndex: number;
-  /** Charge: distance travelled uninterrupted, charging flag. */
-  chargeDist: number;
-  charging: boolean;
+  /** Pending damage from in-flight projectiles aimed at this unit (targeting overkill test). */
+  pending: number;
   /** Inferno ramp: ms spent attacking the current target. */
   rampMs: number;
   /** Elixir Collector: ms until the next elixir. */
@@ -100,6 +99,29 @@ export class Unit {
   tunneling: boolean;
   tunnelX: number;
   tunnelY: number;
+  // --- native attack component (AttackComp, PORT_NOTES §2) ---
+  /** Retarget cooldown ms (+0x1c): searches only when 0. */
+  retargetCd: number;
+  /** Load countdown ms (+0x28): set to LoadTime after an attack, -50 per tick. */
+  load: number;
+  /** Hit started (+0x3d) and "loaded" flag (+0x3e). */
+  hitStarted: boolean;
+  loaded: boolean;
+  /** Attack finish timer ms (+0x50). */
+  finishMs: number;
+  /** Target position snapshot taken at the start of this tick's attack update (+0x68/+0x6c). */
+  tsx: number;
+  tsy: number;
+  // --- native movement component (MovementComp, PORT_NOTES §4) ---
+  pushAccX: number;
+  pushAccY: number;
+  pushCount: number;
+  /** Unit direction (x256) toward the current waypoint (+0x30/+0x34). */
+  wpDirX: number;
+  wpDirY: number;
+  /** Charge progress (+0x1e0): += step*1000/ChargeRange; charging at >= 10000. */
+  charge: number;
+  gridStamp: number;
 
   constructor(id: number, def: UnitDef, card: string, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -146,8 +168,7 @@ export class Unit {
     this.spawnLeft = 0;
     this.spawnSub = 0;
     this.spawnIndex = 0;
-    this.chargeDist = 0;
-    this.charging = false;
+    this.pending = 0;
     this.rampMs = 0;
     this.manaTimer = Math.round(def.manaPeriod / 50);
     this.hidden = def.hides;
@@ -156,10 +177,32 @@ export class Unit {
     this.tunneling = false;
     this.tunnelX = 0;
     this.tunnelY = 0;
+    this.retargetCd = 0;
+    this.load = 0;
+    this.hitStarted = false;
+    this.loaded = false;
+    this.finishMs = 0;
+    this.tsx = 0;
+    this.tsy = 0;
+    this.pushAccX = 0;
+    this.pushAccY = 0;
+    this.pushCount = 0;
+    this.wpDirX = 0;
+    this.wpDirY = 0;
+    this.charge = 0;
+    this.gridStamp = 0;
+    // Native attack timer starts at 0; the first swing starts at LoadTime - load (load 0 for a fresh
+    // unit) so the first hit lands HitSpeed - LoadTime later [STAT 0xfc90b0].
+    this.atkTimer = 0;
   }
 
   get alive(): boolean {
     return this.state !== ST_DEAD;
+  }
+
+  /** Charging (movement +0x1e0 >= 10000). */
+  get charging(): boolean {
+    return this.charge >= 10000;
   }
 
   get isCrownTower(): boolean {
@@ -200,6 +243,8 @@ export class Projectile {
   hitIds: number[];
   returning: boolean;
   source: Unit | null;
+  /** Unit whose pending damage this projectile counts toward. */
+  pendingOn: Unit | null;
 
   constructor(id: number, def: ProjectileDef, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -230,6 +275,7 @@ export class Projectile {
     this.hitIds = [];
     this.returning = false;
     this.source = null;
+    this.pendingOn = null;
   }
 }
 

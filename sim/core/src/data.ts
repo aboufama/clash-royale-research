@@ -47,6 +47,18 @@ function str(r: Rec, k: string): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/**
+ * Mass as normalised by the native character loader [STAT 0xdde618]: a missing Mass is derived
+ * from the collision radius, then clamped to [1, 20].
+ */
+export function normaliseMass(mass: number, radius: number): number {
+  let m = mass;
+  if (m === 0) m = Math.trunc((Math.trunc((radius * radius) / 1000) * radius) / 1000000);
+  if (m > 20) m = 20;
+  if (m <= 1) m = 1;
+  return m;
+}
+
 /** Scale a level-1 stat: floor(base * M[L-1-rel] / 100) (docs/DATA_FIELDS.md §2). */
 export function scaleStat(data: GameData, base: number, level: number, rarity: string | null): number {
   const rel = rarity && data.rarities[rarity] ? data.rarities[rarity].RelativeLevel : 0;
@@ -170,6 +182,9 @@ export interface UnitDef {
   range: number;
   minimumRange: number;
   sightRange: number;
+  /** SightClip / SightClipSide: how far behind / sideways a unit looks for targets. */
+  sightClip: number;
+  sightClipSide: number;
   speed: number; // game units per tick
   collisionRadius: number;
   mass: number;
@@ -506,9 +521,11 @@ export class Defs {
       range: num(r, 'Range'),
       minimumRange: num(r, 'MinimumRange'),
       sightRange: num(r, 'SightRange'),
+      sightClip: num(r, 'SightClip'),
+      sightClipSide: num(r, 'SightClipSide'),
       speed: num(r, 'Speed'),
       collisionRadius: num(r, 'CollisionRadius'),
-      mass: num(r, 'Mass'),
+      mass: normaliseMass(num(r, 'Mass'), num(r, 'CollisionRadius')),
       deployTime: num(r, 'DeployTime'),
       deployDelay: num(r, 'DeployDelay'),
       attacksGround: bool(r, 'AttacksGround'),
@@ -605,9 +622,12 @@ export class Defs {
       range: num(r, 'Range'),
       minimumRange: num(r, 'MinimumRange'),
       sightRange: num(r, 'SightRange'),
+      sightClip: 0,
+      sightClipSide: 0,
       speed: 0,
       collisionRadius: num(r, 'CollisionRadius'),
-      mass: 0,
+      // Pushes like mass 20 in the native King-vs-Knight trace (the radius rule would give 2) (A, fitted)
+      mass: 20,
       deployTime: 0,
       deployDelay: 0,
       attacksGround: bool(r, 'AttacksGround'),

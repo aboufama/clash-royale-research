@@ -11,6 +11,7 @@
 // Each function below says where its behaviour comes from; see docs/FIDELITY.md.
 
 import { Arena, ARENA_H, ARENA_W, CELL, GRID_W } from './arena.ts';
+import { SpatialGrid } from './grid.ts';
 import {
   type AreaEffectDef, type BuffDef, Defs, ELIXIR_ONE, type CardDef, type FilterDef, type GameData, type ProjectileDef, TICK_MS,
   type SummonEntry, type Timeline, type UnitDef,
@@ -115,6 +116,8 @@ export class Battle {
   private dmgPct: number[] = [];
   private dmgN = 0;
   private scratch: Unit[] = [];
+  private scratch2: Unit[] = [];
+  readonly grid: SpatialGrid;
 
   constructor(data: GameData, cfg: BattleConfig) {
     this.data = data;
@@ -163,6 +166,7 @@ export class Battle {
     this.fixture = cfg.fixture !== undefined;
     this.boundW = cfg.fixture ? cfg.fixture.width : ARENA_W;
     this.boundH = cfg.fixture ? cfg.fixture.height : ARENA_H;
+    this.grid = new SpatialGrid(this.boundW, this.boundH);
     if (!this.fixture) this.placeTowers();
   }
 
@@ -320,20 +324,22 @@ export class Battle {
     return null;
   }
 
-  /** Advance one tick. */
+  /** Advance one tick. Phase order follows the native world tick 0xf8cd90 (PORT_NOTES §1.3). */
   step(): void {
     if (this.result) return;
     if (this.recordEvents) this.events.length = 0;
     this.commitCommands();
     this.regenElixir();
     this.fireSpellWaves();
-    // world tick
     const units = this.units;
-    for (let i = 0; i < units.length; i++) this.updateAttack(units[i]);
-    for (let i = 0; i < units.length; i++) this.updateActor(units[i]);
+    this.grid.rebuild(units); // pre-tick grid rebuild
+    for (let i = 0; i < units.length; i++) this.attackUpdate(units[i]); // all attack components
+    for (let i = 0; i < units.length; i++) this.movementUpdate(units[i]); // all movement components
+    for (let i = 0; i < units.length; i++) if (units[i].buffs.length) this.updateBuffs(units[i]); // buff components
+    for (let i = 0; i < units.length; i++) this.updateActor(units[i]); // actor updates (vt+0x48)
     this.updateProjectiles();
     this.updateAreaEffects();
-    this.flushDamage();
+    this.flushDamage(); // world vt+0x90 damage queue flush
     this.removeDead();
     this.checkEnd();
     this.tick++;
@@ -352,13 +358,13 @@ export class Battle {
     let w = 0;
     for (let i = 0; i < cmds.length; i++) {
       const c = cmds[i];
-      if (this.tick - c.submitTick >= COMMAND_DELAY_TICKS) this.execute(c);
+      if (this.tick - c.submitTick >= COMMAND_DELAY_TICKS) this.executeCommand(c);
       else cmds[w++] = c;
     }
     cmds.length = w;
   }
 
-  private execute(c: Command): void {
+  private executeCommand(c: Command): void {
     const p = this.players[c.team];
     if (c.cost > 0) {
       // Debit min(cost, current) at commit [STAT/OBS: native debit observations].
@@ -586,6 +592,7 @@ export class Battle {
 
   // ---------------------------------------------------------------- targeting & attack
 
+  /** Legacy filter used by AEO/extra-target code: enemy, alive, targetable, air/ground compatible. */
   private canAttack(u: Unit, t: Unit): boolean {
     if (t.team === u.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling) return false;
     const d = u.def;
@@ -595,51 +602,99 @@ export class Battle {
     return true;
   }
 
-  /** dist^2 <= (Range + target radius + ext)^2 [STAT attack_range_check]. */
-  private inRange(u: Unit, t: Unit, ext: number): boolean {
+  /** getRange 0xfc4afc: Range + own CollisionRadius (ADD_CHARACTER_RANGE_TO_RADIUS) [STAT]. */
+  private getRange(u: Unit): number {
+    return u.def.range + u.radius;
+  }
+
+  /** getMinRange 0xfc4a68: MinimumRange (+ own radius when set) [STAT]. */
+  private getMinRange(u: Unit): number {
+    const m = u.def.minimumRange;
+    return m > 0 ? m + u.radius : m;
+  }
+
+  /** AttackComp_inRange 0xfc3f74: dist2 <= (r_t + range + extra)^2, outside min range [STAT]. */
+  private inRange(u: Unit, t: Unit, extra: number): boolean {
+    const R = this.getRange(u);
+    const minR = this.getMinRange(u);
+    const rt = t.radius;
+    const lim = rt + R + extra;
     const dx = t.x - u.x;
     const dy = t.y - u.y;
-    const r = u.def.range + t.radius + ext;
     const d2 = dx * dx + dy * dy;
-    if (d2 > r * r) return false;
-    if (u.def.minimumRange > 0) {
-      const m = u.def.minimumRange + t.radius;
-      if (d2 < m * m) return false;
-    }
+    if (minR < 1) return d2 <= lim * lim;
+    return d2 <= lim * lim && (rt + minR) * (rt + minR) <= d2;
+  }
+
+  /** Actor_isPointInRange 0xf958e0 [STAT]. */
+  private pointInRange(t: Unit, x: number, y: number, range: number, minRange: number, flag: boolean): boolean {
+    const rt = t.radius;
+    const a = (rt + range) * (rt + range);
+    const dx = t.x - x;
+    const dy = t.y - y;
+    const d2 = dx * dx + dy * dy;
+    if (minRange < 1) return flag || d2 <= a;
+    const b = (rt + minRange) * (rt + minRange);
+    return flag ? b <= d2 : d2 <= a && b <= d2;
+  }
+
+  /**
+   * AttackComp_isValidTarget 0xfc4008 (subset for implemented mechanics) [STAT]. The pending-damage
+   * overkill test for projectile attackers is approximated: a target already covered by in-flight
+   * projectile damage is skipped (A on the exact duration rule).
+   */
+  private isValidTarget(u: Unit, t: Unit | null, checkPending: boolean): boolean {
+    if (t === null || t === u) return false;
+    if (t.state === ST_DEAD || t.maxHp <= 0) return false;
+    if (t.team === u.team) return false;
+    if (t.hidden || t.tunneling) return false;
+    const d = u.def;
+    if (d.targetOnlyBuildings && !t.isBuilding && !(d.attacksAir && !d.attacksGround && t.isAir)) return false;
+    if (d.targetOnlyTroops && t.isBuilding) return false;
+    if (t.isAir && !d.attacksAir) return false;
+    if (!t.isAir && !d.attacksGround && d.attacksAir) return false;
+    if (checkPending && d.projectile && t.pending > 0 && t.pending >= t.hp + t.shield) return false;
     return true;
   }
 
   /**
-   * Target selection (A, informed by globals and one native fixture): towers take the nearest
-   * enemy in range; other units take the nearest (centre distance) attackable enemy within SightRange (+2000 to crown towers,
-   * EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS), else the default crown tower of their lane
-   * (LOGIC_XPOS_BASED_TOWER_TARGETING, LOGIC_PRINCESS_TOWERS_ALWAYS_AS_DEFAULT_TARGET).
+   * AttackComp_findTarget 0xfc4c38 [STAT]: candidates from the spatial grid in native order;
+   * sight = SightRange + own radius, limit per candidate = its radius + sight (+2000 to crown
+   * towers); SightClip / SightClipSide limits; nearest by dist2, ties keep the earlier candidate.
+   * Without a candidate: the default target (lane crown tower) (A for findDefaultTarget).
    */
-  private findTarget(u: Unit): Unit | null {
-    const units = this.units;
-    const isTower = u.tower !== TOWER_NONE;
+  private findTarget(u: Unit): void {
+    const d = u.def;
+    const sight = d.sightRange + u.radius;
+    const minR = this.getMinRange(u);
+    const exT = this.extraSightCrownTowers;
+    const list = this.grid.queryCircle(u.x, u.y, exT + sight, 1, this.scratch);
     let best: Unit | null = null;
-    let bestD = 0;
-    for (let i = 0; i < units.length; i++) {
-      const t = units[i];
-      if (!this.canAttack(u, t)) continue;
-      const dx = t.x - u.x;
-      const dy = t.y - u.y;
+    let bestD = 0x7fffffff;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (!this.isValidTarget(u, c, true)) continue;
+      if (minR > 0 && !this.pointInRange(c, u.x, u.y, 0, minR, true)) continue;
+      const dx = c.x - u.x;
+      const dy = c.y - u.y;
       const d2 = dx * dx + dy * dy;
-      let reach: number;
-      if (isTower || u.isBuilding) reach = u.def.range + t.radius;
-      else reach = u.def.sightRange + t.radius + (t.tower !== TOWER_NONE ? this.extraSightCrownTowers : 0);
-      if (d2 > reach * reach) continue;
-      if (u.def.minimumRange > 0) {
-        const m = u.def.minimumRange + t.radius;
-        if (d2 < m * m) continue;
+      let lim = c.radius + sight;
+      if (c.tower !== TOWER_NONE) lim += exT;
+      if (d2 > lim * lim) continue;
+      const clip = d.sightClip;
+      if (clip >= 1 && !u.isBuilding) {
+        const L = Math.max(0, lim - clip);
+        if (u.team === 0 ? dy < -L : dy > L) continue;
       }
-      // nearest by centre distance [OBS native-automatic-combat: the Knight chose the enemy
-      // Knight at 1000 over the King at 1118 although the King's edge was nearer]
-      if (best === null || d2 < bestD) { best = t; bestD = d2; }
+      const side = d.sightClipSide;
+      if (side > 0 && Math.abs(dx) > Math.max(0, lim - side)) continue;
+      if (d2 < bestD) { best = c; bestD = d2; }
     }
-    if (best || isTower || u.isBuilding) return best;
-    return this.defaultTarget(u);
+    list.length = 0;
+    if (best) { this.setTarget(u, best, false, true); return; }
+    let cand: Unit | null = u.isBuilding || u.tower !== TOWER_NONE ? null : this.defaultTarget(u);
+    if (!this.isValidTarget(u, cand, true)) cand = null;
+    this.setTarget(u, cand, false, true);
   }
 
   private defaultTarget(u: Unit): Unit | null {
@@ -652,6 +707,31 @@ export class Battle {
     const other = enemy.princess[left ? 1 : 0];
     if (other.alive && this.canAttack(u, other)) return other;
     return null;
+  }
+
+  /** resetAttack(): timer 0, hit/loaded/finish flags cleared [STAT]. */
+  private resetAttack(u: Unit): void {
+    u.atkTimer = 0;
+    u.hitStarted = false;
+    u.loaded = false;
+    u.finishMs = 0;
+  }
+
+  /** AttackComp_setTarget 0xfc3cb4 (paths for implemented mechanics) [STAT]. */
+  private setTarget(u: Unit, t: Unit | null, force: boolean, fromSearch: boolean): void {
+    if (u.target === t && !force) return;
+    u.target = t;
+    if (t === null) {
+      // ordinary troop: timer kept (LoadFirstHit/LoadAfterRetarget units not supported yet)
+    } else if (!this.pointInRange(t, u.x, u.y, this.getRange(u), this.getMinRange(u), false)) {
+      this.resetAttack(u); // new target out of range
+    }
+    // new target in range: timer kept [OBS: native Knight retargeted at tick 3, hit at tick 9]
+    u.rampMs = 0;
+    // re-path on every target change
+    u.path = EMPTY_PATH;
+    u.pathGoal = -1;
+    void fromSearch;
   }
 
   /**
@@ -669,89 +749,135 @@ export class Battle {
     return idiv(idiv(TICK_MS * haste, 100) * clamp(100 + slow, 0, 100), 100);
   }
 
-  /** Movement speed with buffs, same shape as the attack clock (A for movement). */
+  /** Movement speed vtb8 0xf82a18 with buffScale 0xfc26d4 and charge multiplier [STAT]. */
   private moveSpeed(u: Unit): number {
-    const sp = u.def.speed;
-    if (u.buffs.length === 0) return sp;
-    let haste = 100;
-    let slow = 0;
-    for (const b of u.buffs) {
-      const m = b.def.speedMul;
-      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+    let v = u.def.speed;
+    if (u.buffs.length) {
+      let haste = 100;
+      let slow = 0;
+      for (const b of u.buffs) {
+        const m = b.def.speedMul;
+        if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+      }
+      v = idiv(idiv(v * haste, 100) * clamp(100 + slow, 0, 100), 100);
     }
-    return idiv(idiv(sp * haste, 100) * clamp(100 + slow, 0, 100), 100);
+    if (u.charge >= 10000 && u.def.chargeSpeedMul > 0) v = idiv(u.def.chargeSpeedMul * v, 100);
+    return v;
   }
 
-  private updateAttack(u: Unit): void {
-    if (u.state !== ST_ACTIVE) return;
-    if (u.tower === TOWER_KING && u.kingState !== KING_ACTIVE) return;
-    if (u.def.hitSpeed <= 0) return;
-    if (u.buffs.length && this.clockDelta(u) === 0) return; // frozen/stunned
-    if (u.hidden || u.tunneling) return;
-    let t = u.target;
-    if (t !== null && (t.state === ST_DEAD || !this.canAttack(u, t))) {
-      t = null;
-      u.target = null;
-      u.locked = false;
-    }
-    if (u.locked && t !== null && !this.inRange(u, t, this.keepTargetExt)) u.locked = false;
-    if (!u.locked) {
-      const nt = this.findTarget(u);
-      if (nt !== u.target) {
-        // Retarget keeps the attack clock running [OBS native-automatic-combat: the Knight
-        // switched target at tick 3 and still hit at tick 9]. The Inferno ramp restarts.
-        u.target = nt;
-        u.rampMs = 0;
-        u.path = EMPTY_PATH;
-        u.pathGoal = -1;
-      }
-      t = nt;
-      if (t !== null && this.inRange(u, t, 0)) u.locked = true;
-    }
+  /** AttackComp_advanceClock 0xfc90b0 [STAT]. */
+  private advanceClock(u: Unit): void {
     const dt = this.clockDelta(u);
-    if (u.locked && t !== null) {
-      u.dirX = t.x - u.x;
-      u.dirY = t.y - u.y;
-      if (u.atkDelay > 0) {
-        u.atkDelay -= dt;
+    if (dt <= 0) { u.loaded = false; return; }
+    const HS = u.def.hitSpeed;
+    let t = u.atkTimer;
+    if (t === 0) {
+      if (u.atkDelay > 0) { u.atkDelay = Math.max(u.atkDelay, 50) - 50; u.loaded = false; return; }
+      const LT = u.def.loadTime;
+      if (HS < LT) {
+        if (u.load > HS) { u.atkTimer = 0; u.loaded = false; return; }
+        if (u.target) u.loaded = true;
+        u.load = 0;
+        t = 0;
+      } else {
+        t = LT - u.load;
+        u.load = LT;
+        if (t % HS < LT) u.loaded = false;
+        else if (u.target) u.loaded = true;
+      }
+    }
+    u.atkTimer = t + dt;
+  }
+
+  /** AttackComp_update 0xfc7e20 (ordinary attack path) [STAT]. Runs for every actor before movement. */
+  private attackUpdate(u: Unit): void {
+    if (u.state !== ST_ACTIVE || u.tunneling) return;
+    if (u.tower === TOWER_KING && u.kingState !== KING_ACTIVE) return;
+    const d = u.def;
+    if (d.hitSpeed <= 0) return;
+    u.load = Math.max(u.load, 50) - 50;
+    u.retargetCd = Math.max(u.retargetCd, 50) - 50;
+    if (u.hidden) return;
+    if (u.buffs.length && this.clockDelta(u) === 0) { u.locked = false; return; } // frozen / stunned
+    if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
+    // keep-target test
+    let keep = false;
+    const tg = u.target;
+    if (tg) {
+      const ext = !u.isBuilding ? this.keepTargetExt : 0;
+      keep = tg.state !== ST_DEAD && this.inRange(u, tg, ext);
+      if (!keep && d.projectile && d.hitSpeed !== 0 && u.atkTimer % d.hitSpeed > 50 && tg.state !== ST_DEAD) {
+        keep = this.inRange(u, tg, 500); // LOGIC_PRESERVE_TARGET_IF_HIT_STARTED (ranged, mid-swing)
+      }
+    }
+    if (!(tg && keep && this.isValidTarget(u, tg, true))) {
+      if (u.retargetCd === 0 && u.finishMs === 0) this.findTarget(u);
+      if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
+    }
+    const t = u.target;
+    if (!t && !u.loaded) {
+      if (u.finishMs > 0) {
+        u.finishMs += 50;
+        if (u.finishMs < 250) return; // ATTACK_FINISH_TIME_MS
+        this.resetAttack(u);
+        u.locked = false;
         return;
       }
-      u.atkTimer += dt;
-      if (u.def.variableDamage) u.rampMs += dt;
-      if (u.atkTimer >= u.def.hitSpeed) {
-        this.hit(u, t);
-        // LOGIC_LOAD_FIRST_HIT_RESET_TIMER_AFTER_ATTACK: timer back to 0 [OBS: 9, 33, 57].
-        u.atkTimer = 0;
-      }
-    } else if (u.atkTimer < u.def.loadTime) {
-      // Reload continues while not attacking, up to the preloaded state (A).
-      u.atkTimer = Math.min(u.def.loadTime, u.atkTimer + dt);
+      this.resetAttack(u);
+      u.locked = false;
+      return;
     }
+    const HS = d.hitSpeed;
+    const t0 = u.atkTimer;
+    const inR = t ? this.inRange(u, t, 0) : false;
+    const hitStarted = u.atkTimer % HS > 50;
+    const doSwing = inR || hitStarted;
+    u.locked = doSwing;
+    if (!doSwing) return;
+    const q0 = Math.floor(t0 / HS);
+    if (t) { u.dirX = t.x - u.x; u.dirY = t.y - u.y; }
+    const before = u.atkTimer;
+    this.advanceClock(u);
+    if (d.variableDamage && t) u.rampMs += u.atkTimer - before;
+    const q1 = Math.floor(u.atkTimer / HS);
+    u.hitStarted = u.atkTimer % HS > 50;
+    const doHit = q0 < q1 && (t !== null || u.loaded);
+    if (!doHit) return;
+    u.hitStarted = false;
+    u.loaded = false;
+    this.execute(u, t);
   }
 
-  private hit(u: Unit, t: Unit): void {
-    u.lastHitTick = this.tick;
+  /** AttackComp_execute 0xfc619c + meleeHit 0xfc7080 (implemented paths) [STAT]. */
+  private execute(u: Unit, t: Unit | null): void {
     const d = u.def;
-    if (this.recordEvents) this.events.push({ tick: this.tick, type: d.projectile ? 'shoot' : 'hit', team: u.team, x: t.x, y: t.y, name: d.name, id: u.id });
-    if (d.projectile) {
-      this.fireProjectile(u, t, d.projectile);
-    } else if (d.areaDamageRadius > 0) {
-      const cx = d.selfAsAoeCenter ? u.x : t.x;
-      const cy = d.selfAsAoeCenter ? u.y : t.y;
-      const dmg = u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
-      this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, dmg, -1, d.crownTowerDamagePercent, 0, false);
-    } else {
-      let dmg = u.charging && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
-      if (d.variableDamage) {
-        // Inferno ramp: Damage, VariableDamage2, VariableDamage3 after VariableDamageTime1/2 (D)
-        const [t1, t2] = d.variableDamageTime;
-        dmg = u.rampMs < t1 ? d.variableDamage[0] : u.rampMs < t1 + t2 ? d.variableDamage[1] : d.variableDamage[2];
+    u.lastHitTick = this.tick;
+    // LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE: target beyond range + 1500 -> no damage
+    const cancelled = !u.isBuilding && t !== null && !this.pointInRange(t, u.x, u.y, 1500 + this.getRange(u), 0, false);
+    u.load = d.loadTime; // !LoadFirstHit
+    if (this.recordEvents && t) this.events.push({ tick: this.tick, type: d.projectile ? 'shoot' : 'hit', team: u.team, x: t.x, y: t.y, name: d.name, id: u.id });
+    if (!cancelled && t) {
+      if (d.projectile) {
+        this.fireProjectile(u, t, d.projectile);
+      } else {
+        let dmg = u.charge >= 10000 && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
+        if (d.variableDamage) {
+          // Inferno ramp: Damage, VariableDamage2, VariableDamage3 after VariableDamageTime1/2 (D)
+          const [t1, t2] = d.variableDamageTime;
+          dmg = u.rampMs < t1 ? d.variableDamage[0] : u.rampMs < t1 + t2 ? d.variableDamage[1] : d.variableDamage[2];
+        }
+        if (d.areaDamageRadius > 0) {
+          const cx = d.selfAsAoeCenter ? u.x : u.tsx;
+          const cy = d.selfAsAoeCenter ? u.y : u.tsy;
+          this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, dmg, -1, d.crownTowerDamagePercent, 0, false);
+        } else {
+          this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent);
+          if (d.buffOnDamage) this.applyBuff(t, d.buffOnDamage, d.buffOnDamageTime, u.id);
+          if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
+        }
       }
-      this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent);
-      if (d.buffOnDamage) this.applyBuff(t, d.buffOnDamage, d.buffOnDamageTime, u.id);
-      if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
     }
-    if (u.charging || u.chargeDist > 0) { u.charging = false; u.chargeDist = 0; }
+    if (u.charge >= 10000) u.charge = 0; // charge spent by the hit
     if (d.kamikaze) {
       u.hp = 0;
       u.state = ST_DEAD;
@@ -805,7 +931,10 @@ export class Battle {
     pr.sourceId = u.id;
     pr.tx = t.x;
     pr.ty = t.y;
-    if (def.homing) pr.target = t;
+    if (def.homing) {
+      pr.target = t;
+      if (def.radius <= 0) { t.pending += def.damage; pr.pendingOn = t; }
+    }
     this.projectiles.push(pr);
   }
 
@@ -843,9 +972,17 @@ export class Battle {
       if (t.isAir ? !air : !ground) continue;
       const dx = t.x - x;
       const dy = t.y - y;
-      const r = radius + t.radius;
       const d2 = dx * dx + dy * dy;
-      if (d2 > r * r) continue;
+      // Actor_circleOverlapSq: circle dist2 < (r_a + R)^2; buildings by the closest point of their square [STAT]
+      if (t.isBuilding) {
+        const r0 = t.radius;
+        const ex = clamp(x, t.x - r0, t.x + r0) - x;
+        const ey = clamp(y, t.y - r0, t.y + r0) - y;
+        if (ex * ex + ey * ey >= radius * radius) continue;
+      } else {
+        const r = radius + t.radius;
+        if (d2 >= r * r) continue;
+      }
       if (t.maxHp <= 0 || t.hidden || t.tunneling) continue;
       this.queueDamage(t, damage, towerDamage, pct);
       if (buff) this.applyBuff(t, buff, buffTime, sourceId);
@@ -866,7 +1003,6 @@ export class Battle {
   private updateActor(u: Unit): void {
     if (u.state === ST_DEAD) return;
     if (u.tunneling) { this.tunnel(u); return; }
-    if (u.buffs.length) this.updateBuffs(u);
     if (u.state === ST_DEPLOYING) {
       if (u.deployTicks > 0) u.deployTicks--;
       if (u.deployTicks === 0) {
@@ -889,64 +1025,150 @@ export class Battle {
       p.elixir = Math.min(this.maxElixir, p.elixir + u.def.manaCollect);
     }
     if (u.def.hides) this.updateHiding(u);
-    if (u.isBuilding) {
-      if (u.def.lifeTime > 0) this.decay(u);
-      return;
-    }
-    if (u.pushTicks > 0) this.applyPush(u);
-    const wasMoving = u.moving;
-    u.moving = false;
-    if (!u.locked && u.target !== null && u.def.speed > 0) this.moveToward(u, u.target);
-    if (u.def.chargeRange > 0 && !u.moving && wasMoving && !u.locked) { u.chargeDist = 0; u.charging = false; }
-    this.separate(u);
+    if (u.isBuilding && u.def.lifeTime > 0) this.decay(u);
   }
 
   /**
-   * Collision push, part of each actor's movement update (the native movement component runs
-   * a neighbour scan every tick, also while attacking). Each overlapping neighbour on the same
-   * layer pushes along the centre line with weight min(overlap, 90) x 150/90; the total is
-   * capped at 150 units per tick. Fitted to the native King-vs-Knight trace
-   * (research/evidence/native-automatic-combat.json: 29/38 steps exact, max error 3 units);
-   * unit-vs-unit weights by Mass are an approximation (A).
+   * MovementComp_update 0xfcc578 (walking path) [STAT]: knockback phase; collision push
+   * accumulation; speed 0 while attacking; path waypoints in sub-steps of at most 250 units,
+   * a waypoint consumed when the remaining distance along its direction is < 1001; with no
+   * path, one step toward the target. Path requests (0xfcca18) and Arena_collision (0x11d988c)
+   * are approximated (A).
    */
-  private separate(u: Unit): void {
-    const units = this.units;
-    let px = 0;
-    let py = 0;
-    let any = false;
-    for (let i = 0; i < units.length; i++) {
-      const n = units[i];
-      if (n === u || n.state === ST_DEAD || n.isAir !== u.isAir) continue;
-      const dx = u.x - n.x;
-      const dy = u.y - n.y;
-      const minD = u.radius + n.radius;
-      if (dx >= minD || dx <= -minD || dy >= minD || dy <= -minD) continue;
-      const d2 = dx * dx + dy * dy;
-      if (d2 >= minD * minD) continue;
-      const d = isqrt(d2);
-      const overlap = minD - d;
-      let w = (overlap < PUSH_CAP ? overlap : PUSH_CAP) * PUSH_SPEED;
-      if (!n.isBuilding) w = idiv(w * 2 * n.mass, u.mass + n.mass);
-      if (d === 0) {
-        // coincident: push apart along y, older unit stays (deterministic)
-        py += (u.id > n.id ? 1 : -1) * (u.team === 0 ? -1 : 1) * idiv(w, PUSH_CAP);
-      } else {
-        px += (dx * w) / (d * PUSH_CAP);
-        py += (dy * w) / (d * PUSH_CAP);
+  private movementUpdate(u: Unit): void {
+    if (u.state !== ST_ACTIVE || u.isBuilding || u.def.speed <= 0 || u.tunneling) return;
+    if (u.pushTicks > 0) { this.applyPush(u); return; }
+    const stunned = u.buffs.length > 0 && this.clockDelta(u) === 0;
+    if (!stunned) this.collidePush(u);
+    const t = u.target;
+    const attacking = u.locked || u.hitStarted;
+    const speed = attacking || stunned ? 0 : this.moveSpeed(u);
+    u.moving = false;
+    if (!t || speed === 0) {
+      // geometric step with zero speed still applies the push
+      if (u.pushCount > 0) this.geometricStep(u, u.x, u.y, 0, false);
+      if (!attacking && u.charge > 0 && u.charge < 10000) u.charge = 0;
+      return;
+    }
+    let gx = t.x;
+    let gy = t.y;
+    if (!u.isAir && !this.fixture) {
+      const cell = Arena.cellOf(u.x, u.y);
+      const goal = Arena.cellOf(t.x, t.y);
+      if (u.pathGoal !== goal || u.pathVersion !== this.arena.version || (u.pathIdx >= u.path.length && cell !== goal)) {
+        u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
+        u.pathIdx = 0;
+        u.pathGoal = goal;
+        u.pathVersion = this.arena.version;
+        if (u.path.length) this.setWaypointDir(u);
       }
-      any = true;
+      if (u.pathIdx < u.path.length) {
+        const n = Math.floor(speed / 250);
+        let rem = speed;
+        for (let i = 0; ; i++) {
+          const wp = u.path[u.pathIdx];
+          const step = speed >= 250 ? Math.min(rem, 250) : rem;
+          rem -= step;
+          const reached = this.geometricStep(u, Arena.cellCenterX(wp), Arena.cellCenterY(wp), step, true);
+          if (reached) {
+            u.pathIdx++;
+            if (u.pathIdx < u.path.length) this.setWaypointDir(u);
+          }
+          if (i >= n || u.pathIdx >= u.path.length || rem <= 0) break;
+        }
+        return;
+      }
     }
-    if (!any) return;
-    // integerise (truncate toward zero) and cap the step length
-    let mx = Math.trunc(px);
-    let my = Math.trunc(py);
-    const l2 = mx * mx + my * my;
-    if (l2 > PUSH_SPEED * PUSH_SPEED) {
-      const l = isqrt(l2);
-      mx = idiv(mx * PUSH_SPEED, l);
-      my = idiv(my * PUSH_SPEED, l);
+    this.geometricStep(u, gx, gy, Math.min(speed, 250), true);
+  }
+
+  /** Unit direction x256 toward the current waypoint (movement +0x30/+0x34). */
+  private setWaypointDir(u: Unit): void {
+    const wp = u.path[u.pathIdx];
+    const dx = Arena.cellCenterX(wp) - u.x;
+    const dy = Arena.cellCenterY(wp) - u.y;
+    const l = isqrt(dx * dx + dy * dy);
+    u.wpDirX = l ? idiv(dx * 256, l) : 0;
+    u.wpDirY = l ? idiv(dy * 256, l) : 0;
+  }
+
+  /**
+   * Movement_geometricStep 0xfcef48 [STAT]: velocity quantised to 1/256, step <= 250, plus the
+   * averaged collision push (capped at length 150), then arena collision. Returns "reached"
+   * (remaining distance along the waypoint direction < 1001). Charge accrues step*1000/ChargeRange.
+   */
+  private geometricStep(u: Unit, tx: number, ty: number, stepIn: number, setFacing: boolean): boolean {
+    const dx0 = tx - u.x;
+    const dy0 = ty - u.y;
+    let dist = isqrt(dx0 * dx0 + dy0 * dy0);
+    if (dist < 2) dist = 1;
+    let step = stepIn < dist ? stepIn : dist;
+    if (step > 249) step = 250;
+    let vx = idiv(idiv(dx0 * 256, dist) * step, 256);
+    let vy = idiv(idiv(dy0 * 256, dist) * step, 256);
+    if (setFacing && (dx0 !== 0 || dy0 !== 0) && step > 0) { u.dirX = dx0; u.dirY = dy0; }
+    if (u.pushCount >= 1) {
+      let px = idiv(u.pushAccX, u.pushCount);
+      let py = idiv(u.pushAccY, u.pushCount);
+      if (px * px + py * py > 22500) {
+        const l = isqrt(px * px + py * py);
+        px = idiv(px * 150, l);
+        py = idiv(py * 150, l);
+      }
+      u.pushAccX = 0;
+      u.pushAccY = 0;
+      u.pushCount = 0;
+      vx += px;
+      vy += py;
     }
-    if (mx !== 0 || my !== 0) this.tryMove(u, mx, my);
+    if (vx !== 0 || vy !== 0) {
+      const moved = this.tryMove(u, vx, vy);
+      if (step > 0) u.moving = moved;
+    }
+    const remaining = idiv(u.wpDirX * (tx - u.x), 256) + idiv(u.wpDirY * (ty - u.y), 256);
+    const cr = u.def.chargeRange / 10; // data ChargeRange
+    if (cr > 0 && step > 0 && u.charge < 10000) {
+      u.charge += idiv(step * 1000, cr);
+    }
+    return remaining < 1001;
+  }
+
+  /**
+   * Movement_collidePush 0xfce900 [STAT, arithmetic as decompiled]: neighbours from the grid
+   * within radius+20, same layer; penetration min(R - len, 300) x m_other / m_self, at most 299;
+   * push += (pen+1) x d / len per neighbour; static neighbours count self radius at most 500.
+   */
+  private collidePush(u: Unit): void {
+    const r = u.radius;
+    if (r === 0) return;
+    const list = this.grid.queryCircle(u.x, u.y, r + 20, 0, this.scratch2);
+    const rCap = r < 500 ? r : 500;
+    for (let i = 0; i < list.length; i++) {
+      const o = list[i];
+      if (o === u || o.state === ST_DEAD || o.isAir !== u.isAir || o.tunneling) continue;
+      const mo = o.mass;
+      const hasMove = o.def.speed > 0 && !o.isBuilding;
+      const rs = hasMove ? r : rCap;
+      let dx = u.x - o.x;
+      let dy = u.y - o.y;
+      const R = o.radius + rs;
+      if (dx > R || dx < -R || dy > R || dy < -R) continue;
+      let d2 = dx * dx + dy * dy;
+      if (d2 === 0) { d2 = 1; dx = 0; dy = u.team === 0 ? -1 : 1; }
+      if (d2 > R * R) continue;
+      let len = isqrt(d2);
+      if (len < 2) len = 1;
+      const ms = u.mass;
+      let pen = R - len;
+      if (pen >= 300) pen = 300;
+      if (pen < 0) pen = 0;
+      pen = ms === 0 ? 0 : idiv(pen * mo, ms);
+      if (pen >= 299) pen = 299;
+      u.pushAccY += idiv((pen + 1) * dy, len);
+      u.pushAccX += idiv((pen + 1) * dx, len);
+      u.pushCount++;
+    }
+    list.length = 0;
   }
 
   private jumpable(x: number, y: number): boolean {
@@ -974,7 +1196,10 @@ export class Battle {
    * attacking, and hides again after HideTimeMs without a target (D times; state machine A).
    */
   private updateHiding(u: Unit): void {
-    const t = this.findTarget(u);
+    let t = false;
+    const list = this.grid.queryCircle(u.x, u.y, this.getRange(u), 1, this.scratch);
+    for (const c of list) if (this.isValidTarget(u, c, false) && this.inRange(u, c, 0)) { t = true; break; }
+    list.length = 0;
     if (t) {
       u.idleMs = 0;
       if (u.hidden) {
@@ -1011,66 +1236,6 @@ export class Battle {
     u.pushY -= sy;
     u.pushTicks--;
     this.tryMove(u, sx, sy);
-  }
-
-  /**
-   * Path following as observed natively: walk toward the centre of the next path cell; a
-   * waypoint is consumed on entering its cell; with the path empty (goal cell reached) walk
-   * straight at the target [OBS native-world-movement: (750,750) -> (1520,1520)].
-   * Step = Speed units per tick, components truncated [OBS: speed 50 diagonal = (+35,+35)].
-   */
-  private moveToward(u: Unit, t: Unit): void {
-    let gx = t.x;
-    let gy = t.y;
-    if (!u.isAir && !this.fixture) {
-      const cell = Arena.cellOf(u.x, u.y);
-      const goal = Arena.cellOf(t.x, t.y);
-      if (u.pathGoal !== goal || u.pathVersion !== this.arena.version) {
-        u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
-        u.pathIdx = 0;
-        u.pathGoal = goal;
-        u.pathVersion = this.arena.version;
-      }
-      const path = u.path;
-      while (u.pathIdx < path.length && path[u.pathIdx] === cell) u.pathIdx++;
-      if (u.pathIdx < path.length) {
-        // If we strayed off the path (pushed), replan from here.
-        const c = path[u.pathIdx];
-        const cx = c % GRID_W;
-        const cy = (c - cx) / GRID_W;
-        const ux = Math.floor(u.x / CELL);
-        const uy = Math.floor(u.y / CELL);
-        if (Math.abs(cx - ux) > 1 || Math.abs(cy - uy) > 1) {
-          u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
-          u.pathIdx = 0;
-          if (u.path.length === 0) return;
-        }
-        const nc = u.path[u.pathIdx];
-        gx = Arena.cellCenterX(nc);
-        gy = Arena.cellCenterY(nc);
-      }
-    }
-    const dx = gx - u.x;
-    const dy = gy - u.y;
-    const d = isqrt(dx * dx + dy * dy);
-    if (d === 0) return;
-    let sp = this.moveSpeed(u);
-    if (sp <= 0) return;
-    // River jump: JumpSpeed while over water (A); charge: speed x ChargeSpeedMultiplier (D).
-    if (u.def.jumpEnabled && u.def.jumpSpeed > sp && this.arena.isWaterAt(u.x, u.y)) sp = u.def.jumpSpeed;
-    if (u.charging) sp = idiv(sp * u.def.chargeSpeedMul, 100);
-    const step = sp < d ? sp : d;
-    const mx = idiv(dx * step, d);
-    const my = idiv(dy * step, d);
-    if (mx !== 0 || my !== 0) {
-      u.dirX = mx;
-      u.dirY = my;
-      u.moving = this.tryMove(u, mx, my);
-      if (u.moving && u.def.chargeRange > 0 && !u.charging) {
-        u.chargeDist += step;
-        if (u.chargeDist >= u.def.chargeRange) u.charging = true;
-      }
-    }
   }
 
   /** Move with arena bounds and (for ground units) water/blocked cells as walls. */
@@ -1112,8 +1277,7 @@ export class Battle {
       u.atkTimer = 0;
       u.locked = false;
       u.target = null;
-      u.charging = false;
-      u.chargeDist = 0;
+      u.charge = 0;
       u.rampMs = 0;
     }
   }
@@ -1305,11 +1469,15 @@ export class Battle {
     }
   }
 
+  private releasePending(p: Projectile): void {
+    if (p.pendingOn) { p.pendingOn.pending -= p.damage; p.pendingOn = null; }
+  }
+
   private moveProjectile(p: Projectile): void {
     if (p.pierce) { this.movePierce(p); return; }
     const t = p.target;
     if (t !== null) {
-      if (t.state === ST_DEAD) p.target = null;
+      if (t.state === ST_DEAD) { p.target = null; this.releasePending(p); }
       else { p.tx = t.x; p.ty = t.y; }
     }
     const dx = p.tx - p.x;
@@ -1328,6 +1496,7 @@ export class Battle {
   }
 
   private impact(p: Projectile): void {
+    this.releasePending(p);
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id });
     if (p.radius > 0) {
       this.areaDamage(p.team, p.x, p.y, p.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, p.def.pushbackAll, p.def.targetBuff, p.def.buffTime, p.id);
@@ -1377,8 +1546,9 @@ export class Battle {
       let amount = this.dmgAmount[i];
       if (t.tower !== TOWER_NONE) {
         // Crown towers: TowerDamage (absolute) or CrownTowerDamagePercent; floor (A on rounding).
+        // crown-tower damage 0xde0334: ((max(p,-100)+100)*dmg + 99)/100 (ceil) [STAT]
         if (this.dmgTower[i] >= 0) amount = this.dmgTower[i];
-        else if (this.dmgPct[i] !== 0) amount = Math.floor((amount * (100 + this.dmgPct[i])) / 100);
+        else if (this.dmgPct[i] !== 0) amount = Math.trunc(((Math.max(this.dmgPct[i], -100) + 100) * amount + 99) / 100);
         if (t.tower === TOWER_KING && t.kingState === KING_INACTIVE && amount > 0) this.activateKing(t);
       }
       // Shield absorbs first; excess damage on the breaking hit is lost [OBS].
@@ -1488,7 +1658,8 @@ export class Battle {
       h.add(u.id); h.add(u.x); h.add(u.y); h.add(u.hp); h.add(u.shield); h.add(u.state);
       h.add(u.deployTicks); h.add(u.atkTimer); h.add(u.atkDelay); h.add(u.target ? u.target.id : -1);
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.pushTicks);
-      h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.chargeDist); h.add(u.charging ? 1 : 0);
+      h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.charge); h.add(u.load); h.add(u.retargetCd);
+      h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
       h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaTimer); h.add(u.hidden ? 1 : 0);
       h.add(u.idleMs); h.add(u.upMs); h.add(u.tunneling ? 1 : 0);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }

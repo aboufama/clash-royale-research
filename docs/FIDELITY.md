@@ -20,7 +20,7 @@ Engine: `sim/core` (TypeScript, 20 Hz, integer game units). Tests: `cd sim && np
 
 | Area | Mechanic | Level | Source / notes | Native check | Owner check |
 | --- | --- | --- | --- | --- | --- |
-| Match | Tick rate, per-tick order | D | 50 ms tick; order commands → elixir → attacks → actor/movement → projectiles → damage flush → end check, from the native world loop (brief §1, §8) | Trace ✓ (all native fixtures share this order) | |
+| Match | Tick rate, per-tick order | P | 50 ms tick; world tick 0xf8cd90: all attack components, then all movement, buffs, actor updates, damage flush (PORT_NOTES §1.3); projectile/AEO interleaving with actor updates (A) | Trace ✓ 400-tick fixture exact | |
 | Match | Match clock, overtime, sudden death | D | Default timeline 180 s + 120 s overtime; overtime ends at the first crown lead | – | |
 | Match | Tiebreak after overtime | A | Lower lowest-tower HP loses (community rule). The data has a "Tiebreaker!" text but no logic; the native test runner scored ties as a draw | – | |
 | Match | Elixir generation, max elixir | D | Start 6, max 10, per tick floor(10000×50/msPerElixir) = 178 at 1× | Trace ✓ 60000 + 178×tick; debit at commit (8 native debits) | |
@@ -36,27 +36,27 @@ Engine: `sim/core` (TypeScript, 20 Hz, integer game units). Tests: `cd sim && np
 | Deploy | Multi-unit formation positions | A | Circle of SummonRadius (default 500), starting left | – | |
 | Movement | Speed units | D | Speed = game units per tick, components truncated | Trace ✓ speed 50 diagonal = (+35,+35) | |
 | Movement | Pathfinding | D/A | A* on 500-unit cells, costs 10/14 × cell cost (default 8, road 5, blocked/building 50), neighbour order N,S,W,E,NW,SW,SE,NE, octile × 5 heuristic (D); water impassable for walkers (A); heap tie order (A) | Partial: costs match native fixture rules | |
-| Movement | Path following | A | Waypoint consumed on entering its cell; the native fixture consumes it about one cell earlier | Partial | |
+| Movement | Path following | P/A | Sub-steps ≤ 250, waypoint consumed when remaining distance along its direction < 1001, velocity quantised to 1/256 (0xfcc578/0xfcef48) (P); path request timing (0xfcca18 not read) and arena collision (0x11d988c not read) (A) | Movement fixture rule ✓ | |
 | Movement | Lane / default target | A | Nearest crown tower of the unit's lane by x (LOGIC_XPOS_BASED_TOWER_TARGETING), else King | – | |
-| Movement | Collision push vs buildings | A | Fitted to the native trace: per neighbour min(overlap, 90) × 150/90 along the centre line, capped at 150/tick, inside each actor's movement update | Trace ✓ 508/539 positions exact, max error 6 units | |
-| Movement | Collision push unit vs unit | A | Same rule weighted by Mass (2·m_other/(m_self+m_other)) — not observed | – | |
+| Movement | Collision push | V/A | Movement_collidePush 0xfce900: neighbours from the 1024-unit grid within radius+20, pen = min(R−len,300)×m_other/m_self ≤ 299, push += (pen+1)·d/len, averaged and capped at length 150; static neighbours use self radius ≤ 500 (P). Crown towers push as mass 20 (fitted; the radius rule gives 2) (A) | Trace ✓ 539/539 positions exact | |
+| Movement | Mass | P | Missing Mass derived from radius, clamped to [1, 20] (loader 0xdde618) | – | |
 | Movement | Knockback (Fireball pushback) | A | Pushback distance applied over 4 ticks; IgnorePushback respected | – | |
-| Targeting | Target choice | A | Nearest by centre distance within SightRange (+2000 to crown towers); towers: nearest in range | Trace ✓ native fixture choices (Knight, King) | |
-| Targeting | Keep / drop target | A | Locked while in range + RANGE_EXTENSION_TO_KEEP_TARGET 25; re-evaluated every tick otherwise | Trace ✓ retarget at tick 3 | |
+| Targeting | Target choice | P/A | AttackComp_findTarget 0xfc4c38: grid query order, sight = SightRange + own radius, +2000 to crown towers, SightClip/SightClipSide, nearest dist2, ties keep the earlier (P); default target when none in sight = lane crown tower (A: 0xfc5398 not read); pending-damage overkill skip (A) | Trace ✓ fixture choices | |
+| Targeting | Keep / drop target, ranges | P | inRange: dist2 ≤ (r_target + Range + r_self + extra)²; keep with +25 (+500 for ranged units mid-swing); setTarget resets the attack only for an out-of-range new target (0xfc3cb4) | Trace ✓ retarget at tick 3 | |
 | Targeting | Air vs ground, buildings-only | D | AttacksAir / AttacksGround / TargetOnlyBuildings / TargetOnlyTroops | – | |
-| Attack | Hit timing, preload | D | Timer starts at LoadTime; hit when it reaches HitSpeed; reset to 0 | Trace ✓ Knight 9/33/57; King 9, 29, 49…; Kings and Knights in 400-tick trace | |
-| Attack | Clock while walking | A | Reload continues up to LoadTime while not attacking | – | |
+| Attack | Hit timing, preload, reload | V | AttackComp_update/advanceClock 0xfc7e20/0xfc90b0: monotonic timer, hit when floor(timer/HitSpeed) increases, first swing starts at LoadTime − load, load = LoadTime after each attack, swing continues once started, cancelled beyond range+1500 | Trace ✓ Knight 9/33/57; 400-tick fixture all HP exact | |
+| Attack | Clock while walking | P | Timer reset when the unit has no target; load counts down 50/tick | – | |
 | Attack | Retarget keeps the clock | D | Observed natively | Trace ✓ | |
 | Attack | Melee damage, damage at end of tick | D | Damage queued, applied in the end-of-tick flush | Trace ✓ HP sequences | |
 | Attack | Projectiles: spawn, flight, homing, impact | D | Spawn at ProjectileStartRadius toward the target (+ProjectileYOffset), no move on spawn tick, Speed per tick with truncation, damage on arrival tick | Trace ✓ spawn (1730,1071), (548,1002); flight (665,930)→(84,117) | |
-| Attack | Splash | A | Units whose circle meets the radius (radius + target radius); centre self for SelfAsAoeCenter | – | |
+| Attack | Splash | P | World_areaDamage 0xf97be8: circles overlap strictly, buildings by the closest point of their square; centre = target snapshot or self (SelfAsAoeCenter) | – | |
 | Attack | Kamikaze | D/A | Unit dies on its attack (Fire Spirits) | – | |
 | Attack | Shields | D | Shield absorbs first; excess on the breaking hit is lost | brief §6 (not yet a test) | |
 | Towers | Princess and King stats | D | Tower scaling table (L11: 3052 HP / 4824 HP, 109 dmg) | – | |
 | Towers | King activation | D | Inactive until damaged or a Princess tower falls; 3300 ms ACTIVATING | Trace ✓ first shot 76 ticks after first damage (621→697) | |
 | Towers | Tower targeting | A | Nearest enemy in range, locked until out of range or dead | Trace ✓ (Kings in fixture) | |
 | Spells | Fireball, Arrows | D/A | Projectile, speed, radius, damage, crown-tower % from data (D); launched from the caster's King tower (A); Arrows: 3 waves 200 ms apart, damage radius = card Radius 3500 (A: the 10 visual arrows ignored) | – | |
-| Spells | Crown-tower damage reduction | D/A | CrownTowerDamagePercent or TowerDamage (D); floor rounding (A) | – | |
+| Spells | Crown-tower damage reduction | P | ((max(p,−100)+100)·dmg + 99)/100, rounded up (0xde0334); TowerDamage absolute when given (D) | – | |
 | Effects | Buff speed / hit-speed multipliers (stun, slow, freeze, rage) | D | SpeedMultiplier/HitSpeedMultiplier from buffs; attack clock = 50×max(100,haste)/100×clamp(100−slow)/100 truncated (STAT formula); same shape for movement (A) | Clock formula ✓ (native fixture values 75/32/48) | |
 | Effects | Stun/freeze resets the attack | A | A −100 hit-speed buff zeroes the attack timer and drops the target (community knowledge) | – | |
 | Effects | Damage / heal over time | D/A | DamagePerSecond, HealPerSecond, HitFrequency, BuildingDamagePercent, CrownTowerDamagePercent (D); first tick one HitFrequency after application, immediate for HitTickFromSource (A: gives Poison 8 ticks, Earthquake 3) | – | |

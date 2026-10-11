@@ -106,7 +106,8 @@ test('native deploy snapping for 1x1 troops (8-input episode)', () => {
 });
 
 test('Knight vs Knight fixture: hits at ticks 9, 33, 57; HP 690 -> 611 -> 532 -> 453', () => {
-  const b = newBattle();
+  // like the native synthetic fixture: no towers around
+  const b = newBattle({ fixture: { width: 18000, height: 32000 } });
   const a = addActive(b, 'Knight', 0, 9000, 12000, 1);
   const c = addActive(b, 'Knight', 1, 9000, 13000, 1);
   const hpAt: Record<number, number> = {};
