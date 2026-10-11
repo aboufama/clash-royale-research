@@ -3,6 +3,43 @@
 Newest first. Each entry gives the decision, why it was made, and what would
 change it.
 
+## 2026-10-11 — Owner: visuals indistinguishable, mechanics as exact as possible
+
+- **Decision:** the owner asked for visuals indistinguishable from the real
+  game and byte-identical behaviour for a limited troop set, judged by playing.
+  Strategy: render the build's own SC2 movie clips (not redrawn art); implement
+  mechanics from native facts; recover the decrypted `libg` in the cloud and
+  decompile combat functions to port them; check every mechanic against
+  recorded native traces (`research/evidence/`) and label the result in
+  docs/FIDELITY.md.
+- **Why:** byte-identity can only be shown by comparison with the original
+  engine. The repo holds a few native traces (Knight fixture, King-vs-Knight
+  400-tick fixture, 8-input match actions); the full-match per-frame captures
+  live only on the owner's Mac.
+- **Would change if:** the owner provides the Mac-only captures or the native
+  harness runs in the cloud, enabling full-match differential tests.
+
+## 2026-10-11 — Collision push fitted to a native trace
+
+- **Decision:** push = per overlapping neighbour min(overlap, 90) × 150/90 along
+  the centre line, capped at 150 units/tick, applied inside each actor's
+  movement update. Unit-vs-unit pushes weight it by Mass.
+- **Why:** the push algorithm was never decompiled, but
+  `native-automatic-combat.json` records two Knights being pushed by King
+  towers every tick. This rule reproduces 508/539 positions exactly (max error
+  6 units) and the tick-0 step exactly. A sweep over alternatives fitted worse.
+- **Would change if:** the decompiled movement code (`0xfcc578`, `0xfcef48`,
+  `0x11d988c`) gives the real formula; it then replaces this fit.
+
+## 2026-10-11 — Engine base confirmed: from-scratch TypeScript
+
+- **Decision:** the owner confirmed the from-scratch deterministic 20 Hz
+  TypeScript engine (`sim/core`) on 2026-10-11, optimised for speed (millions
+  of headless matches). M1 needs all graphics and at least 8 troops.
+- **Why:** both open-source engines get the fundamentals wrong (tick rate,
+  units, starting elixir); one TypeScript core serves the browser and
+  headless runs. First benchmark: ~7,000× real time per core with random play.
+
 ## 2026-10-11 — Pivot from exact emulation to a real-time simulator
 
 - **Decision:** the active goal is a real-time simulator with original art
