@@ -113,11 +113,14 @@ export interface AnimState {
   /** TryToFinishAttackAnimation: view-side attack clock (+0xa94) while finishing */
   finishing: boolean;
   finishClock: number;
+  /** facing angle recorded at the first path search and its 0.3 s hold (view +0x4e0 / +0x4e4, 0x845bb0) */
+  walkAngle: number;
+  walkHold: number;
 }
 
 export function newAnimState(): AnimState {
   return { angle: -1, hold: 0, rot: 0, sign: 1, action: -1, actionStart: 0, stepToggle: 0, stopped: false,
-    finishing: false, finishClock: 0 };
+    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0 };
 }
 
 /** Logic inputs for one character view frame (native names in brackets). */
@@ -147,6 +150,8 @@ export interface AnimInput {
   flip: boolean;
   /** HitSpeed of the actor whose attack timer drives the swing (default: the character's data) */
   hitSpeed?: number;
+  /** facing vector at the unit's path search this frame, if any (engine 'path' event, view vt+0x178) */
+  pathFacing?: [number, number];
 }
 
 export interface AnimFrame {
@@ -177,8 +182,20 @@ function labelFrame(a: ActionArt, name: string): number {
 /** One frame of FUN_00840d44 for a direction-clip character (anim-set path). */
 export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInput): AnimFrame | null {
   const dt = i.dt;
+  // 0x845bb0: the first path search records the facing and holds it 0.3 s (the record is never
+  // cleared, so only the first counts)
+  if (i.pathFacing && s.walkAngle === -1) { s.walkAngle = nativeAngle(i.pathFacing[0], i.pathFacing[1]); s.walkHold = 0.3; }
+  // 0x844f78: while walking within the hold, a facing at most 89 degrees off the recorded one shows the record
+  let fa = nativeAngle(i.dirX, i.dirY);
+  if (s.walkAngle !== -1 && i.state === 1) {
+    let d = (s.walkAngle - fa) % 360;
+    if (d < 0) d += 360;
+    if (d >= 180) d -= 360;
+    if (!(s.walkHold <= 0 || Math.abs(d) > 89)) fa = s.walkAngle;
+  }
   // displayed angle: changes at most every 0.5 s
-  const want = viewAngle(i.dirX, i.dirY, i.flip);
+  const want = ((i.flip ? 270 : 90) + fa) % 360;
+  if (s.walkHold > 0) s.walkHold -= dt; // view update 0x839b08
   let shown = s.angle;
   let hold = s.hold - dt;
   if (hold <= 0 && want !== shown) { shown = want; hold = 0.5; }

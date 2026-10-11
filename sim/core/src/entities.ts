@@ -396,7 +396,7 @@ export interface Command {
 /** Visual events for the viewer (recorded only when enabled). */
 export interface BattleEvent {
   tick: number;
-  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect';
+  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path';
   team: number;
   x: number;
   y: number;

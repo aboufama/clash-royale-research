@@ -1789,6 +1789,8 @@ export class Battle {
       const oldIdx = u.pathIdx;
       u.path = A.findPath(trunc(u.x / CELL), trunc(u.y / CELL), gx, gy, this.pathClass(u));
       u.pathIdx = 0;
+      // the view hears of every A* run (vt+0x178 -> 0x845bb0) with the facing at that moment
+      if (this.recordEvents) this.events.push({ tick: this.tick, type: 'path', team: u.team, x: u.dirX, y: u.dirY, name: u.def.name, id: u.id });
       if (!fresh && !A.pathTouchedByOcclusion(oldPath, oldIdx, u.path)) {
         u.path = oldPath;
         u.pathIdx = oldIdx;

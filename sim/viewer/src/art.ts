@@ -68,6 +68,8 @@ export class ArtWorld implements WorldRenderer {
   private bAnims = new Map<number, BuildingAnim>();
   private clipFrames = new Map<number, number>();
   private collected = new Set<number>();
+  /** facing at each unit's path search since the last frame (engine 'path' events) */
+  private pathFacing = new Map<number, [number, number]>();
   /** King activation controller 0x8643a0 per King tower: the tower and King clips (same labels and
    * length, so one player) and whether it has started. */
   private kingClips = new Map<number, { clip: ClipPlayer; activated: boolean }>();
@@ -169,6 +171,8 @@ export class ArtWorld implements WorldRenderer {
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
       } else if (e.type === 'collect') {
         this.collected.add(e.id);
+      } else if (e.type === 'path') {
+        if (!this.pathFacing.has(e.id)) this.pathFacing.set(e.id, [e.x, e.y]);
       } else if (e.type === 'cast') {
         const sp = m.spells[e.name];
         const eff = sp?.effect;
@@ -366,8 +370,10 @@ export class ArtWorld implements WorldRenderer {
         // the tower princess swings on the Princess tower's attack timer (A: the attached actor's own
         // attack component is not modelled)
         hitSpeed: u.tower === TOWER_PRINCESS ? u.def.hitSpeed : undefined,
+        pathFacing: this.pathFacing.get(u.id),
       }));
     }
+    this.pathFacing.clear();
     for (const id of this.anims.keys()) if (!seen.has(id)) this.anims.delete(id);
     // buildings drawn from one labelled clip (no anim set, no turret): the client's clip player
     this.clipFrames.clear();
