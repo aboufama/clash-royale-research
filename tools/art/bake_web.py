@@ -709,7 +709,9 @@ class Baker:
                   "ShadowY", "HealthBar", "HealthBarOffsetY", "HealthBarOffsetYBlue", "HealthBarOffsetYRed",
                   "HideHealthbar", "UseAnimator", "ProjectileStartZ", "ProjectileStartRadius", "DeployTime",
                   "DeployDelay", "Speed", "HitSpeed", "LoadTime", "Range", "AnimationsKeepLastFrame",
-                  "TryToFinishAttackAnimation", "DontStopMoveAnim", "LoopMoveEffect"):
+                  "TryToFinishAttackAnimation", "TryToFinishAttackAnimationBeforeNextAttack", "DontStopMoveAnim",
+                  "LoopMoveEffect", "WalkingSpeedTweakPercentage", "StopMovementAfterMS", "WaitMS",
+                  "RotateAngleSpeed", "AttackFinishTime", "JumpEnabled"):
             if k in row:
                 entry[k[0].lower() + k[1:]] = row[k]
         if row.get("ShadowCustom"):

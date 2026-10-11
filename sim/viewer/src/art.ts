@@ -8,12 +8,15 @@
 //   towers     -> King activation clip / turret aimed at the target; Princess idle/attack
 //   events     -> the game's own effects (deploy, attack start, hit, projectile hit, death)
 import {
-  type Battle, KING_ACTIVATING, KING_INACTIVE, type Projectile, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE, type Unit,
+  type Battle, KING_ACTIVATING, KING_INACTIVE, type Projectile, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS,
+  type Unit,
 } from '../../core/src/index.ts';
 import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
 import type { ArtHooks } from './main.ts';
-import { actionFrameMs, BattleArt, EffectPlayer, type Mat, ScRenderer } from './sc/index.ts';
+import {
+  actionFrameMs, animate, type AnimFrame, type AnimState, BattleArt, EffectPlayer, type Mat, newAnimState, ScRenderer,
+} from './sc/index.ts';
 
 type Team = 0 | 1;
 
@@ -56,6 +59,10 @@ export class ArtWorld implements WorldRenderer {
   private lastNow = 0;
   /** Running area-effect visuals by engine AEO id. */
   private aeoFx = new Map<number, { stop(): void }>();
+  /** Client view state per unit (sc/anim.ts) and this frame's chosen sprite. */
+  private anims = new Map<number, AnimState>();
+  private sprites = new Map<number, AnimFrame | null>();
+  private lastSim = -1;
   /** SC px -> CSS px scale and offset (screen = s * px + v). */
   private s = 1;
   private vx = 0;
@@ -145,6 +152,7 @@ export class ArtWorld implements WorldRenderer {
     this.lastNow = now;
     this.fx.update(dt);
     const sim = f.simMs;
+    this.updateAnims(f, sim);
     const dpr = this.cam.dpr;
 
     r.begin([0.05, 0.08, 0.05, 1]);
@@ -177,7 +185,8 @@ export class ArtWorld implements WorldRenderer {
         art.drawTowerShadow(r, 'king', team, sim, act);
       } else {
         const aim = u.target ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
-        art.drawTowerShadow(r, u.x < 9000 ? 'princessLeft' : 'princessRight', team, sim, undefined, aim);
+        art.drawTowerShadow(r, u.x < 9000 ? 'princessLeft' : 'princessRight', team, sim, undefined, aim,
+          this.sprites.get(u.id) ?? undefined);
       }
     }
     for (const u of b.units) {
@@ -185,7 +194,8 @@ export class ArtWorld implements WorldRenderer {
       const ca = m.characters[u.def.name];
       if (!ca) continue;
       const st = this.unitState(u, f);
-      art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), st.action, st.angle, st.ms);
+      art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), st.action, st.angle, st.ms,
+        { sprite: this.sprites.get(u.id) ?? undefined });
     }
     this.fx.draw(r, 'Shadow');
     art.endShadowPass(r);
@@ -210,7 +220,8 @@ export class ArtWorld implements WorldRenderer {
         const side = u.x < 9000 ? 'princessLeft' : 'princessRight';
         const atk = this.attackPhase(u, f);
         const aim = u.target ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : team === 0 ? Math.PI / 2 : -Math.PI / 2;
-        items.push({ y: py, draw: () => art.drawPrincessTower(r, team, side, sim, atk === null ? 'idle' : 'attack', aim, atk ?? sim, dead) });
+        const sp = this.sprites.get(u.id) ?? undefined;
+        items.push({ y: py, draw: () => art.drawPrincessTower(r, team, side, sim, atk === null ? 'idle' : 'attack', aim, atk ?? sim, dead, sp) });
       }
     }
     // arena decorations on the object layer
@@ -237,7 +248,7 @@ export class ArtWorld implements WorldRenderer {
       const py = ypx(x, y) + (flying ? 2000 : 0);
       const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: (b.tick - q.startTick) * 50 + f.alpha * 50 })) : undefined;
       const flashMs = b.tick - u.lastHurtTick < 10 ? (b.tick - u.lastHurtTick) * 50 + f.alpha * 50 : undefined;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, flashMs };
+      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, flashMs, sprite: this.sprites.get(u.id) ?? undefined };
       if (u.def.hides) {
         // Tesla: closed while hidden, rising for UpTimeMs, then up
         if (u.hidden && u.upMs > 0) { o.state = 'appear'; o.stateMs = u.upMs + f.alpha * 50; } else o.state = u.hidden ? 'hidden' : 'up';
@@ -289,6 +300,38 @@ export class ArtWorld implements WorldRenderer {
       art.drawHealthBar(r, (ca?.healthBar as string | undefined) ?? 'Medium', team, sx, sy, u.hp / u.maxHp, u.def.level);
     }
     r.end();
+  }
+
+  /**
+   * Run the client's character view update (sc/anim.ts, FUN_00840d44) for every unit with direction
+   * clips, and for the princess on each Princess tower (an attached character driven by the tower).
+   */
+  private updateAnims(f: Frame, sim: number): void {
+    const b = f.battle;
+    const m = this.art.manifest;
+    const dt = this.lastSim < 0 ? 0 : Math.max(0, (sim - this.lastSim) / 1000);
+    this.lastSim = sim;
+    this.sprites.clear();
+    const seen = new Set<number>();
+    for (const u of b.units) {
+      if (u.state === ST_DEAD || u.tunneling) continue;
+      let ca = m.characters[u.def.name];
+      if (u.tower === TOWER_PRINCESS) ca = m.characters[m.towers.princess.character as string];
+      else if (u.tower !== TOWER_NONE) continue;
+      if (!ca || !ca.actions || !Object.keys(ca.actions).length) continue;
+      let s = this.anims.get(u.id);
+      if (!s) { s = newAnimState(); this.anims.set(u.id, s); }
+      seen.add(u.id);
+      const walker = u.def.speed > 0 && !u.isBuilding && u.tower === TOWER_NONE;
+      const state = u.state === ST_DEPLOYING ? 4 : u.jumping ? 5 : u.locked ? 2 : walker ? 1 : 0;
+      this.sprites.set(u.id, animate(ca, u.team as Team, s, {
+        state, dirX: u.dirX, dirY: u.dirY, id: u.id, walker, charge: u.charge,
+        walk: u.walkMs, walkPrev: f.prevWalk.get(u.id) ?? u.walkMs,
+        atk: u.atkTimer, atkPrev: f.prevAtk.get(u.id) ?? u.atkTimer, finish: u.finishMs,
+        alpha: f.alpha, dt, clock: sim / 1000, flip: this.art.flip,
+      }));
+    }
+    for (const id of this.anims.keys()) if (!seen.has(id)) this.anims.delete(id);
   }
 
   /** Engine state -> clip, angle and clip time. */

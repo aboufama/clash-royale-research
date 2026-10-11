@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Deterministic Clash Royale battle simulator (build 160402020): engine, viewer, bench",
   "scripts": {
-    "test": "node --test core/test/*.test.ts",
+    "test": "node --test core/test/*.test.ts viewer/test/*.test.ts",
     "typecheck": "tsc -p .",
     "bench": "node bench/bench.ts",
     "build": "esbuild viewer/src/main.ts --bundle --format=esm --sourcemap --outfile=viewer/dist/main.js",

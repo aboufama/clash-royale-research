@@ -61,6 +61,16 @@ export interface CharacterArt {
   deployBaseAnimExportName?: ClipRef; // deploy "filter" clip (unit drop + flash)
   projectile?: string;
   customFirstProjectile?: string;
+  // character data read by the client's view update (sc/anim.ts)
+  hitSpeed?: number;
+  walkingSpeedTweakPercentage?: number;
+  stopMovementAfterMS?: number;
+  waitMS?: number;
+  dontStopMoveAnim?: boolean;
+  rotateAngleSpeed?: number;
+  tryToFinishAttackAnimation?: boolean;
+  animationsKeepLastFrame?: boolean;
+  jumpEnabled?: number;
   [k: string]: unknown;
 }
 

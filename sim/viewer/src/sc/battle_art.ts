@@ -37,6 +37,8 @@ export interface UnitDrawOptions {
    * Tombstone 'deploy', bombs 'attack'); `<state>_start`..`<state>_end` ranges play over stateMs */
   state?: string;
   stateMs?: number;
+  /** export + frame + mirror chosen by the client's view update (sc/anim.ts); overrides action/angle */
+  sprite?: { export: string; frame: number; mirror: boolean };
 }
 
 export interface AreaEffectHandle {
@@ -214,7 +216,7 @@ export class BattleArt {
   /** Crown tower shadow: the main export (King: KingTower_*, Princess: StarTower_base_*) plus the
    * tower princess's own shadow (she is a character attached to the tower, at its ground position). */
   drawTowerShadow(r: ScRenderer, kind: 'king' | 'princessLeft' | 'princessRight', team: Team, timeMs: number,
-    activationMs?: number, angle?: number): void {
+    activationMs?: number, angle?: number, sprite?: { export: string; frame: number; mirror: boolean }): void {
     const king = kind === 'king';
     const t = king ? this.manifest.towers.king : this.manifest.towers.princess;
     const [x, y] = this.towerPos(kind, team);
@@ -239,7 +241,8 @@ export class BattleArt {
     r.draw(lib, p.base[team === 0 ? 'blue' : 'red'], 0, m);
     const pc = this.manifest.characters[p.character];
     if (pc) {
-      const sp = unitSprite(pc, team, 'idle', this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), timeMs);
+      const sp = sprite ? spriteOf(sprite)
+        : unitSprite(pc, team, 'idle', this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), timeMs);
       if (sp) {
         const [a, b, c, dx, dy] = this.charShadow(pc);
         r.draw(this.lib(pc.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror));
@@ -298,7 +301,8 @@ export class BattleArt {
 
   /** Princess tower: base, tower princess (character art), top. */
   drawPrincessTower(r: ScRenderer, team: Team, side: 'princessLeft' | 'princessRight', timeMs: number,
-    action: ActionName = 'idle', angle?: number, actionMs = timeMs, destroyed = false): void {
+    action: ActionName = 'idle', angle?: number, actionMs = timeMs, destroyed = false,
+    sprite?: { export: string; frame: number; mirror: boolean }): void {
     const t = this.manifest.towers.princess;
     const [x, y] = this.towerPos(side, team);
     const [px, py] = this.gameToPx(x, y);
@@ -313,7 +317,8 @@ export class BattleArt {
     if (pc) {
       // the tower princess is the building's AttachedCharacter, raised by AttachedCharacterHeight
       const [qx, qy] = this.gameToPx(x, y, t.attachedHeight ?? 0);
-      const sp = unitSprite(pc, team, action, this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), actionMs);
+      const sp = sprite ? spriteOf(sprite)
+        : unitSprite(pc, team, action, this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), actionMs);
       if (sp) {
         const s = pc.scale / 100;
         r.draw(this.lib(pc.sc), sp.export, sp.frame, [sp.mirror ? -s : s, 0, 0, s, qx, qy]);
@@ -341,7 +346,8 @@ export class BattleArt {
   drawUnit(r: ScRenderer, name: string, team: Team, x: number, y: number, action: ActionName, angle: number,
     actionMs: number, o: UnitDrawOptions = {}): UnitSprite | null {
     const art = this.character(name);
-    const sp = unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop, yScale: o.screenAngle ? this.yScale : undefined });
+    const sp = o.sprite ? spriteOf(o.sprite)
+      : unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop, yScale: o.screenAngle ? this.yScale : undefined });
     if (!sp) {
       if (art.clip) return this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o });
       return null;
@@ -372,7 +378,7 @@ export class BattleArt {
       r.draw(this.lib(art.shadowCustom.sc), art.shadowCustom.export, 0, [s, 0, 0, s, px, py]);
       return;
     }
-    const sp = unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop });
+    const sp = o.sprite ? spriteOf(o.sprite) : unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop });
     if (!sp) {
       if (art.clip) this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o, shadow: true });
       return;
@@ -782,4 +788,8 @@ export class BattleArt {
 function colMulTo(p: Col, q: Col): Col {
   return [p[0] * q[0], p[1] * q[1], p[2] * q[2], p[3] * q[3],
     Math.min(255, p[4] + q[4] * p[0]), Math.min(255, p[5] + q[5] * p[1]), Math.min(255, p[6] + q[6] * p[2])];
+}
+
+function spriteOf(sp: { export: string; frame: number; mirror: boolean }): UnitSprite {
+  return { export: sp.export, frame: sp.frame, mirror: sp.mirror, dir: 0, action: '', frames: 0, fps: 30, done: false };
 }

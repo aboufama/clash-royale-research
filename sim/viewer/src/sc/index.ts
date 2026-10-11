@@ -7,3 +7,4 @@ export * from './renderer.ts';
 export * from './units.ts';
 export * from './battle_art.ts';
 export * from './effects.ts';
+export * from './anim.ts';

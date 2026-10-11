@@ -24,6 +24,9 @@ export class Frame {
   /** Simulation time in ms including the interpolation fraction. */
   simMs = 0;
   prevPos = new Map<number, number>(); // id -> packed x*65536+y (both < 65536)
+  /** Tick-start attack timer and walk clock per unit (the client's +0x34 / movement +0x210 snapshots). */
+  prevAtk = new Map<number, number>();
+  prevWalk = new Map<number, number>();
   drag: DragPreview | null = null;
 
   /** Interpolated unit position. */
@@ -58,7 +61,13 @@ export class Frame {
   /** Record positions before stepping (call once per engine tick). */
   snapshot(b: Battle): void {
     this.prevPos.clear();
-    for (const u of b.units) this.prevPos.set(u.id, u.x * 65536 + u.y);
+    this.prevAtk.clear();
+    this.prevWalk.clear();
+    for (const u of b.units) {
+      this.prevPos.set(u.id, u.x * 65536 + u.y);
+      this.prevAtk.set(u.id, u.atkTimer);
+      this.prevWalk.set(u.id, u.walkMs);
+    }
     for (const p of b.projectiles) this.prevPos.set(p.id, p.x * 65536 + p.y);
   }
 }
