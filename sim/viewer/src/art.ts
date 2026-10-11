@@ -15,7 +15,7 @@ import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
 import type { ArtHooks } from './main.ts';
 import {
-  actionFrameMs, animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, EffectPlayer,
+  actionFrameMs, animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, ClipPlayer, EffectPlayer,
   type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer,
 } from './sc/index.ts';
 
@@ -68,6 +68,9 @@ export class ArtWorld implements WorldRenderer {
   private bAnims = new Map<number, BuildingAnim>();
   private clipFrames = new Map<number, number>();
   private collected = new Set<number>();
+  /** King activation controller 0x8643a0 per King tower: the tower and King clips (same labels and
+   * length, so one player) and whether it has started. */
+  private kingClips = new Map<number, { clip: ClipPlayer; activated: boolean }>();
   private lastSim = -1;
   /** Hit filter per unit (direction picked from the hit vector, sim ms it started) and hits seen. */
   private hits = new Map<number, { dir: 'down' | 'left' | 'up' | 'right'; start: number }>();
@@ -213,10 +216,7 @@ export class ArtWorld implements WorldRenderer {
       if (u.tower === TOWER_NONE || u.state === ST_DEAD) continue;
       const team = u.team as Team;
       if (u.tower === TOWER_KING) {
-        let act: number | undefined;
-        if (u.kingState === KING_ACTIVATING) act = (66 - u.kingTicks) * 50 + f.alpha * 50;
-        else if (u.kingState !== KING_INACTIVE) act = 3300 + sim;
-        art.drawTowerShadow(r, 'king', team, sim, act);
+        art.drawTowerShadow(r, 'king', team, sim, this.kingClips.get(u.id)?.clip.frame);
       } else {
         const aim = u.target ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
         art.drawTowerShadow(r, u.x < 9000 ? 'princessLeft' : 'princessRight', team, sim, undefined, aim,
@@ -245,13 +245,11 @@ export class ArtWorld implements WorldRenderer {
       const dead = false;
       const py = ypx(u.x, u.y);
       if (u.tower === TOWER_KING) {
-        let act: number | undefined;
-        if (u.kingState === KING_ACTIVATING) act = (66 - u.kingTicks) * 50 + f.alpha * 50;
-        else if (u.kingState !== KING_INACTIVE) act = 3300 + sim;
+        const kf = this.kingClips.get(u.id)?.clip.frame;
         const aim = u.target && u.kingState !== KING_INACTIVE ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
         const face: [number, number] = [u.dirX, u.dirY];
         const since = u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9;
-        items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, act, aim, dead, face, since) });
+        items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, kf, aim, dead, face, since) });
       } else {
         const side = u.x < 9000 ? 'princessLeft' : 'princessRight';
         const atk = this.attackPhase(u, f);
@@ -391,6 +389,27 @@ export class ArtWorld implements WorldRenderer {
     }
     this.collected.clear();
     for (const id of this.bAnims.keys()) if (!seen.has(id)) this.bAnims.delete(id);
+    // King activation (0x864224 setup, 0x8643a0 per frame): idle while the INACTIVE tag is set; when it
+    // clears (activation begins) the clips play start..stop once (no start delay outside 2v2); a King
+    // already active when its view is made jumps to stop
+    const kt = m.towers.king;
+    for (const u of b.units) {
+      if (u.tower !== TOWER_KING || u.state === ST_DEAD) continue;
+      const labels = this.art.lib(kt.sc).labels(u.team === 0 ? kt.blue : kt.red);
+      const idle = labels.idle ?? 0, start = labels.start ?? 1, stop = labels.stop ?? kt.frames - 1;
+      let c = this.kingClips.get(u.id);
+      if (!c) {
+        const clip = new ClipPlayer(kt.frames, kt.fps || 30);
+        const active = u.kingState !== KING_INACTIVE && u.kingState !== KING_ACTIVATING;
+        clip.gotoAndStop(active ? stop : idle);
+        c = { clip, activated: active };
+        this.kingClips.set(u.id, c);
+      }
+      const inactive = u.kingState === KING_INACTIVE;
+      if (!inactive && !c.activated) { c.activated = true; c.clip.playRange(start, stop, false); }
+      else if (inactive && c.activated) { c.activated = false; c.clip.gotoAndStop(idle); }
+      c.clip.advance(dt);
+    }
     // damage filter (0x83e3d8): quadrant of the hit vector's native angle, offset 135 (flipped view)
     // or 315 degrees: 0 _down, 1 _left, 2 _up, 3 _right; restarts on every hit
     const dirs = ['down', 'left', 'up', 'right'] as const;

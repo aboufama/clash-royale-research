@@ -222,7 +222,7 @@ export class BattleArt {
   /** Crown tower shadow: the main export (King: KingTower_*, Princess: StarTower_base_*) plus the
    * tower princess's own shadow (she is a character attached to the tower, at its ground position). */
   drawTowerShadow(r: ScRenderer, kind: 'king' | 'princessLeft' | 'princessRight', team: Team, timeMs: number,
-    activationMs?: number, angle?: number, sprite?: { export: string; frame: number; mirror: boolean }): void {
+    kingFrame?: number, angle?: number, sprite?: { export: string; frame: number; mirror: boolean }): void {
     const king = kind === 'king';
     const t = king ? this.manifest.towers.king : this.manifest.towers.princess;
     const [x, y] = this.towerPos(kind, team);
@@ -234,10 +234,7 @@ export class BattleArt {
     if (king) {
       const k = this.manifest.towers.king;
       const exp = team === 0 ? k.blue : k.red;
-      const labels = lib.labels(exp);
-      const start = labels.start ?? 1, stop = labels.stop ?? k.frames - 1;
-      let frame = labels.idle ?? 0;
-      if (activationMs !== undefined) frame = Math.min(stop, start + Math.floor((activationMs * k.fps) / 1000));
+      const frame = kingFrame ?? lib.labels(exp).idle ?? 0;
       const named: DrawOptions['named'] = { [k.kingChild]: { hide: true } };
       named[k.turretChild] = this.turretOverride(k.turretFrames, k.turretMovement ?? 0, undefined,
         angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2));
@@ -278,7 +275,19 @@ export class BattleArt {
    * started (doors open, cannon rises; 96 frames at 30 fps = 3.2 s), then held on `stop`.
    * aim: turret angle (engine convention) once active.
    */
-  drawKingTower(r: ScRenderer, team: Team, timeMs: number, activationMs?: number, aim?: number,
+  /**
+   * King tower clip frame `ms` after activation began, for callers without the client's clip player
+   * (art.ts steps the activation controller 0x8643a0 itself): start + ms·fps up to stop; idle before.
+   */
+  kingFrameAt(activationMs?: number): number {
+    const k = this.manifest.towers.king;
+    const labels = this.lib(k.sc).labels(k.blue);
+    if (activationMs === undefined) return labels.idle ?? 0;
+    return Math.min(labels.stop ?? k.frames - 1, (labels.start ?? 1) + Math.floor((activationMs * k.fps) / 1000));
+  }
+
+  /** King tower with the King (king_dummy) and turret; `frame` = tower and King clip frame (kingFrameAt / 0x8643a0). */
+  drawKingTower(r: ScRenderer, team: Team, timeMs: number, frame?: number, aim?: number,
     destroyed = false, face?: [number, number], sinceAttackS?: number): void {
     const t = this.manifest.towers.king;
     const [x, y] = this.towerPos('king', team);
@@ -289,10 +298,7 @@ export class BattleArt {
       return;
     }
     const exp = team === 0 ? t.blue : t.red;
-    const labels = lib.labels(exp);
-    const start = labels.start ?? 1, stop = labels.stop ?? t.frames - 1;
-    let frame = labels.idle ?? 0;
-    if (activationMs !== undefined) frame = Math.min(stop, start + Math.floor((activationMs * t.fps) / 1000));
+    if (frame === undefined) frame = lib.labels(exp).idle ?? 0;
     const clock = Math.floor((timeMs * t.fps) / 1000);
     const named: DrawOptions['named'] = {
       [t.kingChild]: { lib: this.lib(t.king.sc), export: team === 0 ? t.king.blue : t.king.red, frame, childFrame: clock },

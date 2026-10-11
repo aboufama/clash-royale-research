@@ -280,7 +280,7 @@ function drawArenaScene(t: number): void {
     const aim = team === 1 ? -Math.PI / 2 + Math.sin(t / 900) * 1.2 : undefined;
     const ruins = params.has('ruins') && team === 1;
     if (ruins) art.drawTowerRuin(r, 'king', team);
-    else items.push({ y: kpy, draw: () => art.drawKingTower(r, team, t, activation, aim) });
+    else items.push({ y: kpy, draw: () => art.drawKingTower(r, team, t, art.kingFrameAt(activation), aim) });
     for (const side of ['princessLeft', 'princessRight'] as const) {
       const [px, py] = art.towerPos(side, team);
       const tpy = art.gameToPx(px, py)[1];
