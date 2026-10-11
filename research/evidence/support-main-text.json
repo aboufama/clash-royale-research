@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "library_sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+  "capture_report_sha256": "72c407fd00f66957475488c1af8c3e37f0cb1d4ce5d502d4179201fe8bba2813",
+  "memory_sha256": "677c170610de6d2893a3625df8aa9388a1f2c177fd0d82efcf954e296d14268f",
+  "decoded_memory_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+  "scope": "Original isolated cipher agreement; not Android/runtime/gameplay validation.",
+  "native_entry_elf_va": "0x68192c",
+  "native_trials": [
+    {
+      "rounds": 8,
+      "length": 0,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "rounds": 8,
+      "length": 1,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643"
+    },
+    {
+      "rounds": 8,
+      "length": 63,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "8b098afcfe9ffc74a454c839e8c955201d4877a2a0728eaa54b90ddd8dc34f8b"
+    },
+    {
+      "rounds": 8,
+      "length": 64,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "f57d7ac7d5c58fa04da73342bc8ba77db7f49f6d7c6f94d2707f0dc86d4f8205"
+    },
+    {
+      "rounds": 8,
+      "length": 65,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "dae9cd4229d5ee3e61a7828e7f696634772e3adb61646f54edebf6b256b15c29"
+    },
+    {
+      "rounds": 8,
+      "length": 1024,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "ee8628fcfd652a015307a937501dce87d89ad2b1181e8535408a317f68df3eb2"
+    },
+    {
+      "rounds": 20,
+      "length": 0,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "rounds": 20,
+      "length": 1,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "5e1effe9b7bab73dce628ccd9f0cbbb16c1e6efc6c4f311e59992a467bc119fd"
+    },
+    {
+      "rounds": 20,
+      "length": 63,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "ebddb96f0a7e83bf7b05e340867979f8de0e952deda8f2c1a6f821c47b2d2f53"
+    },
+    {
+      "rounds": 20,
+      "length": 64,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "cac813977dfffcd23dc793457b5ed282d41ec182cf868a5b8de1717edc9d2ba6"
+    },
+    {
+      "rounds": 20,
+      "length": 65,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "4ae307625b4fe0ceb42b8273810298ddd4f12387c125f779cf968e2bf3f334d1"
+    },
+    {
+      "rounds": 20,
+      "length": 1024,
+      "native_returned": true,
+      "matches": true,
+      "output_sha256": "21450e7ae388c1c2970bd77247b344424eca99db6e640d155d94e732ec45b6cc"
+    }
+  ],
+  "captured_transform": {
+    "input_elf_va": "0x18d0a0",
+    "output_elf_va": "0x18d0a0",
+    "size": 4860456,
+    "rounds": 8,
+    "ciphertext_sha256": "956f1d5e1cd84bed6aaaebdc3e0824f5d46c116b7dda3f4ed1ecd979377d2b66",
+    "portable_plaintext_sha256": "821a8deac13d24121f199db16c3395d4f4703913aad10e6a3015d68b9f49b78a",
+    "native_plaintext_sha256": "821a8deac13d24121f199db16c3395d4f4703913aad10e6a3015d68b9f49b78a",
+    "byte_identical": true,
+    "matching_bytes": 4860456
+  },
+  "verified": true
+}

@@ -1,33 +1,41 @@
 # Clash Royale native-engine research
 
-Tools and evidence for recovering the native battle simulation from a pinned
-Clash Royale Android build, with the long-term goal of a faithful environment
-for reinforcement learning.
+Tools and evidence for recovering the original native battle simulation from a
+pinned Clash Royale Android build, with the goal of an exact environment for
+reinforcement learning.
 
 The target is behavioral equivalence for a specific build and asset set.
 Extracted card statistics and plausible-looking movement do not establish that
 equivalence. No troop movement implementation has been recovered yet.
 
+**Hard requirement: byte-identical troop interactions, attacks, projectiles and
+towers. No approximation counts as success.** The [active goal and acceptance
+criteria](GOAL.md) require original simulation code/data and bit-identical
+complete per-tick state and events before an environment is accepted for training.
+
 ## Decompilation status
 
 <!-- decompile-status:start -->
 
-Android build **160402020**. Recovery is not proof of behavioral equivalence.
+Android build **160402020**. Recovery is not proof of byte-identical battle behavior.
 
 | Milestone | Status | Evidence / limit |
 | --- | --- | --- |
 | APK provenance and signatures | Verified | Base and ARM64 split pass APK v3 and SourceStamp verification; manifest reports 160402020. |
+| Pinned install-time assets | Verified | Signed build-160402020 install-time pack acquired; all 17,307 fingerprint entries match (10,719 ZIP files and 6,588 SQLite BLOBs), including 389/389 csv_logic files. Later live updates remain unverified. |
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Constructor returns; 583,618 mapped image bytes change after relocation and JNI startup becomes readable. Full JNI/runtime and gameplay remain incomplete. |
-| Troop movement | Not recovered | No troop movement algorithm has been recovered. |
+| Supporting native runtime | Partial | Supporting runtime main code region decoded; an independent cipher implementation agrees exactly across 4,860,456 bytes. JNI/runtime initialization remains partial; no troop or tower behavior is recovered. |
+| Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
+| Troop movement | Not recovered | No original troop movement algorithm has been recovered; authentic movement parameters alone do not establish byte-identical behavior. |
 | Target acquisition | Not recovered | No target acquisition algorithm has been recovered. |
 | Collision and avoidance | Not recovered | No collision or avoidance algorithm has been recovered. |
-| Combat interactions | Not recovered | No attack, damage, or timing algorithm has been recovered. |
-| Behavioral equivalence | Not validated | No per-tick comparison against the original battle runtime has been run. |
+| Combat interactions | Not recovered | No original attack, projectile, damage, or timing implementation has been recovered or validated. |
+| Tower interactions | Not recovered | Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated. |
+| Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
 
-Review **2** · **2026-10-11T05:36:42Z** · Initial public baseline: signatures reverified; constructor decoding and callback assignment independently reproduced; full JNI and gameplay remain unresolved.
+Review **3** · **2026-10-11T06:00:32Z** · Pinned install-time assets verified 17,307/17,307; original support main-code transform independently matches 4,860,456 bytes; 160/160 tail checksums and negative control pass. Enforced byte-identical troop/attack/tower acceptance. Full runtime and battle behavior remain incomplete.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -49,8 +57,17 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 - Executed the supporting library's constructor in an isolated emulator. It
   changes **583,618 mapped image bytes after relocation** and reveals decodable JNI startup.
   Two independent runs reproduced the constructor return and callback assignment.
-- Traced the recovered startup into its next bootstrap stage. Full JNI startup
-  and the game engine are still incomplete.
+- Acquired and signature-verified the install-time asset split. **17,307/17,307**
+  fingerprint entries match, including all 389 `csv_logic/` entries. Later live
+  updates and runtime cache overrides remain unverified.
+- Verified the constructor-decoded protection region against **160/160**
+  original embedded Fletcher-64 checksums; a one-bit negative control fails.
+- Recovered the support runtime's **4,860,456-byte main code region** by running
+  its original transform after replaying a captured child-process response.
+  An independent portable ChaCha8 implementation matches every output byte;
+  12 isolated original-native cipher trials also match.
+- The recovered dispatcher installs the handlers needed by `libg`. Full support
+  initialization, `libg` unpacking, and troop/tower behavior remain incomplete.
 
 See [the build record](research/builds/160402020.json) and
 [the investigation notes](research/findings.md). Findings distinguish direct
@@ -113,6 +130,41 @@ and a compatible JDK, then run:
 ```sh
 python scripts/verify_apks.py --apksigner /path/to/build-tools/apksigner
 ```
+
+Additional recovery checks:
+
+```sh
+python scripts/verify_runtime_integrity.py \
+  work/builds/160402020/support-constructor/runtime-memory.bin \
+  --out work/builds/160402020/runtime-integrity.json
+```
+
+For the install-time asset pack, obtain a fresh XAPK download URL from the
+[recorded APKFab release](https://apkfab.com/clash-royale/com.supercell.clashroyale/download?sha1=a2168a5311707371c3126463ded78917413d8336)
+and keep that temporary URL in an ignored local text file. The fetcher downloads
+only the missing stored ZIP member and verifies its pinned hash and APK signer:
+
+```sh
+python scripts/fetch_asset_pack.py \
+  --url-file work/fresh-xapk-url.txt \
+  --output work/builds/160402020/install_time_asset_pack.apk \
+  --apksigner /path/to/build-tools/apksigner
+python scripts/audit_asset_pack.py \
+  work/builds/160402020/install_time_asset_pack.apk \
+  --summary work/builds/160402020/asset-audit.json
+```
+
+The asset audit checks the complete recorded fingerprint, including SQLite
+BLOBs, and strictly decodes the selected compressed data. One original TOML
+file contains a duplicate table that Python's parser rejects; the original
+bytes are preserved without repairs or guessed parser behavior.
+
+`verify_chacha_recovery.py` independently checks a locally captured native
+transform and executes synthetic inputs through the original ARM64 cipher.
+It requires pre/post memory images and a private `native_cipher_calls` capture
+report. Those captures and the experimental parent/child runtime model are not
+part of the public constructor baseline; this check alone is not an end-to-end
+recovery command. See [the recovery notes](research/findings.md).
 
 The original APK, extracted binaries, assets, memory dumps, and third-party
 decompiler output remain local. The repository contains our tools, hashes,

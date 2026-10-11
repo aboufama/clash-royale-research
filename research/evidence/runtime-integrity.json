@@ -1,0 +1,18 @@
+{
+  "input_sha256": "677c170610de6d2893a3625df8aa9388a1f2c177fd0d82efcf954e296d14268f",
+  "region_start_elf_va": "0x62fac8",
+  "region_size": 184872,
+  "region_sha256": "e4a705ef1a562a1f1ce230272d6a739ab50d074b23f0fb40f909c0b9f9bacd71",
+  "algorithm": "Original seeded Fletcher-64 over little-endian uint32 words",
+  "blocks": 160,
+  "matching_blocks": 160,
+  "complete_region_covered": true,
+  "scope": "Protection-runtime region only; not gameplay equivalence or cryptographic authentication.",
+  "negative_control": {
+    "mutation": "One bit flipped at ELF VA 0x62fadc",
+    "matching_blocks": 159,
+    "mismatching_block_indices": [
+      0
+    ]
+  }
+}

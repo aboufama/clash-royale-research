@@ -1,13 +1,13 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "build": {
     "package": "com.supercell.clashroyale",
     "version": "160402020"
   },
   "review": {
-    "sequence": 2,
-    "reviewed_at": "2026-10-11T05:36:42Z",
-    "summary": "Initial public baseline: signatures reverified; constructor decoding and callback assignment independently reproduced; full JNI and gameplay remain unresolved."
+    "sequence": 3,
+    "reviewed_at": "2026-10-11T06:00:32Z",
+    "summary": "Pinned install-time assets verified 17,307/17,307; original support main-code transform independently matches 4,860,456 bytes; 160/160 tail checksums and negative control pass. Enforced byte-identical troop/attack/tower acceptance. Full runtime and battle behavior remain incomplete."
   },
   "milestones": [
     {
@@ -15,6 +15,13 @@
       "status": "verified",
       "evidence": [
         "Base and ARM64 split pass APK v3 and SourceStamp verification; manifest reports 160402020."
+      ]
+    },
+    {
+      "id": "asset_pack",
+      "status": "verified",
+      "evidence": [
+        "Signed build-160402020 install-time pack acquired; all 17,307 fingerprint entries match (10,719 ZIP files and 6,588 SQLite BLOBs), including 389/389 csv_logic files. Later live updates remain unverified."
       ]
     },
     {
@@ -42,14 +49,21 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Constructor returns; 583,618 mapped image bytes change after relocation and JNI startup becomes readable. Full JNI/runtime and gameplay remain incomplete."
+        "Supporting runtime main code region decoded; an independent cipher implementation agrees exactly across 4,860,456 bytes. JNI/runtime initialization remains partial; no troop or tower behavior is recovered."
+      ]
+    },
+    {
+      "id": "runtime_integrity",
+      "status": "verified",
+      "evidence": [
+        "All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence."
       ]
     },
     {
       "id": "movement",
       "status": "not_recovered",
       "evidence": [
-        "No troop movement algorithm has been recovered."
+        "No original troop movement algorithm has been recovered; authentic movement parameters alone do not establish byte-identical behavior."
       ]
     },
     {
@@ -70,14 +84,21 @@
       "id": "combat",
       "status": "not_recovered",
       "evidence": [
-        "No attack, damage, or timing algorithm has been recovered."
+        "No original attack, projectile, damage, or timing implementation has been recovered or validated."
+      ]
+    },
+    {
+      "id": "towers",
+      "status": "not_recovered",
+      "evidence": [
+        "Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated."
       ]
     },
     {
       "id": "equivalence",
       "status": "not_validated",
       "evidence": [
-        "No per-tick comparison against the original battle runtime has been run."
+        "No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training."
       ]
     }
   ]

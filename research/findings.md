@@ -86,8 +86,9 @@ or a measure of gameplay coverage.
 At JNI target `0x64449c`, the original first 32 bytes yield only one instruction
 before disassembly fails. After the constructor, the same 32 bytes yield eight
 valid ARM64 instructions forming a normal function prologue. This specific
-transition was independently rerun and verified. The runtime target `0x19fee0`
-is still encoded, so this is partial unpacking rather than a working engine.
+transition was independently rerun and verified. At this constructor-only stage,
+the runtime target `0x19fee0` remains encoded. The subsequent recovery below
+makes it readable; a working engine remains open.
 
 Recovered JNI startup follows `0x64449c` to bootstrap `0x65440c`, then
 `JavaVM.GetEnv`, then `0x6476dc`. The substantive bootstrap uses initializer array
@@ -101,3 +102,80 @@ created. Only 143 writable-state bytes differ from constructor-only memory,
 with no further executable-segment changes. This is a boundary requiring an
 accurate process/IPC model or an instrumented Android runtime. The experimental
 thread/process model is not part of the validated public constructor baseline.
+
+
+## Complete pinned install-time fingerprint
+
+The missing `install_time_asset_pack.apk` is now acquired from the
+[recorded APKFab release](https://apkfab.com/clash-royale/com.supercell.clashroyale/download?sha1=a2168a5311707371c3126463ded78917413d8336).
+The 913,096,301-byte split has the same package/version and APK signing
+certificate as the pinned base and ARM64 APKs. Google's `apksigner` verifies
+v1, v2, v3, and SourceStamp signatures. Container variants from different
+providers are not asserted to be identical.
+
+Its fingerprint records 17,307 unique paths. All match exactly: 10,719 raw ZIP
+members and 6,588 raw SQLite BLOBs. The mapping is explicit:
+`meta.assetFilename` names the fingerprint path and `meta.path = asset.path`
+joins to `asset.data`. No guessed filename extensions are used. All 389
+`csv_logic/` entries match. See [asset audit](evidence/asset-fingerprint.json)
+and [acquisition evidence](evidence/asset-acquisition.json).
+
+608 selected compressed files decode using the observed five-byte LZMA
+properties plus four-byte output length; restoring the absent upper four zero
+length bytes yields an LZMA-alone stream. Decoding checks exact declared length,
+end of stream, and absence of trailing input. Three selected files are unchanged.
+297 TOML files parse. `character_buffs.toml` has a duplicate
+`ImmuneToWeakPushback` table rejected by Python's parser; preserve its original
+bytes and leave original-game parser semantics unresolved.
+
+This establishes completeness against the signed install-time fingerprint.
+Later live downloads and cache overrides have not been observed. It does not
+establish the data selected by a running battle or recover gameplay algorithms.
+
+## Recovery integrity and main support-code transform
+
+The constructor-decoded protection region spans `0x62fac8..0x65ccf0`
+(184,872 bytes). All 160 blocks match the original binary's embedded, seeded
+Fletcher-64 expectations. Independently flipping one bit makes block 0 fail.
+Fletcher-64 is noncryptographic: this is an intrinsic consistency check for that
+region, not proof of authenticity or engine correctness. The
+[summary](evidence/runtime-integrity.json) records both checks.
+
+An experimental isolated process model follows the original parent/child
+handshake. The parent permits child tracing; the child attaches, observes
+process state, and handles the original four-byte IPC protocol. Replaying a
+response captured from the original child code allows the original parent to
+transform its main executable region. No host process is traced or modified.
+Synthetic OS behavior remains an explicit limitation of this experiment.
+
+The original native function at `0x68192c` applies ChaCha8 to the region
+`0x18d0a0..0x62fac8`, length **4,860,456 bytes**. The decoded-region SHA-256 is
+`821a8deac13d24121f199db16c3395d4f4703913aad10e6a3015d68b9f49b78a`.
+An independently written portable transform, using arguments captured from that
+native call, matches every output byte. Twelve direct original-native cipher
+trials also match: rounds 8 and 20, each over 0, 1, 63, 64, 65, and 1,024 bytes.
+See [independent verification](evidence/support-main-text.json).
+
+The public verifier can reproduce those comparisons when supplied with local
+research captures:
+
+```sh
+python scripts/verify_chacha_recovery.py \
+  --library work/builds/160402020/native/libsupercell_clashroyale.so \
+  --capture-report work/private-stage2/report.json \
+  --memory work/builds/160402020/support-constructor/runtime-memory.bin \
+  --decoded-memory work/private-stage2/runtime-memory.bin \
+  --out work/stage2-verification.json
+```
+
+The capture report contains original call parameters and stays private. The
+experimental runtime/IPC capture harness is not yet a packaged public recovery
+pipeline. This command validates supplied captures; it does not generate them.
+
+The recovered dispatcher at `0x19fee0` installs handlers at `0x19fcec` and
+`0x19fd60`. The first checks original runtime readiness and uses an initialized
+decoder structure. Merely making the code readable does not initialize that
+state. Forcing its readiness check would not count as original execution.
+The current work follows original static initialization and JNI startup to
+populate it and allow `libg` decoding. No troop, attack, or tower behavior has
+been recovered or compared, and no exact simulation claim is made.

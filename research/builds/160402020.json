@@ -41,5 +41,25 @@
       "dynamic_symbols": 241
     }
   },
-  "resource_completeness": "Base and configuration splits only; complete gameplay asset set not acquired."
+  "resource_completeness": "All 17,307 pinned install-time fingerprint entries verified across ZIP members and SQLite BLOBs. Later live updates and runtime-selected cache overrides are unverified.",
+  "install_time_asset_pack": {
+    "file": "install_time_asset_pack.apk",
+    "bytes": 913096301,
+    "sha256": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3",
+    "source": "https://apkfab.com/clash-royale/com.supercell.clashroyale/download?sha1=a2168a5311707371c3126463ded78917413d8336",
+    "retrieved_date": "2026-10-11",
+    "version_code": "160402020",
+    "signer_matches_core_apks": true,
+    "apk_signature_v1": true,
+    "apk_signature_v2": true,
+    "apk_signature_v3": true,
+    "source_stamp": true,
+    "fingerprint": {
+      "version": "16.402.2",
+      "sha": "cedbe34da810b9ef79df78d14805fec7c3230417",
+      "file_sha256": "b7c3b147a34395bda72447206a8d1a5016cd91d895e82debd1c2693975ed93e9",
+      "entries": 17307,
+      "verified_entries": 17307
+    }
+  }
 }

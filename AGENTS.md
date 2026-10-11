@@ -22,6 +22,20 @@ This is a hard user requirement. Before any agent pushes any branch:
 
 ## Evidence and research
 
+- HARD USER REQUIREMENT: troop interactions, attacks, projectiles, and towers
+  must be byte/bit identical to the original pinned simulation under identical
+  inputs. No approximate mechanics, numerical tolerances, visual matching, or
+  learned substitutes satisfy the goal. Preserve original simulation code and
+  gameplay data. See `GOAL.md` for the full acceptance criteria.
+- Keep exactness and policy training behind the engine-validation gate. A
+  constructor returning under mocked OS calls is a recovery milestone only.
+  No approximation or unsupported mechanic may be silently promoted to
+  recovered, equivalent, or complete.
+- Complete state capture must include every field affecting future simulation
+  and exact ordered events. Do not drop fields or normalize discrepancies
+  merely to make traces agree. Matching a finite corpus does not prove all-state
+  equivalence; original code/data/runtime preservation must also be established.
+
 - Distinguish observed behavior, static-analysis results, hypotheses, and
   approximations. Do not mark movement or battle equivalence recovered because
   a loader runs, a function decompiles, or a replay looks plausible.

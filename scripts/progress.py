@@ -5,6 +5,8 @@ No dependencies beyond Python 3.9+. `check-push` validates the *committed* tree
 for every pushed branch; editing the working copy alone cannot satisfy it.
 The first push of a branch validates its chart without requiring a prior diff.
 Tags and branch deletions do not publish a new research tree and are skipped.
+Historical schema-1 charts retain their original rendering. Schema migrations
+may add explicit milestones, but a pushed branch must never downgrade schema.
 """
 
 from __future__ import annotations
@@ -30,8 +32,8 @@ LABELS = {
     "not_recovered": "Not recovered",
     "not_validated": "Not validated",
 }
-# Recovery and behavioral equivalence are intentionally separate milestones.
-MILESTONES = {
+# Freeze historical labels/order so existing committed charts remain readable.
+MILESTONES_V1 = {
     "apk_provenance": ("APK provenance and signatures", {"partial", "verified"}),
     "java": ("Java startup and JNI declarations", {"partial", "recovered"}),
     "native_exports": (
@@ -52,6 +54,31 @@ MILESTONES = {
     "combat": ("Combat interactions", {"not_recovered", "partial", "recovered"}),
     "equivalence": ("Behavioral equivalence", {"not_validated", "partial", "verified"}),
 }
+MILESTONES_V2 = {
+    "apk_provenance": MILESTONES_V1["apk_provenance"],
+    "asset_pack": (
+        "Pinned install-time assets",
+        {"not_recovered", "partial", "verified"},
+    ),
+    "java": MILESTONES_V1["java"],
+    "native_exports": MILESTONES_V1["native_exports"],
+    "loader_config": MILESTONES_V1["loader_config"],
+    "support_runtime": MILESTONES_V1["support_runtime"],
+    "runtime_integrity": (
+        "Runtime region checksums",
+        {"not_validated", "partial", "verified"},
+    ),
+    "movement": MILESTONES_V1["movement"],
+    "targeting": MILESTONES_V1["targeting"],
+    "collision": MILESTONES_V1["collision"],
+    "combat": MILESTONES_V1["combat"],
+    "towers": ("Tower interactions", {"not_recovered", "partial", "recovered"}),
+    "equivalence": (
+        "Byte-identical battle equivalence",
+        {"not_validated", "partial", "verified"},
+    ),
+}
+MILESTONES_BY_SCHEMA = {1: MILESTONES_V1, 2: MILESTONES_V2}
 
 
 class ProgressError(Exception):
@@ -78,8 +105,10 @@ def line(value: object, location: str) -> str:
 
 def validate(data: object) -> dict:
     data = fields(data, {"schema_version", "build", "review", "milestones"}, "status")
-    if type(data["schema_version"]) is not int or data["schema_version"] != 1:
-        raise ProgressError("schema_version must be 1")
+    schema = data["schema_version"]
+    if type(schema) is not int or schema not in MILESTONES_BY_SCHEMA:
+        raise ProgressError("schema_version must be 1 or 2")
+    required_milestones = MILESTONES_BY_SCHEMA[schema]
     build = fields(data["build"], {"package", "version"}, "build")
     if build["package"] != "com.supercell.clashroyale":
         raise ProgressError("build.package must be com.supercell.clashroyale")
@@ -99,17 +128,19 @@ def validate(data: object) -> dict:
         raise ProgressError("review.reviewed_at must use zero-padded UTC format")
     line(review["summary"], "review.summary")
     milestones = data["milestones"]
-    if not isinstance(milestones, list) or len(milestones) != len(MILESTONES):
-        raise ProgressError("milestones must list every defined milestone exactly once")
+    if not isinstance(milestones, list) or len(milestones) != len(required_milestones):
+        raise ProgressError(
+            f"schema {schema} milestones must list every defined milestone exactly once"
+        )
     found = set()
     for item in milestones:
         item = fields(item, {"id", "status", "evidence"}, "milestone")
         key = line(item["id"], "milestone.id")
-        if key not in MILESTONES or key in found:
+        if key not in required_milestones or key in found:
             raise ProgressError(f"unknown or duplicate milestone: {key}")
         found.add(key)
         state = item["status"]
-        if not isinstance(state, str) or state not in MILESTONES[key][1]:
+        if not isinstance(state, str) or state not in required_milestones[key][1]:
             raise ProgressError(f"invalid status for {key}: {state!r}")
         evidence = item["evidence"]
         if not isinstance(evidence, list) or not evidence:
@@ -139,16 +170,22 @@ def cell(text: str) -> str:
 
 def render(data: dict) -> str:
     validate(data)
+    schema = data["schema_version"]
+    recovery_limit = (
+        "Recovery is not proof of behavioral equivalence."
+        if schema == 1
+        else "Recovery is not proof of byte-identical battle behavior."
+    )
     rows = [
         START,
         "",
-        f"Android build **{data['build']['version']}**. Recovery is not proof of behavioral equivalence.",
+        f"Android build **{data['build']['version']}**. {recovery_limit}",
         "",
         "| Milestone | Status | Evidence / limit |",
         "| --- | --- | --- |",
     ]
     by_id = {item["id"]: item for item in data["milestones"]}
-    for key, (title, _) in MILESTONES.items():
+    for key, (title, _) in MILESTONES_BY_SCHEMA[schema].items():
         item = by_id[key]
         rows.append(
             f"| {title} | {LABELS[item['status']]} | {'; '.join(cell(x) for x in item['evidence'])} |"
@@ -211,6 +248,11 @@ def check_range(root: Path, before: str, after: str, ref: str) -> bool:
     after_data = check_revision(root, after)
     if ZERO.fullmatch(before):
         return True
+    before_data = read_status(git(root, "show", f"{before}:{STATUS_PATH}"))
+    if after_data["schema_version"] < before_data["schema_version"]:
+        raise ProgressError(
+            f"{ref}: status schema downgrade is forbidden; preserve every milestone"
+        )
     changed = set(
         git(
             root, "diff", "--name-only", before, after, "--", README_PATH, STATUS_PATH
@@ -228,7 +270,6 @@ def check_range(root: Path, before: str, after: str, ref: str) -> bool:
         raise ProgressError(
             f"{ref}: the generated chart itself must change on every push"
         )
-    before_data = read_status(git(root, "show", f"{before}:{STATUS_PATH}"))
     if after_data["review"]["sequence"] <= before_data["review"]["sequence"]:
         raise ProgressError(
             f"{ref}: review.sequence must increase on every push; use render --review"

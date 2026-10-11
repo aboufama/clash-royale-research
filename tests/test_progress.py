@@ -15,6 +15,17 @@ progress = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(progress)
 BASELINE = json.loads((ROOT / "research/status.json").read_text(encoding="utf-8"))
 ZERO = "0" * 40
+SCHEMA_2_ADDITIONS = {"asset_pack", "runtime_integrity", "towers"}
+
+
+def legacy_status(data):
+    """Construct the pre-migration shape without depending on validator constants."""
+    result = copy.deepcopy(data)
+    result["schema_version"] = 1
+    result["milestones"] = [
+        item for item in result["milestones"] if item["id"] not in SCHEMA_2_ADDITIONS
+    ]
+    return result
 
 
 class ChartTests(unittest.TestCase):
@@ -49,7 +60,9 @@ class ChartTests(unittest.TestCase):
         data["milestones"][0]["evidence"] = []
         variants.append(data)
         data = copy.deepcopy(BASELINE)
-        data["milestones"][5]["status"] = "verified"
+        next(item for item in data["milestones"] if item["id"] == "movement")[
+            "status"
+        ] = "verified"
         variants.append(data)
         for data in variants:
             with self.subTest(data=data), self.assertRaises(progress.ProgressError):
@@ -78,6 +91,87 @@ class ChartTests(unittest.TestCase):
                 progress.ProgressError
             ):
                 progress.validate(data)
+
+    def test_schema_2_requires_all_new_milestones(self):
+        for milestone in sorted(SCHEMA_2_ADDITIONS):
+            data = copy.deepcopy(BASELINE)
+            data["milestones"] = [
+                item for item in data["milestones"] if item["id"] != milestone
+            ]
+            with self.subTest(milestone=milestone), self.assertRaisesRegex(
+                progress.ProgressError, "schema 2 milestones"
+            ):
+                progress.validate(data)
+
+    def test_schema_versions_cannot_be_guessed_or_coerced(self):
+        for version in (0, 3, "2", True):
+            data = copy.deepcopy(BASELINE)
+            data["schema_version"] = version
+            with self.subTest(version=version), self.assertRaisesRegex(
+                progress.ProgressError, "schema_version"
+            ):
+                progress.validate(data)
+        data = legacy_status(BASELINE)
+        data["schema_version"] = 2
+        with self.assertRaises(progress.ProgressError):
+            progress.validate(data)
+
+    def test_schema_1_does_not_accept_unversioned_new_rows(self):
+        data = copy.deepcopy(BASELINE)
+        data["schema_version"] = 1
+        with self.assertRaisesRegex(progress.ProgressError, "schema 1 milestones"):
+            progress.validate(data)
+
+    def test_new_milestones_separate_recovery_from_exact_behavior(self):
+        chart = progress.render(BASELINE)
+        self.assertIn("| Pinned install-time assets |", chart)
+        self.assertIn("| Runtime region checksums |", chart)
+        self.assertIn("| Tower interactions |", chart)
+        self.assertIn("| Byte-identical battle equivalence |", chart)
+        self.assertIn("Recovery is not proof of byte-identical battle behavior.", chart)
+        data = copy.deepcopy(BASELINE)
+        next(item for item in data["milestones"] if item["id"] == "towers")[
+            "status"
+        ] = "verified"
+        with self.assertRaisesRegex(progress.ProgressError, "invalid status for towers"):
+            progress.validate(data)
+
+    def test_historical_schema_1_rendering_is_byte_stable(self):
+        # Frozen historical labels, order and wrapper text. A new formatter must
+        # not retroactively declare the remote schema-1 chart stale.
+        rows = [
+            ("apk_provenance", "APK provenance and signatures", "verified", "Verified"),
+            ("java", "Java startup and JNI declarations", "partial", "Partial"),
+            ("native_exports", "Native entry points", "recovered", "Recovered"),
+            ("loader_config", "Loader configuration", "recovered", "Recovered"),
+            ("support_runtime", "Supporting native runtime", "partial", "Partial"),
+            ("movement", "Troop movement", "not_recovered", "Not recovered"),
+            ("targeting", "Target acquisition", "not_recovered", "Not recovered"),
+            ("collision", "Collision and avoidance", "not_recovered", "Not recovered"),
+            ("combat", "Combat interactions", "not_recovered", "Not recovered"),
+            ("equivalence", "Behavioral equivalence", "not_validated", "Not validated"),
+        ]
+        data = {
+            "schema_version": 1,
+            "build": {"package": "com.supercell.clashroyale", "version": "160402020"},
+            "review": {"sequence": 2, "reviewed_at": "2026-10-11T05:36:42Z", "summary": "Historical review."},
+            "milestones": [
+                {"id": key, "status": state, "evidence": ["Historical evidence."]}
+                for key, _title, state, _label in rows
+            ],
+        }
+        expected = "\n".join([
+            "<!-- decompile-status:start -->", "",
+            "Android build **160402020**. Recovery is not proof of behavioral equivalence.", "",
+            "| Milestone | Status | Evidence / limit |",
+            "| --- | --- | --- |",
+            *[f"| {title} | {label} | Historical evidence. |" for _key, title, _state, label in rows],
+            "", "Review **2** · **2026-10-11T05:36:42Z** · Historical review.", "",
+            "No overall completion percentage is claimed. Status labels describe the evidence available for this build.",
+            "", "<!-- decompile-status:end -->",
+        ])
+        self.assertEqual(progress.render(data), expected)
+        progress.check_text(json.dumps(data), expected)
 
 
 class PushTests(unittest.TestCase):
@@ -149,6 +243,43 @@ class PushTests(unittest.TestCase):
         self.assertTrue(
             progress.check_range(self.root, self.first, after, "refs/heads/main")
         )
+
+    def test_push_migrates_schema_1_to_2_with_review(self):
+        current = copy.deepcopy(self.data)
+        self.data = legacy_status(current)
+        self.write_chart()
+        before = self.commit("historical schema 1")
+        # Confirm a legacy committed chart is accepted independently of any
+        # present working-tree schema, then migrate and review in a new commit.
+        self.assertEqual(progress.check_revision(self.root, before)["schema_version"], 1)
+        self.data = current
+        self.review()
+        after = self.commit("schema 2 and new explicit milestones")
+        self.assertTrue(progress.check_range(self.root, before, after, "refs/heads/main"))
+
+    def test_schema_migration_without_review_is_rejected(self):
+        current = copy.deepcopy(self.data)
+        self.data = legacy_status(current)
+        self.write_chart()
+        before = self.commit("historical schema 1")
+        self.data = current
+        self.write_chart()
+        after = self.commit("schema migration without review")
+        with self.assertRaisesRegex(progress.ProgressError, "sequence must increase"):
+            progress.check_range(self.root, before, after, "refs/heads/main")
+
+    def test_schema_downgrade_cannot_hide_milestones_even_with_review(self):
+        self.data = legacy_status(self.data)
+        self.review()
+        after = self.commit("attempted reviewed downgrade")
+        with self.assertRaisesRegex(progress.ProgressError, "schema downgrade is forbidden"):
+            progress.check_range(self.root, self.first, after, "refs/heads/main")
+
+    def test_first_push_of_historical_chart_remains_readable(self):
+        self.data = legacy_status(self.data)
+        self.write_chart()
+        legacy = self.commit("historical branch")
+        self.assertTrue(progress.check_range(self.root, ZERO, legacy, "refs/heads/archive"))
 
     def test_uncommitted_review_does_not_satisfy_push(self):
         (self.root / "change.txt").write_text("research change\n")
