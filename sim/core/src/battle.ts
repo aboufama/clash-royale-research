@@ -32,6 +32,11 @@ export interface BattleConfig {
   recordEvents?: boolean;
   /** Deal decks in order instead of shuffling (tests). */
   noShuffle?: boolean;
+  /**
+   * Synthetic fixture mode (differential tests against native fixtures): no towers, every
+   * point walkable, positions clamped to [0,width-1] x [0,height-1], no end checks.
+   */
+  fixture?: { width: number; height: number };
 }
 
 export interface Player {
@@ -62,6 +67,9 @@ export type PlayError =
 export const COMMAND_DELAY_TICKS = 20;
 
 const MAX_ELIXIR_DEFAULT = 10;
+/** Collision push constants fitted to the native trace (see separate()). */
+const PUSH_CAP = 90;
+const PUSH_SPEED = 150;
 
 export class Battle {
   readonly data: GameData;
@@ -77,6 +85,9 @@ export class Battle {
   readonly overtimeTicks: number;
   readonly keepTargetExt: number;
   readonly extraSightCrownTowers: number;
+  readonly fixture: boolean;
+  readonly boundW: number;
+  readonly boundH: number;
 
   tick = 0;
   units: Unit[] = [];
@@ -144,7 +155,15 @@ export class Battle {
       };
     };
     this.players = [mk(0), mk(1)];
-    this.placeTowers();
+    this.fixture = cfg.fixture !== undefined;
+    this.boundW = cfg.fixture ? cfg.fixture.width : ARENA_W;
+    this.boundH = cfg.fixture ? cfg.fixture.height : ARENA_H;
+    if (!this.fixture) this.placeTowers();
+  }
+
+  /** Allocate an actor id (actor ids start at 5,000,000 like the native ones). */
+  allocId(): number {
+    return this.nextId++;
   }
 
   // ---------------------------------------------------------------- setup
@@ -305,7 +324,6 @@ export class Battle {
     const units = this.units;
     for (let i = 0; i < units.length; i++) this.updateAttack(units[i]);
     for (let i = 0; i < units.length; i++) this.updateActor(units[i]);
-    this.resolveCollisions();
     this.updateProjectiles();
     this.flushDamage();
     this.removeDead();
@@ -444,8 +462,8 @@ export class Battle {
   }
 
   /**
-   * Target selection (A, informed by globals): towers take the nearest enemy in range;
-   * other units take the nearest attackable enemy within SightRange (+2000 to crown towers,
+   * Target selection (A, informed by globals and one native fixture): towers take the nearest
+   * enemy in range; other units take the nearest (centre distance) attackable enemy within SightRange (+2000 to crown towers,
    * EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS), else the default crown tower of their lane
    * (LOGIC_XPOS_BASED_TOWER_TARGETING, LOGIC_PRINCESS_TOWERS_ALWAYS_AS_DEFAULT_TARGET).
    */
@@ -464,15 +482,16 @@ export class Battle {
       if (isTower || u.isBuilding) reach = u.def.range + t.radius;
       else reach = u.def.sightRange + t.radius + (t.tower !== TOWER_NONE ? this.extraSightCrownTowers : 0);
       if (d2 > reach * reach) continue;
-      // nearest by edge distance; compare (sqrt(d2) - radius) exactly via isqrt
-      const ed = isqrt(d2) - t.radius;
-      if (best === null || ed < bestD) { best = t; bestD = ed; }
+      // nearest by centre distance [OBS native-automatic-combat: the Knight chose the enemy
+      // Knight at 1000 over the King at 1118 although the King's edge was nearer]
+      if (best === null || d2 < bestD) { best = t; bestD = d2; }
     }
     if (best || isTower || u.isBuilding) return best;
     return this.defaultTarget(u);
   }
 
   private defaultTarget(u: Unit): Unit | null {
+    if (this.fixture) return null;
     const enemy = this.players[1 - u.team];
     const left = u.x < 9000;
     const lane = enemy.princess[left ? 0 : 1];
@@ -502,8 +521,8 @@ export class Battle {
     if (!u.locked) {
       const nt = this.findTarget(u);
       if (nt !== u.target) {
-        // Retarget: restart a started wind-up (A; native note: low confidence).
-        if (u.atkTimer > u.def.loadTime) u.atkTimer = u.def.loadTime;
+        // Retarget keeps the attack clock running [OBS native-automatic-combat: the Knight
+        // switched target at tick 3 and still hit at tick 9].
         u.target = nt;
         u.path = EMPTY_PATH;
         u.pathGoal = -1;
@@ -619,11 +638,59 @@ export class Battle {
       if (--u.kingTicks <= 0) u.kingState = KING_ACTIVE;
       return;
     }
+    if (u.isBuilding) return;
     if (u.pushTicks > 0) this.applyPush(u);
-    if (u.isBuilding || u.def.speed <= 0) return;
     u.moving = false;
-    if (u.locked || u.target === null) return;
-    this.moveToward(u, u.target);
+    if (!u.locked && u.target !== null && u.def.speed > 0) this.moveToward(u, u.target);
+    this.separate(u);
+  }
+
+  /**
+   * Collision push, part of each actor's movement update (the native movement component runs
+   * a neighbour scan every tick, also while attacking). Each overlapping neighbour on the same
+   * layer pushes along the centre line with weight min(overlap, 90) x 150/90; the total is
+   * capped at 150 units per tick. Fitted to the native King-vs-Knight trace
+   * (research/evidence/native-automatic-combat.json: 29/38 steps exact, max error 3 units);
+   * unit-vs-unit weights by Mass are an approximation (A).
+   */
+  private separate(u: Unit): void {
+    const units = this.units;
+    let px = 0;
+    let py = 0;
+    let any = false;
+    for (let i = 0; i < units.length; i++) {
+      const n = units[i];
+      if (n === u || n.state === ST_DEAD || n.isAir !== u.isAir) continue;
+      const dx = u.x - n.x;
+      const dy = u.y - n.y;
+      const minD = u.radius + n.radius;
+      if (dx >= minD || dx <= -minD || dy >= minD || dy <= -minD) continue;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= minD * minD) continue;
+      const d = isqrt(d2);
+      const overlap = minD - d;
+      let w = (overlap < PUSH_CAP ? overlap : PUSH_CAP) * PUSH_SPEED;
+      if (!n.isBuilding) w = idiv(w * 2 * n.mass, u.mass + n.mass);
+      if (d === 0) {
+        // coincident: push apart along y, older unit stays (deterministic)
+        py += (u.id > n.id ? 1 : -1) * (u.team === 0 ? -1 : 1) * idiv(w, PUSH_CAP);
+      } else {
+        px += (dx * w) / (d * PUSH_CAP);
+        py += (dy * w) / (d * PUSH_CAP);
+      }
+      any = true;
+    }
+    if (!any) return;
+    // integerise (truncate toward zero) and cap the step length
+    let mx = Math.trunc(px);
+    let my = Math.trunc(py);
+    const l2 = mx * mx + my * my;
+    if (l2 > PUSH_SPEED * PUSH_SPEED) {
+      const l = isqrt(l2);
+      mx = idiv(mx * PUSH_SPEED, l);
+      my = idiv(my * PUSH_SPEED, l);
+    }
+    if (mx !== 0 || my !== 0) this.tryMove(u, mx, my);
   }
 
   private applyPush(u: Unit): void {
@@ -645,7 +712,7 @@ export class Battle {
   private moveToward(u: Unit, t: Unit): void {
     let gx = t.x;
     let gy = t.y;
-    if (!u.isAir) {
+    if (!u.isAir && !this.fixture) {
       const cell = Arena.cellOf(u.x, u.y);
       const goal = Arena.cellOf(t.x, t.y);
       if (u.pathGoal !== goal || u.pathVersion !== this.arena.version) {
@@ -690,9 +757,9 @@ export class Battle {
 
   /** Move with arena bounds and (for ground units) water/blocked cells as walls. */
   private tryMove(u: Unit, mx: number, my: number): boolean {
-    const nx = clamp(u.x + mx, 0, ARENA_W - 1);
-    const ny = clamp(u.y + my, 0, ARENA_H - 1);
-    if (u.isAir || this.arena.walkableAt(nx, ny)) {
+    const nx = clamp(u.x + mx, 0, this.boundW - 1);
+    const ny = clamp(u.y + my, 0, this.boundH - 1);
+    if (u.isAir || this.fixture || this.arena.walkableAt(nx, ny)) {
       u.x = nx;
       u.y = ny;
       return true;
@@ -700,53 +767,6 @@ export class Battle {
     if (mx !== 0 && this.arena.walkableAt(nx, u.y)) { u.x = nx; return true; }
     if (my !== 0 && this.arena.walkableAt(u.x, ny)) { u.y = ny; return true; }
     return false;
-  }
-
-  /**
-   * Unit separation (A): the native push algorithm was not recovered. Overlapping units of the
-   * same layer (ground/air) are separated along the centre line, shares weighted by the other
-   * unit's Mass; buildings and towers do not move.
-   */
-  private resolveCollisions(): void {
-    const units = this.units;
-    const n = units.length;
-    for (let i = 0; i < n; i++) {
-      const a = units[i];
-      if (a.state === ST_DEAD) continue;
-      for (let j = i + 1; j < n; j++) {
-        const b = units[j];
-        if (b.state === ST_DEAD || a.isAir !== b.isAir) continue;
-        const aFixed = a.isBuilding;
-        const bFixed = b.isBuilding;
-        if (aFixed && bFixed) continue;
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        const minD = a.radius + b.radius;
-        if (dx > minD || dx < -minD || dy > minD || dy < -minD) continue;
-        const d2 = dx * dx + dy * dy;
-        if (d2 >= minD * minD) continue;
-        let d = isqrt(d2);
-        if (d === 0) {
-          // coincident: separate along y by team/id (deterministic)
-          dx = 0;
-          dy = a.team === 0 ? 1 : -1;
-          d = 1;
-        }
-        const overlap = minD - d;
-        let shareA: number;
-        let shareB: number;
-        if (aFixed) { shareA = 0; shareB = overlap; }
-        else if (bFixed) { shareA = overlap; shareB = 0; }
-        else {
-          const ma = a.mass;
-          const mb = b.mass;
-          shareA = idiv(overlap * mb, ma + mb);
-          shareB = overlap - shareA;
-        }
-        if (shareA > 0) this.tryMove(a, -idiv(dx * shareA, d), -idiv(dy * shareA, d));
-        if (shareB > 0) this.tryMove(b, idiv(dx * shareB, d), idiv(dy * shareB, d));
-      }
-    }
   }
 
   // ---------------------------------------------------------------- projectiles
@@ -868,6 +888,7 @@ export class Battle {
    * wins. Tied after overtime: tiebreak by the lowest tower HP (A, community rule).
    */
   private checkEnd(): void {
+    if (this.fixture) return;
     const [p0, p1] = this.players;
     if (!p0.king.alive || !p1.king.alive) {
       const w = !p0.king.alive && !p1.king.alive ? -1 : !p0.king.alive ? 1 : 0;
