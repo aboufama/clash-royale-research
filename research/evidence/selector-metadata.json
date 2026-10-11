@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "apk_sha256": "0d0dfed74fdb755b71f5424e70af9234ed25471c029d09863b657fed9057b13e",
+  "library_sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+  "recovered_support_image_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+  "metadata_asset": {
+    "path": "assets/anjeamelnchn.dat",
+    "bytes": 968971,
+    "sha256": "834217feba3588c1f4d28e8dcf2a309c9baa1903eb5c08f535a628b50751d60b"
+  },
+  "native_context_constructor_elf_va": "0x386f00",
+  "native_decoder_elf_va": "0x2739cc",
+  "selector_records": 416,
+  "records_accepted_by_original_decoder": 416,
+  "total_decoded_bytes": 108448,
+  "independent_reproduction_matching_records": 416,
+  "ordered_payload_sha256": "7fca2a35a1f6b23514d26c6cf541749883770243a0e8f548cccb79fe78bd3d53",
+  "ordered_payload_hash_layout": "For each record in container order: uint32_le(selector), uint32_le(payload_length), then exact payload bytes.",
+  "negative_control": {
+    "selector": "0x67f723f7",
+    "ciphertext_mutation": "Flip low bit at offset 80",
+    "original_accepted": true,
+    "mutated_rejected": true,
+    "mutated_output_length": 0
+  },
+  "scope": "Original metadata/table recovery and decoder acceptance only. No battle code or behavior validated.",
+  "modeled_operations": [
+    "bump allocator",
+    "memory imports",
+    "uncontended mutexes",
+    "synthetic single-thread identity"
+  ],
+  "readiness_or_integrity_code_patched": false,
+  "validation": "All records passed original SHA-256 trailer and padding checks. Outer container signature is not independently verified.",
+  "public_tool_reproduction": {
+    "schema_version": 1,
+    "apk_sha256": "0d0dfed74fdb755b71f5424e70af9234ed25471c029d09863b657fed9057b13e",
+    "library_sha256": "20132160e841a00740ef818e0ae2796508cbdd4f5173834f53e7c6d5af045f2f",
+    "recovered_support_image_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+    "metadata_asset_sha256": "834217feba3588c1f4d28e8dcf2a309c9baa1903eb5c08f535a628b50751d60b",
+    "metadata_asset_bytes": 968971,
+    "selector_records": 416,
+    "records_accepted_by_original_decoder": 416,
+    "total_decoded_selector_bytes": 108448,
+    "ordered_payload_sha256": "7fca2a35a1f6b23514d26c6cf541749883770243a0e8f548cccb79fe78bd3d53",
+    "ordered_payload_hash_layout": "Container order: uint32_le(selector), uint32_le(payload_length), exact payload.",
+    "main_metadata_bytes": 772014,
+    "main_metadata_sha256": "2057a3c586fd4d791ce7489673e9cb37aee1e9542ecf7631aa1e1f1c02bd288f",
+    "negative_control": {
+      "ciphertext_bit_offset": 640,
+      "mutated_rejected": true
+    },
+    "outer_signature_bytes": 256,
+    "outer_signature_independently_verified": false,
+    "modeled_operations": [
+      "bounded bump allocator (free does not reclaim storage)",
+      "memory-copy/set operations and comparison sign",
+      "uncontended single-thread mutexes",
+      "synthetic single-thread identity"
+    ],
+    "modeled_import_call_counts": {
+      "calloc": 2,
+      "free": 417,
+      "malloc": 837,
+      "pthread_mutex_lock": 2513,
+      "pthread_mutex_unlock": 2513,
+      "pthread_self": 836
+    },
+    "readiness_or_integrity_code_patched": false,
+    "scope": "Original metadata recovery and decoder acceptance only; Android initialization and battle equivalence remain unverified."
+  }
+}

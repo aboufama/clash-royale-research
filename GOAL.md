@@ -62,11 +62,19 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 
 1. Pinned install-time asset pack acquired and verified; still establish which
    fingerprint and cache overrides the reference runtime selects.
-2. Main support-code transform recovered and independently reproduced. Complete
-   original runtime initialization and its decoder state without forced success.
-3. Initialize `libg` and locate the battle update and state structure.
+2. Support code, original selector records and `libg` code are recovered with
+   explicit runtime models. Package the remaining private stage-two capture
+   prerequisite; complete original initialization without forced success.
+3. Original pathfinding and attack-clock functions execute on synthetic fixtures.
+   Follow their original callers, data loaders and native state initialization
+   to exercise movement, attack execution and a complete battle update.
 4. Build an unmodified-engine reference runner and complete state-capture path.
+   Synthetic object layouts and isolated function results do not satisfy it.
 5. Implement the battle adapter and exact comparisons before policy training.
 
 The README chart reports evidence achieved toward these stages. It is reviewed
 and updated on every push under the rules in [AGENTS.md](AGENTS.md).
+
+The user has seen an isolated original-pathfinding visualization. The next
+requested visual demo must show a full match with troop placement and original
+troop interactions. Intermediate component recovery is reported in text.

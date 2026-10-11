@@ -6,7 +6,8 @@ reinforcement learning.
 
 The target is behavioral equivalence for a specific build and asset set.
 Extracted card statistics and plausible-looking movement do not establish that
-equivalence. No troop movement implementation has been recovered yet.
+equivalence. Original native pathfinding and attack-clock routines now execute
+on synthetic fixtures; a complete battle environment is still unavailable.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
 towers. No approximation counts as success.** The [active goal and acceptance
@@ -26,16 +27,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Supporting runtime main code region decoded; an independent cipher implementation agrees exactly across 4,860,456 bytes. JNI/runtime initialization remains partial; no troop or tower behavior is recovered. |
+| Supporting native runtime | Partial | Support main code independently matches all 4,860,456 bytes; 416/416 original selector records decode. Original libg initializer recovers a 17,877,920-byte text region through an explicit selector-data adapter. Full native/Android initialization remains incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Not recovered | No original troop movement algorithm has been recovered; authentic movement parameters alone do not establish byte-identical behavior. |
+| Troop movement | Partial | Original factory/search executes 12 synthetic grids/queries; independent runs match paths, costs and statuses. Null actors and synthetic arena fields limit this to pathfinding; full troop movement and battle ticks remain unvalidated. |
 | Target acquisition | Not recovered | No target acquisition algorithm has been recovered. |
-| Collision and avoidance | Not recovered | No collision or avoidance algorithm has been recovered. |
-| Combat interactions | Not recovered | No original attack, projectile, damage, or timing implementation has been recovered or validated. |
+| Collision and avoidance | Not recovered | Complete troop collision and avoidance behavior remains unvalidated; no full actor-interaction comparison has been run. |
+| Combat interactions | Partial | Original attack-clock routine executes 14 synthetic fixtures with exact independent component-state/hash matches, no imports or gameplay stubs. Attack execution, projectiles and damage remain unvalidated. |
 | Tower interactions | Not recovered | Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated. |
 | Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
 
-Review **3** · **2026-10-11T06:00:32Z** · Pinned install-time assets verified 17,307/17,307; original support main-code transform independently matches 4,860,456 bytes; 160/160 tail checksums and negative control pass. Enforced byte-identical troop/attack/tower acceptance. Full runtime and battle behavior remain incomplete.
+Review **4** · **2026-10-11T06:34:32Z** · Recovered 416 original selector records and original libg text; independent runs match 12 native pathfinding cases and 14 attack-clock fixtures. Published pinned recovery/probe tools with explicit synthetic/runtime limits. Full matches, damage and towers remain unvalidated; next visual demo requires a full original-engine match.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -66,8 +67,20 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   its original transform after replaying a captured child-process response.
   An independent portable ChaCha8 implementation matches every output byte;
   12 isolated original-native cipher trials also match.
-- The recovered dispatcher installs the handlers needed by `libg`. Full support
-  initialization, `libg` unpacking, and troop/tower behavior remain incomplete.
+- Decoded **416/416 selector records** through the original support decoder,
+  including its original SHA-256 trailer and padding checks. A mutated record
+  is rejected. Independent runs match all 108,448 decoded selector bytes.
+- Executed the original `libg` initializer with an explicit selector-data
+  adapter. It changes **19,116,296 image bytes excluding relocations**;
+  the recovered 17,877,920-byte text region matches independent recovery.
+- Executed the original pathfinding factory and search on **12 synthetic grid
+  cases**, reproducing exact paths, costs and statuses. The original image
+  remains unchanged. Null actors and synthetic arena fields limit the result.
+- Executed the original attack-clock routine on **14 synthetic fixtures**,
+  reproducing every recorded component state and its 256-byte hash. The clock
+  calls no imports and uses no gameplay stubs. Damage and attacks are not run.
+- Full native/Android initialization, complete battle state, troop interactions,
+  towers and per-tick equivalence remain unvalidated.
 
 See [the build record](research/builds/160402020.json) and
 [the investigation notes](research/findings.md). Findings distinguish direct
@@ -165,6 +178,56 @@ It requires pre/post memory images and a private `native_cipher_calls` capture
 report. Those captures and the experimental parent/child runtime model are not
 part of the public constructor baseline; this check alone is not an end-to-end
 recovery command. See [the recovery notes](research/findings.md).
+
+## Reproduce native code extraction and isolated probes
+
+These commands currently require the pinned **locally captured stage-two support
+image** described above. Public end-to-end generation of that prerequisite is
+still being packaged; the constructor-only image is not interchangeable with it.
+No recovered memory or original game data is distributed here.
+
+```sh
+python scripts/recover_selector_metadata.py \
+  --image work/private-stage2/runtime-memory.bin \
+  --library work/builds/160402020/native/libsupercell_clashroyale.so \
+  --apk work/builds/160402020/apks/base.apk \
+  --out work/selector-metadata
+python scripts/recover_libg_image.py \
+  --library work/builds/160402020/native/libg.so \
+  --support-image work/private-stage2/runtime-memory.bin \
+  --configuration work/selector-metadata/7e33eb5e.bin \
+  --out work/libg-recovered
+python scripts/probe_original_pathfinding.py \
+  --image work/libg-recovered/libg-memory.bin \
+  --library work/builds/160402020/native/libg.so \
+  --asset-pack work/builds/160402020/install_time_asset_pack.apk \
+  --out work/pathfinding-probe
+python scripts/audit_asset_pack.py \
+  work/builds/160402020/install_time_asset_pack.apk \
+  --summary work/asset-audit.json --extract-data work/decoded-assets
+python scripts/probe_original_attack_clock.py \
+  --image work/libg-recovered/libg-memory.bin \
+  --knight-data work/decoded-assets/csv_logic/characters/knight.toml \
+  --out work/attack-clock/report.json
+```
+
+The extraction adapter supplies the exact native-decoded configuration record
+to the original initializer; it does not establish full support-runtime readiness.
+The public image differs from the separate research harness only at import
+relocations: all 3,489 differing bytes are accounted for by those sites. No game
+instructions are rewritten. The probes require the exact public-tool image hash.
+
+Pathfinding uses original CSV values through a synthetic object graph, modeled
+allocation/memory imports, a null actor and explicit grid inputs. One dynamic
+controller flag is a synthetic override whose relationship to the shipped
+setting is unresolved. The clock uses synthetic actor/component/buff layouts
+and two pinned Knight parameters. These are reproducible function executions,
+not a substitute for original data loading or complete battle initialization.
+
+See [metadata evidence](research/evidence/selector-metadata.json),
+[code recovery](research/evidence/libg-recovery.json),
+[pathfinding cases](research/evidence/native-pathfinding.json) and
+[clock cases](research/evidence/native-attack-clock.json).
 
 The original APK, extracted binaries, assets, memory dumps, and third-party
 decompiler output remain local. The repository contains our tools, hashes,

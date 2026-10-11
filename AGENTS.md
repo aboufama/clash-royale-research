@@ -50,6 +50,9 @@ This is a hard user requirement. Before any agent pushes any branch:
 - Use parallel agents for independent reverse-engineering, validation, and
   tooling work when available. Assign distinct files/projects and share concrete
   findings. The integrating agent must verify claims before publishing them.
+- The next requested visual demo is a full original-engine match with troop
+  placement and interactions. Report isolated recovery milestones in text until
+  that is executable; do not substitute another synthetic component animation.
 
 ## Completion
 

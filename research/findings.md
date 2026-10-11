@@ -176,6 +176,85 @@ The recovered dispatcher at `0x19fee0` installs handlers at `0x19fcec` and
 `0x19fd60`. The first checks original runtime readiness and uses an initialized
 decoder structure. Merely making the code readable does not initialize that
 state. Forcing its readiness check would not count as original execution.
-The current work follows original static initialization and JNI startup to
-populate it and allow `libg` decoding. No troop, attack, or tower behavior has
-been recovered or compared, and no exact simulation claim is made.
+At that stage no gameplay routine was callable. The subsequent extraction below
+uses an explicitly bounded selector-data adapter; full original support readiness
+is still unresolved and no exact simulation claim is made.
+
+## Original metadata and game-code recovery
+
+The base APK contains a 968,971-byte metadata container at
+`assets/anjeamelnchn.dat`. The original context constructor at `0x386f00` and
+decoder at `0x2739cc` accept all 416 selector records, producing 108,448 bytes.
+Independent execution matches every record. The ordered selector/length/payload
+digest is `7fca2a35a1f6b23514d26c6cf541749883770243a0e8f548cccb79fe78bd3d53`.
+The original SHA-256 trailer and padding checks execute unchanged; changing one
+ciphertext bit makes the native decoder reject the record. The outer container
+signature has not been independently verified. Main package metadata also
+decodes to 772,014 bytes, hash
+`2057a3c586fd4d791ce7489673e9cb37aee1e9542ecf7631aa1e1f1c02bd288f`.
+
+The original `libg` initializer at `0x1ae3c20` now returns. The extraction harness
+models process maps, process identity and memory protection, and replaces only
+the support selector handler with a copy of the exact native-decoded 672-byte
+record for selector `0x7e33eb5e`. The original dispatcher, base-address handler
+and initializer execute. This is an extraction adapter, not successful original
+support-runtime initialization.
+
+The initializer changes 19,116,296 mapped bytes excluding relocations. The
+17,877,920-byte recovered text region at `0x7706b0` has SHA-256
+`3a4b013d548d28ca41f547d801877b7bbd54dff003dec07e2d6b8549424baca5`.
+An independent run reproduces the complete research image. The packaged public
+extractor produces the same code and data; its different synthetic import
+addresses explain all 3,489 byte differences across 1,755 undefined-symbol
+relocation sites. There are zero differences elsewhere. The two whole-image
+hashes and region checks are in [code-recovery evidence](evidence/libg-recovery.json).
+
+The public metadata and `libg` recovery commands require the exact locally
+captured support image; public generation of that prerequisite remains open.
+All original payloads and images stay under ignored `work/` paths. Summaries
+contain hashes, counts, addresses and explicit modeling limits.
+
+## Original pathfinding execution
+
+The original factory at `0x11d8778` creates the native controller and search
+objects from pinned globals CSV values materialized in a synthetic level/table
+layout. The original search at `0x11d7b58` computes 12 cases: four synthetic 5×5
+grids, each with two opposite-corner queries and a same-cell query. All outputs
+match the earlier independent native-constructor experiment. Rerunning each
+query with a fresh original factory also preserves every result.
+
+Open ground yields cost 448 for both diagonal queries; a diagonal road changes
+those costs to 280 and 406. A flagged center cell or explicit dynamic penalty
+causes the native routine to choose a five-segment detour with cost 496. The
+returned array stores the reverse route without the start. These are measured
+native outputs; there is no replacement pathfinding implementation in the probe.
+
+Important limits: the actor argument is null; the grid, level and table object
+graph are synthetic; allocation/memory imports are modeled. Controller byte
+`+0x71` is explicitly set per fixture and its relationship to the shipped
+dynamic-occlusion setting is not established. Original CSV loading, actor state,
+actual arena topology and battle-tick integration are not reproduced. The exact
+code image is read/execute only and remains unchanged. See
+[all cases and assumptions](evidence/native-pathfinding.json).
+
+## Original attack-clock execution
+
+Original function `0xfc90b0` and its original callees execute 14 independent
+synthetic actor/component/buff fixtures without imports, syscalls, gameplay
+stubs or instruction patches. The pinned Knight data supplies `HitSpeed=1200`
+and `LoadTime=700`; other object fields are explicit synthetic inputs.
+
+The ordinary fixture advances its timer by 50 per call. Synthetic modifiers
+150 and −35 produce increments 75 and 32; both together produce 48 through
+original integer arithmetic. Delay 75 becomes 25, then zero, then permits timer
+advancement on the following call. Boundary flags and level gating have their
+own recorded state transitions. These observations do not infer which legal
+battle actions produce those synthetic modifiers or flags.
+
+All recorded fields and complete 256-byte component hashes match independent
+execution on the separate research image and the canonical public-tool image.
+The probe maps the code image read/execute only and leaves imports unmapped;
+unknown execution, interrupts or instruction/time limits fail. It is a clock
+slice, not attack execution, hit detection, damage, targeting, tower combat or
+complete state capture. Later native status-tag initialization is still needed
+for broader actor predicates. See [clock evidence](evidence/native-attack-clock.json).

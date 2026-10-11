@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 3,
-    "reviewed_at": "2026-10-11T06:00:32Z",
-    "summary": "Pinned install-time assets verified 17,307/17,307; original support main-code transform independently matches 4,860,456 bytes; 160/160 tail checksums and negative control pass. Enforced byte-identical troop/attack/tower acceptance. Full runtime and battle behavior remain incomplete."
+    "sequence": 4,
+    "reviewed_at": "2026-10-11T06:34:32Z",
+    "summary": "Recovered 416 original selector records and original libg text; independent runs match 12 native pathfinding cases and 14 attack-clock fixtures. Published pinned recovery/probe tools with explicit synthetic/runtime limits. Full matches, damage and towers remain unvalidated; next visual demo requires a full original-engine match."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Supporting runtime main code region decoded; an independent cipher implementation agrees exactly across 4,860,456 bytes. JNI/runtime initialization remains partial; no troop or tower behavior is recovered."
+        "Support main code independently matches all 4,860,456 bytes; 416/416 original selector records decode. Original libg initializer recovers a 17,877,920-byte text region through an explicit selector-data adapter. Full native/Android initialization remains incomplete."
       ]
     },
     {
@@ -61,9 +61,9 @@
     },
     {
       "id": "movement",
-      "status": "not_recovered",
+      "status": "partial",
       "evidence": [
-        "No original troop movement algorithm has been recovered; authentic movement parameters alone do not establish byte-identical behavior."
+        "Original factory/search executes 12 synthetic grids/queries; independent runs match paths, costs and statuses. Null actors and synthetic arena fields limit this to pathfinding; full troop movement and battle ticks remain unvalidated."
       ]
     },
     {
@@ -77,14 +77,14 @@
       "id": "collision",
       "status": "not_recovered",
       "evidence": [
-        "No collision or avoidance algorithm has been recovered."
+        "Complete troop collision and avoidance behavior remains unvalidated; no full actor-interaction comparison has been run."
       ]
     },
     {
       "id": "combat",
-      "status": "not_recovered",
+      "status": "partial",
       "evidence": [
-        "No original attack, projectile, damage, or timing implementation has been recovered or validated."
+        "Original attack-clock routine executes 14 synthetic fixtures with exact independent component-state/hash matches, no imports or gameplay stubs. Attack execution, projectiles and damage remain unvalidated."
       ]
     },
     {

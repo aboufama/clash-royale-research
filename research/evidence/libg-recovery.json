@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "input_libg_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+  "original_initializer_returned": true,
+  "changed_bytes_excluding_relocations": 19116296,
+  "reference_image_bytes": 28217344,
+  "reference_image_sha256": "f7990ff1d2fd74b458e0d4435a89eda13f39230c8f9b35f4118f572874122528",
+  "independent_full_image_match": true,
+  "regions": [
+    {
+      "name": "config_rodata",
+      "va": "0x2b1680",
+      "size": 1158032,
+      "sha256": "bdcd65cbb180fb15e8786f3ccaa52bc25925fdd9e911e52e0970594b0d812838",
+      "independently_reproduced": true
+    },
+    {
+      "name": "config_text",
+      "va": "0x7706b0",
+      "size": 17877920,
+      "sha256": "3a4b013d548d28ca41f547d801877b7bbd54dff003dec07e2d6b8549424baca5",
+      "independently_reproduced": true
+    },
+    {
+      "name": "config_extra",
+      "va": "0x187d250",
+      "size": 6864,
+      "sha256": "18eca4958fa6059fab5c77bbb29eb9292fb2c7f9f92b1d8ac64b167672a367d6",
+      "independently_reproduced": true
+    },
+    {
+      "name": "config_loader_tail",
+      "va": "0x1ab8000",
+      "size": 161552,
+      "sha256": "c08e8e5bbb380e4a8428e5ae2d2306bc5dc5c5708c4e7387c12911f0b3764a60",
+      "independently_reproduced": true
+    }
+  ],
+  "public_recovery_tool": {
+    "schema_version": 1,
+    "scope": "Original initializer code extraction only; no Android or battle execution.",
+    "libg_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "support_image_sha256": "58735fa9ae5a6d7ea5f828066f3f06e7669eecb79c8ce4c49d4db5d704b72aac",
+    "selector_adapter": [
+      {
+        "selector": "0x7e33eb5e",
+        "bytes": 672,
+        "sha256": "29f73c4325b635d46233ca040c0048cad83570b7cad0fb456099785140f1bb83"
+      }
+    ],
+    "returned": true,
+    "stop_reason": null,
+    "changed_bytes_excluding_relocations": 19116296,
+    "image_bytes": 28217344,
+    "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "text_region": {
+      "elf_va": "0x7706b0",
+      "bytes": 17877920,
+      "sha256": "3a4b013d548d28ca41f547d801877b7bbd54dff003dec07e2d6b8549424baca5",
+      "matches_independent_recovery": true
+    },
+    "relocations": {
+      "1027": 114526,
+      "257": 1298,
+      "1025": 30,
+      "1026": 427
+    },
+    "verified_recovery": true,
+    "limitations": "Support handler A is replaced by a pinned original decoded record copy. Import addresses, process ID, proc maps, TLS and memory protection are modeled. Whole-image addresses may differ from other extraction runs. No full runtime or gameplay equivalence claim."
+  },
+  "import_relocation_comparison": {
+    "reference_image_sha256": "f7990ff1d2fd74b458e0d4435a89eda13f39230c8f9b35f4118f572874122528",
+    "public_tool_image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "equal_length": true,
+    "different_bytes": 3489,
+    "undefined_symbol_relocation_sites": 1755,
+    "differences_outside_undefined_symbol_relocations": 0,
+    "unexplained_first_offsets": []
+  },
+  "scope": "Original native code recovery with an explicit selector-data adapter. Support readiness, Android runtime, battle execution, troop interactions and towers remain unvalidated."
+}

@@ -17,6 +17,7 @@ import zipfile
 from sc_lzma import decode, PROPERTIES
 
 PINNED_SHA256 = "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def digest_file(path):
@@ -31,7 +32,25 @@ def safe_relative(name):
     return path
 
 
+def private_extraction_root(path, root=ROOT):
+    """Keep original asset bytes beneath the repository's ignored work tree."""
+    destination = Path(path).resolve()
+    private = Path(root).resolve() / "work"
+    if private.resolve() != private or not destination.is_relative_to(private):
+        raise ValueError("Original asset extraction must stay inside repository work/")
+    return destination
+
+
+def extraction_target(destination, name):
+    target = (destination / safe_relative(name)).resolve()
+    if not target.is_relative_to(destination):
+        raise ValueError("Asset path resolves outside the private extraction directory")
+    return target
+
+
 def audit(path, extract_data=None):
+    if extract_data is not None:
+        extract_data = private_extraction_root(extract_data)
     actual = digest_file(path)
     if actual != PINNED_SHA256:
         raise ValueError("Asset APK does not match the pinned 160402020 input")
@@ -124,7 +143,7 @@ def audit(path, extract_data=None):
                 codecs["supercell_lzma" if compressed else "unchanged"] += 1
                 decoded_count += 1
                 if extract_data:
-                    target = Path(extract_data) / safe_relative(name)
+                    target = extraction_target(extract_data, name)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(data)
                 if name.endswith(".toml"):
