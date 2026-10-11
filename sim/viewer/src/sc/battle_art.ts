@@ -30,8 +30,8 @@ export interface UnitDrawOptions {
   screenAngle?: boolean; // pick directions from the on-screen angle (default: engine angle)
   /** active buffs with ms since each was applied: their colour filters are combined (Freeze, Rage...) */
   buffs?: { name: string; ms: number }[];
-  /** ms since the unit was last hit: plays the white hit flash (effects `filter_target`, approximation) */
-  flashMs?: number;
+  /** hit filter (DamageExportName_<dir>) and ms since the hit; replaces the deploy filter while it plays */
+  damage?: { dir: 'down' | 'left' | 'up' | 'right'; ms: number };
   /** buildings: turret / aim angle (engine convention) */
   aim?: number;
   /** buildings with a labelled clip: label to show / play (e.g. Tesla 'hidden' | 'appear' | 'up' | 'hide',
@@ -363,16 +363,8 @@ export class BattleArt {
       if (art.clip) return this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o });
       return null;
     }
-    let m = this.unitMatrix(art, sp, x, y, o.z ?? 0);
-    let c: Col = this.unitColor(o);
-    if (o.deployMs !== undefined && art.deployBaseAnimExportName) {
-      const f = this.filterAt(art.deployBaseAnimExportName.sc, art.deployBaseAnimExportName.export, o.deployMs);
-      if (f) {
-        m = matMul(m, f.m);
-        c = f.c ? colMulTo(c, f.c) : c;
-      }
-    }
-    r.draw(this.lib(art.sc), sp.export, sp.frame, m, c);
+    const m = this.filterMatrix(art, o, this.unitMatrix(art, sp, x, y, o.z ?? 0));
+    r.draw(this.lib(art.sc), sp.export, sp.frame, m, this.unitColor(o));
     return sp;
   }
 
@@ -399,17 +391,33 @@ export class BattleArt {
     r.draw(this.lib(art.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror));
   }
 
-  /** Colour transform for a unit from UnitDrawOptions (color, alpha, buff filters, hit flash). */
+  /**
+   * The view's filter slot (+0x4c0): the deploy filter (DeployBaseAnimExportName) or, once hit, the
+   * damage filter facing the hit. Played at its own fps until its last frame (0x839b08); each frame
+   * the filter's first child matrix F is composed outside the sprite's scale/mirror (0x83d2e0):
+   * world = T(position) * F * local. Matrix only: the colour transform is reset to identity.
+   */
+  filterMatrix(art: CharacterArt, o: UnitDrawOptions, m: Mat): Mat {
+    let f: { m: Mat; c: Col | null } | null = null;
+    if (o.damage && art.damageFilters) {
+      const ref = art.damageFilters[o.damage.dir];
+      f = this.filterAt(ref.sc, ref.export, o.damage.ms);
+    }
+    if (!f && !o.damage && o.deployMs !== undefined && art.deployBaseAnimExportName) {
+      f = this.filterAt(art.deployBaseAnimExportName.sc, art.deployBaseAnimExportName.export, o.deployMs);
+    }
+    if (!f) return m;
+    const local: Mat = [m[0], m[1], m[2], m[3], 0, 0];
+    return matMul(matMul([1, 0, 0, 1, m[4], m[5]], f.m), local);
+  }
+
+  /** Colour transform for a unit from UnitDrawOptions (color, alpha, buff filters). */
   unitColor(o: UnitDrawOptions): Col {
     let c: Col = o.color ? [...o.color] as Col : [1, 1, 1, 1, 0, 0, 0];
     if (o.alpha !== undefined) c[3] *= o.alpha;
     for (const b of o.buffs ?? []) {
       const bc = this.buffColor(b.name, b.ms);
       if (bc) c = colMulTo(c, bc);
-    }
-    if (o.flashMs !== undefined && o.flashMs >= 0) {
-      const f = this.filterAt('effects', 'filter_target', o.flashMs);
-      if (f?.c) c = colMulTo(c, f.c);
     }
     return c;
   }
@@ -493,14 +501,8 @@ export class BattleArt {
       const [gx, gy] = this.gameToPx(x, y);
       m = this.shadowMatrix(a, b, c, dx, dy, gx, gy);
     }
-    let c = this.unitColor(o);
-    if (!o.shadow && o.deployMs !== undefined && art.deployBaseAnimExportName) {
-      const f = this.filterAt(art.deployBaseAnimExportName.sc, art.deployBaseAnimExportName.export, o.deployMs);
-      if (f) {
-        m = matMul(m, f.m);
-        c = f.c ? colMulTo(c, f.c) : c;
-      }
-    }
+    const c = this.unitColor(o);
+    if (!o.shadow) m = this.filterMatrix(art, o, m);
     r.draw(lib, clip.export, frame, m, c, { childFrame: clip.turretChild ? frame : clock, named });
     const top = team === 1 ? (art.top?.red ?? art.top?.blue) : art.top?.blue;
     if (top && !o.shadow) r.draw(lib, top.export, 0, m, c);

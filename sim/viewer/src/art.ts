@@ -15,7 +15,8 @@ import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
 import type { ArtHooks } from './main.ts';
 import {
-  actionFrameMs, animate, type AnimFrame, type AnimState, BattleArt, EffectPlayer, type Mat, newAnimState, ScRenderer,
+  actionFrameMs, animate, type AnimFrame, type AnimState, BattleArt, EffectPlayer, type Mat, nativeAngle, newAnimState,
+  ScRenderer,
 } from './sc/index.ts';
 
 type Team = 0 | 1;
@@ -63,6 +64,9 @@ export class ArtWorld implements WorldRenderer {
   private anims = new Map<number, AnimState>();
   private sprites = new Map<number, AnimFrame | null>();
   private lastSim = -1;
+  /** Hit filter per unit (direction picked from the hit vector, sim ms it started) and hits seen. */
+  private hits = new Map<number, { dir: 'down' | 'left' | 'up' | 'right'; start: number }>();
+  private hitVec = new Map<number, [number, number]>();
   /** SC px -> CSS px scale and offset (screen = s * px + v). */
   private s = 1;
   private vx = 0;
@@ -106,7 +110,25 @@ export class ArtWorld implements WorldRenderer {
         const ca = m.characters[e.name];
         const eff = ca?.effects?.spawnEffect;
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
-      } else if (e.type === 'hit') {
+      } else if (e.type === 'hit' || e.type === 'impact') {
+        // hit vector for the damage filter: melee = victim - attacker, projectile = travel direction
+        // into the impact point (or impact -> victim for splash)
+        const src = e.type === 'hit' ? b.units.find((q) => q.id === e.id) : null;
+        const pp = e.type === 'impact' ? f.prevPos.get(e.id) : undefined;
+        for (const v of b.units) {
+          if (v.lastHurtTick !== b.tick || v.team === e.team) continue;
+          let dx = 0, dy = 0;
+          if (src) {
+            if (v.x !== e.x || v.y !== e.y) continue;
+            dx = v.x - src.x; dy = v.y - src.y;
+          } else {
+            dx = v.x - e.x; dy = v.y - e.y;
+            if (!dx && !dy && pp !== undefined) { dx = e.x - Math.floor(pp / 65536); dy = e.y - (pp % 65536); }
+          }
+          if (dx || dy) this.hitVec.set(v.id, [dx, dy]);
+        }
+      }
+      if (e.type === 'hit') {
         const u = b.units.find((q) => q.id === e.id);
         const ca = u ? m.characters[u.def.name] : null;
         const eff = ca?.effects?.damageEffect;
@@ -116,7 +138,8 @@ export class ArtWorld implements WorldRenderer {
         const ca = u ? m.characters[u.def.name] : null;
         const eff = (ca?.effects?.projectileEffect ?? ca?.effects?.attackStartEffect) as string | undefined;
         if (u && eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team });
-      } else if (e.type === 'impact') {
+      }
+      if (e.type === 'impact') {
         const p = m.projectiles[e.name] ?? (m.spells[e.name] ? m.projectiles[m.spells[e.name].projectile ?? ''] : undefined);
         const eff = p?.hitEffect;
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
@@ -247,10 +270,12 @@ export class ArtWorld implements WorldRenderer {
       }
       const st = this.unitState(u, f);
       const flying = u.def.flyingHeight > 0;
-      const py = ypx(x, y) + (flying ? 2000 : 0);
+      // sort key: ground-projected y, +48 px when z > 0 (0x851b84: actor vt+0x108 = z > 0)
+      const py = ypx(x, y) + (flying ? 48 : 0);
       const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: (b.tick - q.startTick) * 50 + f.alpha * 50 })) : undefined;
-      const flashMs = b.tick - u.lastHurtTick < 10 ? (b.tick - u.lastHurtTick) * 50 + f.alpha * 50 : undefined;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, flashMs, sprite: this.sprites.get(u.id) ?? undefined,
+      const hit = this.hits.get(u.id);
+      const damage = hit ? { dir: hit.dir, ms: sim - hit.start } : undefined;
+      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
         face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9 };
       if (u.def.hides) {
         // Tesla: closed while hidden, rising for UpTimeMs, then up
@@ -338,6 +363,16 @@ export class ArtWorld implements WorldRenderer {
       }));
     }
     for (const id of this.anims.keys()) if (!seen.has(id)) this.anims.delete(id);
+    // damage filter (0x83e3d8): quadrant of the hit vector's native angle, offset 135 (flipped view)
+    // or 315 degrees: 0 _down, 1 _left, 2 _up, 3 _right; restarts on every hit
+    const dirs = ['down', 'left', 'up', 'right'] as const;
+    for (const [id, v] of this.hitVec) {
+      const a = nativeAngle(v[0], v[1]);
+      const q = Math.trunc((((a + (this.art.flip ? 135 : 315) + 360) % 360)) / 90);
+      this.hits.set(id, { dir: dirs[q], start: b.tick * 50 });
+    }
+    this.hitVec.clear();
+    for (const [id, h] of this.hits) if (sim - h.start > 5000 || !b.units.some((q) => q.id === id)) this.hits.delete(id);
   }
 
   /** Engine state -> clip, angle and clip time. */

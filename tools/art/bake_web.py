@@ -730,6 +730,17 @@ class Baker:
                 lib = self.want("sc/effects.sc", row[k])
                 if lib:
                     entry[k[0].lower() + k[1:]] = {"sc": lib, "export": row[k], **self.clip_info("sc/effects.sc", row[k])}
+        # hit filter: the view loads DamageExportName + _down/_left/_up/_right (0x836e58) and plays the
+        # one facing the hit (0x83e3d8)
+        if row.get("DamageExportName"):
+            base = row["DamageExportName"]
+            got = {}
+            for sfx in ("down", "left", "up", "right"):
+                lib = self.want("sc/effects.sc", f"{base}_{sfx}")
+                if lib:
+                    got[sfx] = {"sc": lib, "export": f"{base}_{sfx}"}
+            if len(got) == 4:
+                entry["damageFilters"] = got
         for k in ("Projectile", "CustomFirstProjectile", "DeathSpawnProjectile"):
             if isinstance(row.get(k), str) and row.get(k):
                 self.projectile(row[k], projectiles)
