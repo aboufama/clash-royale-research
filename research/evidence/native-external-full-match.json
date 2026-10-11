@@ -1,0 +1,688 @@
+{
+  "schema_version": 1,
+  "classification": "Fresh independently repeated full original-engine diagnostic episode controlled by eight prescribed external actions; exact Android/complete-state acceptance remains false",
+  "build": "160402020",
+  "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+  "scenario": "Normal",
+  "seed": 1131,
+  "native_test_flags": 0,
+  "native_test_global": 1,
+  "module8_present": false,
+  "original_resource_inputs": 421,
+  "original_finalizer_returned": true,
+  "original_core_entry_elf_va": "0x10ca81c",
+  "original_core_calls": 904,
+  "final_frame": 904,
+  "maximum_original_core_calls": 1024,
+  "native_random_policy_entries": 0,
+  "prescribed_external_actions": 8,
+  "original_accepted_executions": 8,
+  "selected_actor_associations": 12,
+  "both_processes_closed_successfully": true,
+  "completed_original_manual_episode": true,
+  "packaged_runner_result_proven": false,
+  "native_end": {
+    "entry_elf_va": "0xd3e360",
+    "caller_return_elf_va": "0x10cb1d0",
+    "event_id": 1260,
+    "raw_primary_gate_before_after": [
+      0,
+      1
+    ],
+    "forced_account_argument": 0,
+    "native_winner_index": 1,
+    "winner_read_after_qualified_native_end": true,
+    "specific_initiating_finish_reason_proven": false
+  },
+  "actions": [
+    {
+      "submission_frame": 97,
+      "input": {
+        "owner": 1,
+        "slot": 1,
+        "x": 1241,
+        "y": 23316
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          0,
+          1
+        ]
+      ],
+      "commit_frame": 117,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 80826,
+        "elixir_units_after": 60826,
+        "debit_accumulator_before": 0,
+        "debit_accumulator_after": 20000
+      },
+      "native_debit_raw_coordinates": [
+        1499,
+        23499
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 100,
+      "input": {
+        "owner": 0,
+        "slot": 0,
+        "x": 12247,
+        "y": 17395
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          1,
+          2
+        ]
+      ],
+      "commit_frame": 120,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 81360,
+        "elixir_units_after": 31360,
+        "debit_accumulator_before": 0,
+        "debit_accumulator_after": 50000
+      },
+      "native_debit_raw_coordinates": [
+        12500,
+        14500
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 104,
+      "input": {
+        "owner": 1,
+        "slot": 3,
+        "x": 13701,
+        "y": 10693
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          2,
+          3
+        ]
+      ],
+      "commit_frame": 124,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 62072,
+        "elixir_units_after": 12072,
+        "debit_accumulator_before": 20000,
+        "debit_accumulator_after": 70000
+      },
+      "native_debit_raw_coordinates": [
+        13500,
+        17499
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 5,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 171,
+      "input": {
+        "owner": 0,
+        "slot": 2,
+        "x": 17014,
+        "y": 4325
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          0,
+          1
+        ]
+      ],
+      "commit_frame": 191,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 43998,
+        "elixir_units_after": 3998,
+        "debit_accumulator_before": 50000,
+        "debit_accumulator_after": 90000
+      },
+      "native_debit_raw_coordinates": [
+        17500,
+        4500
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 283,
+      "input": {
+        "owner": 1,
+        "slot": 0,
+        "x": 7846,
+        "y": 12187
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          0,
+          1
+        ]
+      ],
+      "commit_frame": 303,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 43934,
+        "elixir_units_after": 3934,
+        "debit_accumulator_before": 70000,
+        "debit_accumulator_after": 110000
+      },
+      "native_debit_raw_coordinates": [
+        7499,
+        17499
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 506,
+      "input": {
+        "owner": 1,
+        "slot": 3,
+        "x": 11560,
+        "y": 3193
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          0,
+          1
+        ]
+      ],
+      "commit_frame": 526,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 43628,
+        "elixir_units_after": 3628,
+        "debit_accumulator_before": 110000,
+        "debit_accumulator_after": 150000
+      },
+      "native_debit_raw_coordinates": [
+        12000,
+        3000
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 507,
+      "input": {
+        "owner": 0,
+        "slot": 1,
+        "x": 12802,
+        "y": 2204
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          1,
+          2
+        ]
+      ],
+      "commit_frame": 527,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 63806,
+        "elixir_units_after": 3806,
+        "debit_accumulator_before": 90000,
+        "debit_accumulator_after": 150000
+      },
+      "native_debit_raw_coordinates": [
+        12500,
+        2500
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    },
+    {
+      "submission_frame": 734,
+      "input": {
+        "owner": 1,
+        "slot": 1,
+        "x": 5208,
+        "y": 24895
+      },
+      "initial_prediction_result": 0,
+      "all_native_prediction_results": [
+        0
+      ],
+      "queue_count_before_after": [
+        [
+          0,
+          1
+        ]
+      ],
+      "commit_frame": 754,
+      "commit_flags": 2,
+      "commit_result": 0,
+      "native_debit_observations": {
+        "elixir_units_before": 44212,
+        "elixir_units_after": 4212,
+        "debit_accumulator_before": 150000,
+        "debit_accumulator_after": 190000
+      },
+      "native_debit_raw_coordinates": [
+        5499,
+        24499
+      ],
+      "host_coordinate_correction_performed": false,
+      "selected_actor_associations": 1,
+      "command_debit_spawn_parent_links_observed": true,
+      "later_live_insertion_scope": "Matching native spawn-result actor/world pointers; delayed temporal association, not an entire parent chain."
+    }
+  ],
+  "observations": {
+    "visual_and_health_samples": 905,
+    "initial_frame": 0,
+    "final_frame": 904,
+    "visual_compressed_sha256": "1dfaa2e52f244ae7f2b5bf5d48877e44e7ea3c2f826d2ce7e9d2ceec91c5b608",
+    "visual_expanded_sha256": "0b0a96af877663cd22e74d7c116321947aafe1094c5c4c2e57114a3cb804bc3c",
+    "initial_sampler_all_mapped_regions": 24,
+    "initial_sampler_named_registers": 87,
+    "initial_sampler_selected_state_unchanged": true,
+    "per_frame_complete_state_proven": false,
+    "unknown_actor_positions_invented": false,
+    "max_hp_shields_or_activation_invented": false,
+    "actor_observations": 9247,
+    "health_availability": {
+      "present": 8160,
+      "unavailable_flag_clear": 470,
+      "unknown_actor_class": 617
+    }
+  },
+  "preexecution_task_sources": 61,
+  "new_task_sources_during_execution": 0,
+  "frozen_source_pairs_verified_before_and_after": 92,
+  "archived_source_copies_verified_per_run": 130,
+  "new_controller_and_end_controls_passed": 33,
+  "offline_audit_and_comparison_controls_passed": 47,
+  "original_code_integrity_passed": true,
+  "native_guard_violations": 0,
+  "source_manifest_sha256": "2e1a5216b7adbb58a87847298c0afe1875459ee23cc0564e165f24cfa94db446",
+  "frozen_controller_manifest_sha256": "9f396e8c231c389ee96e34ca0879f9c7b54d12352fc1f84810b74147c39abab2",
+  "frozen_offline_audit_manifest_sha256": "5bb716fcfec9e2c78d02e038c9c6f395e38dee7197d6d4260d5e89de14cb777f",
+  "first_independent_offline_audit_sha256": "f581c4802641468a63e0359faf1023008dade9ccf549816965d4a054d9fb65e1",
+  "repeat_independent_offline_audit_sha256": "9ab06fc880dcdd1542f90eaffedb023dea93f2f22741df11dc3a525d4072af0b",
+  "fresh_repeat": {
+    "comparison_sha256": "0d4bfa5e22b87849b350716f3559ae571f919d4ae2edafbe2cb36c4ebd34ee8d",
+    "complete_json_files_compared": 23,
+    "json_files_byte_identical": 22,
+    "complete_streams_compared": 2,
+    "stream_files_byte_identical": 2,
+    "host_elapsed_numeric_token_differences": 6,
+    "all_other_json_bytes_identical": true,
+    "duplicate_json_keys_rejected": true,
+    "unexpected_differences": [],
+    "json_files": [
+      {
+        "file": "report.json",
+        "first_sha256": "19e6bf0f6607468456d3907fde94bda6a5d8a1418513faf0da0f27ba6315ecc1",
+        "second_sha256": "19e6bf0f6607468456d3907fde94bda6a5d8a1418513faf0da0f27ba6315ecc1",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "episode-result.json",
+        "first_sha256": "1138926148407003fbc41903ac5a784c4a17f6e4c11d453ecb695a1bf69acca1",
+        "second_sha256": "1138926148407003fbc41903ac5a784c4a17f6e4c11d453ecb695a1bf69acca1",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "adapter-report.json",
+        "first_sha256": "c856ce982e73c6c9f88bc6027c26e02b5b4986801349c1bbef21ecfc3d8d1594",
+        "second_sha256": "c856ce982e73c6c9f88bc6027c26e02b5b4986801349c1bbef21ecfc3d8d1594",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "native-events.json",
+        "first_sha256": "4520d23a3e15e53328dc9826ab5958df1833a5f42a0e63d75024d1c3c512b6eb",
+        "second_sha256": "4520d23a3e15e53328dc9826ab5958df1833a5f42a0e63d75024d1c3c512b6eb",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "native-hand-events.json",
+        "first_sha256": "53b963df997c96176cbae70adafa6eea371df277d9934514606f27581b972c97",
+        "second_sha256": "53b963df997c96176cbae70adafa6eea371df277d9934514606f27581b972c97",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "native-test-mode-read-events.json",
+        "first_sha256": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+        "second_sha256": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/test-setup/report-private.json",
+        "first_sha256": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+        "second_sha256": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/apk-namespace-inventory.json",
+        "first_sha256": "a024d6c3d9614a65b76aa2bb213d078b6e5773f48019dbbc3d5b5cecca586fc4",
+        "second_sha256": "a024d6c3d9614a65b76aa2bb213d078b6e5773f48019dbbc3d5b5cecca586fc4",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/report-private.json",
+        "first_sha256": "4476b100684d035257660365833023fb0c3f7fbc653729db9a53ccfd62b102b7",
+        "second_sha256": "89418a574a15ac49fd7535e972676c293b69277b615c62ef94aafa9482d53ad3",
+        "byte_identical": false,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": [
+          {
+            "path": [
+              "initialization_budget_batches",
+              0,
+              "elapsed_seconds"
+            ],
+            "first": 17.606,
+            "second": 18.396,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              1,
+              "elapsed_seconds"
+            ],
+            "first": 42.712,
+            "second": 44.214,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              2,
+              "elapsed_seconds"
+            ],
+            "first": 69.045,
+            "second": 71.141,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              3,
+              "elapsed_seconds"
+            ],
+            "first": 22.986,
+            "second": 24.233,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              4,
+              "elapsed_seconds"
+            ],
+            "first": 53.569,
+            "second": 56.081,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              5,
+              "elapsed_seconds"
+            ],
+            "first": 94.949,
+            "second": 98.57,
+            "allowed_host_elapsed_seconds": true
+          }
+        ]
+      },
+      {
+        "file": "preexecution-source-closure/manifest.json",
+        "first_sha256": "2e1a5216b7adbb58a87847298c0afe1875459ee23cc0564e165f24cfa94db446",
+        "second_sha256": "2e1a5216b7adbb58a87847298c0afe1875459ee23cc0564e165f24cfa94db446",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/source-closure/manifest.json",
+        "first_sha256": "53f08e2b5ea621b2e0dba5f001050df18d5a67750ce2c59b2600c133b4d6e79b",
+        "second_sha256": "53f08e2b5ea621b2e0dba5f001050df18d5a67750ce2c59b2600c133b4d6e79b",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "terminal-source-closure/manifest.json",
+        "first_sha256": "690d33d15cd9a8bd47bfd724486a4557e5744abe69a9f7682eb977849a796cd1",
+        "second_sha256": "690d33d15cd9a8bd47bfd724486a4557e5744abe69a9f7682eb977849a796cd1",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/terminal-source-closure/manifest.json",
+        "first_sha256": "7cec380b029622c051b789374182ae3fa0700a9627d304947a41ec0c5e36ec3e",
+        "second_sha256": "7cec380b029622c051b789374182ae3fa0700a9627d304947a41ec0c5e36ec3e",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "visual/manifest.json",
+        "first_sha256": "f9d0a0b3556dfd34d0d17049d57b696fd4edc130cd4f504d95b68d7619fd707a",
+        "second_sha256": "f9d0a0b3556dfd34d0d17049d57b696fd4edc130cd4f504d95b68d7619fd707a",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "visual/initial-validation.json",
+        "first_sha256": "2a7ecadcda742bef4bf9d5b4cf4b8f048af8e4129d840f98e00ace1bfb7bde8d",
+        "second_sha256": "2a7ecadcda742bef4bf9d5b4cf4b8f048af8e4129d840f98e00ace1bfb7bde8d",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-00.json",
+        "first_sha256": "51ec43b4d6ec5b0d3c07d8d53dd8375080747d0146e2c9981921322198673e53",
+        "second_sha256": "51ec43b4d6ec5b0d3c07d8d53dd8375080747d0146e2c9981921322198673e53",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-01.json",
+        "first_sha256": "794818a1ce866791590057b70731fd08660498ba4d278e4aad638f8a154684a2",
+        "second_sha256": "794818a1ce866791590057b70731fd08660498ba4d278e4aad638f8a154684a2",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-02.json",
+        "first_sha256": "843d1157e7c381013aac640fbf4ede92c2869db3c96892dce1644310031bfc0e",
+        "second_sha256": "843d1157e7c381013aac640fbf4ede92c2869db3c96892dce1644310031bfc0e",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-03.json",
+        "first_sha256": "093b36568dd2498f55c0cef5140959780a5a42c0ebed14c5dd4c34931f5cd75e",
+        "second_sha256": "093b36568dd2498f55c0cef5140959780a5a42c0ebed14c5dd4c34931f5cd75e",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-04.json",
+        "first_sha256": "4bed9dead7c6b7ed90f25e396d5e2b1dac82d2280f604a610e1c25c51b3b4b6a",
+        "second_sha256": "4bed9dead7c6b7ed90f25e396d5e2b1dac82d2280f604a610e1c25c51b3b4b6a",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-05.json",
+        "first_sha256": "31653fa4a0472e7a280b078fb371e41936ec5541d4e2610d7316f5042cc7b7cd",
+        "second_sha256": "31653fa4a0472e7a280b078fb371e41936ec5541d4e2610d7316f5042cc7b7cd",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-06.json",
+        "first_sha256": "bf8b070ec3f17196c67db30d12d95b76477d92a4fdd9adc742df4831450b15c9",
+        "second_sha256": "bf8b070ec3f17196c67db30d12d95b76477d92a4fdd9adc742df4831450b15c9",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      },
+      {
+        "file": "action-07.json",
+        "first_sha256": "a2cbd1aba234c3bcd2015424e048f4105ca5a540dcb1afa5259d3583e7a24b9a",
+        "second_sha256": "a2cbd1aba234c3bcd2015424e048f4105ca5a540dcb1afa5259d3583e7a24b9a",
+        "byte_identical": true,
+        "bytes_equal_after_only_allowed_elapsed_token_masking": true,
+        "differences": []
+      }
+    ],
+    "stream_files": [
+      {
+        "file": "returned-core-steps.jsonl",
+        "first_sha256": "73f5de3bd20a4c2fd07e1fdfada3996cc2b9e3c7d621081e7a4b9f6972e533eb",
+        "second_sha256": "73f5de3bd20a4c2fd07e1fdfada3996cc2b9e3c7d621081e7a4b9f6972e533eb",
+        "byte_identical": true,
+        "rows_compared": 904,
+        "first_expanded_sha256": "73f5de3bd20a4c2fd07e1fdfada3996cc2b9e3c7d621081e7a4b9f6972e533eb",
+        "second_expanded_sha256": "73f5de3bd20a4c2fd07e1fdfada3996cc2b9e3c7d621081e7a4b9f6972e533eb",
+        "differences": []
+      },
+      {
+        "file": "visual/frames.jsonl.gz",
+        "first_sha256": "1dfaa2e52f244ae7f2b5bf5d48877e44e7ea3c2f826d2ce7e9d2ceec91c5b608",
+        "second_sha256": "1dfaa2e52f244ae7f2b5bf5d48877e44e7ea3c2f826d2ce7e9d2ceec91c5b608",
+        "byte_identical": true,
+        "rows_compared": 906,
+        "first_expanded_sha256": "0b0a96af877663cd22e74d7c116321947aafe1094c5c4c2e57114a3cb804bc3c",
+        "second_expanded_sha256": "0b0a96af877663cd22e74d7c116321947aafe1094c5c4c2e57114a3cb804bc3c",
+        "differences": []
+      }
+    ]
+  },
+  "byte_exact_gate_satisfied": false,
+  "limits": [
+    "This is the original Normal diagnostic setup with manual original-core scheduling, not verified ordinary client/server execution. The original random-policy runner is not called; no production policy-disable API is claimed.",
+    "The eight historical frame/owner/slot/coordinate inputs resolve actual current hand records through original constructors and queues. Acceptance here does not establish a pure legality query or behavior for arbitrary actions; original prediction and diagnostic rejection can mutate state.",
+    "Original primary end and winner are observed, but the initiating finish reason is not proven. Test global1 and original timeline behavior remain; packaged runner result is absent.",
+    "Original code executes under the declared modeled platform/asset boundary. This checkpoint does not use the separately investigated genuine Android35 manager path and does not establish original Android parity.",
+    "Saved frames contain only verified selected membership, position, owner and current-health fields. Unknown classes remain unpositioned; HP availability is distinct from zero; disappearance is not independently labeled death.",
+    "Command-to-debit-to-spawn parent links are observed. Delayed live insertion matches native actor/world pointers; complete causal serialization and complete hand ownership are not proven.",
+    "Repeated saved observations and source/code receipts are identical except explicitly listed host timing number tokens. Complete engine state, deterministic reset, ordinary Android/server equivalence, arbitrary-seed/action coverage, throughput and training remain unvalidated."
+  ],
+  "visual_delivery": {
+    "schema": "external-health-replay-root-qa-v1",
+    "fragment_sha256": "6246ad2fdd9942fa6bfcca44cf544032224d6e1e31f367309d60d70169cf1f8e",
+    "fragment_bytes": 47339,
+    "embedded_json_sha256": "fd33c97cc5b3040f6eb2c3694bfeb18d19256726bbc9453a5b336638771ec263",
+    "first_projection_sha256": "91ade186927aa0836ddd7de66900ee6d28b4a28a9dbaff995029c2bf0b47ea86",
+    "repeat_comparison_sha256": "0d4bfa5e22b87849b350716f3559ae571f919d4ae2edafbe2cb36c4ebd34ee8d",
+    "all905_frame_rows_preserved": true,
+    "all9247_actor_rows_preserved": true,
+    "all8160_HP_values_preserved": true,
+    "all8_requested_placement_markers_checked": true,
+    "all8_original_debit_markers_checked": true,
+    "unknown_class_and_unavailable_HP_inspection_passed": true,
+    "zero_HP_at904_preserved": true,
+    "native_winner1_at904_displayed": true,
+    "play_pause_passed": true,
+    "keyboard_home_and_right_passed": true,
+    "actor_selection_passed": true,
+    "state_restored_on_return_to_preview": true,
+    "tested_browser_viewport_widths": [
+      320,
+      360,
+      736
+    ],
+    "tested_themes": [
+      "light",
+      "dark"
+    ],
+    "smallest_measured_content_width": 288,
+    "smallest_content_scroll_width": 288,
+    "smallest_all_axis_labels_in_bounds": true,
+    "browser_errors_or_warnings": [],
+    "physics_or_interpolation_added": false,
+    "complete_state_equivalence_claimed": false,
+    "ordinary_android_match_equivalence_claimed": false,
+    "private_browser_qa_sha256": "689e9b03537c5812e528e721740fd561a896e0fdc5a5a3576a19fdce692de22f",
+    "projection_negative_controls_passed": 11,
+    "scope": "Playback of saved original observations only, with exact selected current HP and separate requested/native deployment marks; no browser game simulation."
+  }
+}

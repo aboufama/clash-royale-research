@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 28,
-    "reviewed_at": "2026-10-11T12:39:26Z",
-    "summary": "Independently repeated ordered external deployments for both owners across124 original core ticks: fifteen receipt files match exactly, with only six host timings differing in the sixteenth. Original Bionic initial-group TLS and allocator entry also reproduce up to a preserved tagged-pointer fault. Full external episodes, complete state/reset and ordinary-game exactness remain unvalidated."
+    "sequence": 29,
+    "reviewed_at": "2026-10-11T13:03:53Z",
+    "summary": "Two fresh externally controlled diagnostic matches finish all 904 original core steps and eight deployments with native winner 1. Twenty-two JSON files and both complete step/position-health streams match byte-for-byte; only six host initialization timings differ in the remaining JSON. The verified 905-boundary replay now includes current HP. Complete-state, reset and ordinary Android match equivalence remain unvalidated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Two fresh124-tick diagnostics reproduce ordered external deployments for both owners, including native queueing, commits, elixir debits and live actors. Fifteen whole receipt files match; the sixteenth differs only in six host timings. Original Bionic initial-group TLS/preinit also repeats up to a preserved tagged-pointer fault. Full external matches, complete state/reset and ordinary-game exactness remain incomplete."
+        "Two fresh externally controlled diagnostic matches finish after 904 original core steps with eight native deployments and winner 1. Twenty-two JSON records and both entire step/position-health streams match byte-for-byte; the remaining JSON differs only in six host timings. Complete state/reset and ordinary Android match exactness remain unvalidated."
       ]
     },
     {
@@ -63,7 +63,7 @@
       "id": "movement",
       "status": "partial",
       "evidence": [
-        "Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending."
+        "Two external-action diagnostic episodes reproduce all 905 position/health boundaries and 9,247 actor rows; 617 unknown-class rows remain unpositioned. The delivered replay retains every captured boundary without interpolation. Complete movement state and Android comparison remain pending."
       ]
     },
     {
@@ -84,14 +84,14 @@
       "id": "combat",
       "status": "partial",
       "evidence": [
-        "Repeated full diagnostic captures match 8,160 observations with HP present, 470 getter-unavailable rows and 617 unknown-class rows, retaining zero HP distinctly. The prior 400-tick melee/projectile fixture and 5,425 original leaf calls support the scoped reader. Full-state and ordinary-match combat equivalence remain unvalidated."
+        "Externally controlled full diagnostic captures repeat 8,160 current-HP readings, 470 getter-unavailable rows and 617 unknown-class rows. Zero HP remains distinct from unavailable health and is displayed in the replay. Complete-state and ordinary-match combat equivalence remain unvalidated."
       ]
     },
     {
       "id": "towers",
       "status": "partial",
       "evidence": [
-        "Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated."
+        "The external-action diagnostic records owner 0 player/tower actor HP falling from 165 to 0 at its last boundary, alongside original end commit and winner 1. This does not prove the initiating finish branch, all tower activation rules or ordinary-match semantics."
       ]
     },
     {

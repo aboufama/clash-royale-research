@@ -71,12 +71,12 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 3. Finish original Android linker/process initialization. The shared game/Android
    asset manager reaches actual native file consumers, but the full-data path
    still stops at library registration needed by thread-destructor setup.
-4. Ordered externally selected deployments for both owners now repeat through
-   original construction, prediction, queueing, delayed commit, debit, spawn
-   and live insertion in two fresh 124-tick diagnostic runs. Extend this to a
-   complete externally controlled episode with verified native termination and
-   position/health capture. The existing complete runner uses its own policy;
-   the external-action probe is not yet a full match or training environment.
+4. Two fresh externally controlled diagnostic episodes now complete 904 original
+   core steps, eight deployments and native termination with winner 1. Entire
+   step and position/health streams repeat exactly; the original random policy
+   is never entered. Extend the action interface beyond this prescribed trace,
+   preserving original rejection behavior and validating actual observations
+   and termination across supported scenarios. It is not yet a training environment.
 5. Capture every simulation-affecting field and ordered event, establish a
    complete reset mechanism, and validate the supported runtime and ordinary
    match behavior. Position/health observations and finite matching diagnostic
@@ -87,7 +87,8 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 The README chart reports evidence achieved toward these stages. It is reviewed
 and updated on every push under the rules in [AGENTS.md](AGENTS.md).
 
-The full native diagnostic replay has been delivered with troop placement and
-observed interactions. Its test-mode and modeled-platform limits remain visible.
+The full external-action diagnostic replay has been delivered with troop
+placement, observed interactions and captured current HP. Its test-mode and
+modeled-platform limits remain visible.
 Future demos must continue to use verified original execution, retain unknown
 fields honestly and never substitute generated battle mechanics.

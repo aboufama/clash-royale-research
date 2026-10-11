@@ -1,5 +1,32 @@
 # Investigation notes
 
+## Complete externally controlled diagnostic episode
+
+Two fresh executions now finish the original Normal diagnostic with eight
+prescribed external inputs and 904 manual calls to original core `0x10ca81c`.
+Original construction, prediction, queueing, commit and debit code handle the
+requests. No random-policy entry occurs. Original end function `0xd3e360`
+returns with the primary end gate changing from 0 to 1; the stopped native
+winner is 1. The packaged runner result remains absent.
+
+The complete 904-row core stream and 905-sample position/health gzip are
+byte-identical across the two runs. Twenty-two complete JSON files also match;
+only six enumerated host initialization-time number tokens differ in the
+remaining JSON. Every other byte is retained in the comparison. Source pins,
+original code receipts and the native guards pass. See the
+[full external-match receipt](evidence/native-external-full-match.json).
+
+The replay retains all 9,247 actor observations, including 617 unknown-class
+rows; 8,160 current-HP readings are present and 470 are unavailable. It draws
+only verified positions and preserves unavailable HP distinctly from zero.
+Requested placement markers and native debit markers remain separate. At the
+last boundary, owner 0 player/tower actor HP changes from 165 to 0 alongside
+the native end result; the initiating end branch was not directly traced.
+
+This is still the original test-mode setup under modeled platform inputs.
+Selected observation equality does not prove complete-state, reset or ordinary
+Android/client-server equivalence. Those remain prerequisites for training.
+
 ## Scope
 
 All addresses below are ELF virtual addresses for ARM64 build **160402020**,

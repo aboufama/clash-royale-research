@@ -10,10 +10,10 @@ equivalence. The original native world loop now drives movement, automatic
 target selection, melee/projectile damage and lethal troop removal in synthetic
 fixtures using original-loaded Knight and KingTower records. Separate probes
 construct the original TrainingCamp map geometry and native match objects.
-The original built-in Normal test now completes a 904-step battle with native
-deployment and a native winner under explicit diagnostic platform conditions.
-A second run reproduces every recorded step and both entire event-observer
-files, with a first complete 905-frame capture for visual replay.
+The original Normal diagnostic now completes a 904-step battle driven by eight
+externally selected inputs, including native deployment and a native winner.
+Two fresh runs reproduce every recorded step and the complete position/health
+capture, with 905 boundaries available for visual replay.
 Ordinary-match and byte-identical Android equivalence remain unvalidated.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
@@ -34,16 +34,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Two fresh124-tick diagnostics reproduce ordered external deployments for both owners, including native queueing, commits, elixir debits and live actors. Fifteen whole receipt files match; the sixteenth differs only in six host timings. Original Bionic initial-group TLS/preinit also repeats up to a preserved tagged-pointer fault. Full external matches, complete state/reset and ordinary-game exactness remain incomplete. |
+| Supporting native runtime | Partial | Two fresh externally controlled diagnostic matches finish after 904 original core steps with eight native deployments and winner 1. Twenty-two JSON records and both entire step/position-health streams match byte-for-byte; the remaining JSON differs only in six host timings. Complete state/reset and ordinary Android match exactness remain unvalidated. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Partial | Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending. |
+| Troop movement | Partial | Two external-action diagnostic episodes reproduce all 905 position/health boundaries and 9,247 actor rows; 617 unknown-class rows remain unpositioned. The delivered replay retains every captured boundary without interpolation. Complete movement state and Android comparison remain pending. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
-| Combat interactions | Partial | Repeated full diagnostic captures match 8,160 observations with HP present, 470 getter-unavailable rows and 617 unknown-class rows, retaining zero HP distinctly. The prior 400-tick melee/projectile fixture and 5,425 original leaf calls support the scoped reader. Full-state and ordinary-match combat equivalence remain unvalidated. |
-| Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
+| Combat interactions | Partial | Externally controlled full diagnostic captures repeat 8,160 current-HP readings, 470 getter-unavailable rows and 617 unknown-class rows. Zero HP remains distinct from unavailable health and is displayed in the replay. Complete-state and ordinary-match combat equivalence remain unvalidated. |
+| Tower interactions | Partial | The external-action diagnostic records owner 0 player/tower actor HP falling from 165 to 0 at its last boundary, alongside original end commit and winner 1. This does not prove the initiating finish branch, all tower activation rules or ordinary-match semantics. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **28** · **2026-10-11T12:39:26Z** · Independently repeated ordered external deployments for both owners across124 original core ticks: fifteen receipt files match exactly, with only six host timings differing in the sixteenth. Original Bionic initial-group TLS and allocator entry also reproduce up to a preserved tagged-pointer fault. Full external episodes, complete state/reset and ordinary-game exactness remain unvalidated.
+Review **29** · **2026-10-11T13:03:53Z** · Two fresh externally controlled diagnostic matches finish all 904 original core steps and eight deployments with native winner 1. Twenty-two JSON files and both complete step/position-health streams match byte-for-byte; only six host initialization timings differ in the remaining JSON. The verified 905-boundary replay now includes current HP. Complete-state, reset and ordinary Android match equivalence remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -55,16 +55,26 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
+- **A full diagnostic match now runs on eight external actions**, with no entry
+  into the original random policy. The original engine commits the placements,
+  spends elixir and reaches its own end condition and winner after 904 core
+  steps. Two fresh executions match 22 complete JSON records and both entire
+  step and position/health streams; a 23rd JSON differs only in six host timings.
+  The new replay displays all 905 boundaries, current HP and separate requested
+  versus native deployment coordinates. This remains a diagnostic environment:
+  complete state, reset and ordinary Android match equivalence are unvalidated.
+  See [full external-match evidence](research/evidence/native-external-full-match.json).
 - **Both owners can now submit ordered external deployments** to the original
   diagnostic engine. Inputs at frames 97 and 100 queue together, commit at
   frames 117 and 120, spend elixir and create actors subsequently observed in
   the live world. Two fresh 124-tick runs match fifteen whole receipt files;
   the sixteenth differs only in six host initialization times. This is a
-  bounded action-control result, with full external matches and exactness still
-  pending. See [two-owner evidence](research/evidence/native-external-actions-two-owners.json).
-- **Original Bionic startup now passes initial-group TLS linking and enters
-  its allocator**. Original code reserves 8.25 GiB of inaccessible virtual space
-  and commits 512 KiB before an unresolved emulator tagged-address fault.
+  bounded action-control checkpoint preceding the complete external episode
+  above. See [two-owner evidence](research/evidence/native-external-actions-two-owners.json).
+- **An independently repeated Bionic startup checkpoint passes initial-group
+  TLS linking and enters its allocator**. Original code reserves 8.25 GiB of
+  inaccessible virtual space and commits 512 KiB before a preserved emulator
+  tagged-address fault in that checkpoint.
   Independent complete reports match exactly, with 48 kernel-boundary controls.
   The native constructor remains incomplete and the fault is preserved.
   See [Bionic startup evidence](research/evidence/native-original-bionic-initial-group.json).
@@ -119,11 +129,12 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   omitted host request label is recorded separately; no native difference is
   discarded. These are selected observations, not complete-state equivalence.
   See [health repeat evidence](research/evidence/native-full-match-health-repeat.json).
-- The delivered [full diagnostic replay](research/evidence/native-full-match-visual-repeat.json)
+- The earlier [full diagnostic replay](research/evidence/native-full-match-visual-repeat.json)
   shows the earlier position-only capture and eight native deployments.
   It preserves raw positions, leaves unknown classes unplotted and adds no
   physics or interpolation. Browser checks cover playback, keyboard controls
-  and narrow/wide light/dark layouts. The newer health data is not yet displayed.
+  and narrow/wide light/dark layouts. The external-action replay above now
+  displays verified current HP as well.
 - The **original game and Android asset manager now run in one native guest**
   through the optional-ID consumer. Actual native asset lookup returns the
   missing-file result; original Bionic handles finite modeled kernel ENOENT
