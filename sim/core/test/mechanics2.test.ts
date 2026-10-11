@@ -42,7 +42,7 @@ test('Electro Wizard: spawn zap, then two targets per attack with stun', () => {
   const k1 = addActive(b, 'Knight', 1, 8500, 12500);
   const k2 = addActive(b, 'Knight', 1, 9500, 12500);
   b.spawn(0, 'ElectroWizard', 9000, 10000);
-  b.run(21);
+  b.run(22);
   assert.ok(k1.hp < k1.maxHp && k2.hp < k2.maxHp, 'spawn zap hit both');
   const h1 = k1.hp; const h2 = k2.hp;
   b.run(80);

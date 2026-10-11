@@ -338,6 +338,7 @@ export class Battle {
     this.preTick();
     for (let i = 0; i < units.length; i++) this.attackUpdate(units[i]); // all attack components
     for (let i = 0; i < units.length; i++) this.movementUpdate(units[i]); // all movement components
+    for (let i = 0; i < units.length; i++) this.healthUpdate(units[i]); // health components
     for (let i = 0; i < units.length; i++) if (units[i].buffs.length) this.updateBuffs(units[i]); // buff components
     for (let i = 0; i < units.length; i++) this.updateActor(units[i]); // actor updates (vt+0x48)
     this.updateProjectiles();
@@ -1160,7 +1161,6 @@ export class Battle {
       p.elixir = Math.min(this.maxElixir, p.elixir + u.def.manaCollect);
     }
     if (u.def.hides) this.updateHiding(u);
-    if (u.isBuilding && u.def.lifeTime > 0) this.decay(u);
   }
 
   /** Native actor state for the movement predicates (actor+0x11c): 4 deploying, 2 attacking, 1 walking. */
@@ -1905,20 +1905,24 @@ export class Battle {
   }
 
   /**
-   * Building lifetime: HP decays linearly so the building expires after LifeTime ms of being
-   * active (D: LifeTime; A: linear integer schedule).
+   * Health component update 0xfc99e0, lifetime decay [STAT]: rate = (maxHp*100000/LifeTime)/20
+   * hundredths of HP per tick (0xfc9774), accumulated; whole HP come off when the accumulator
+   * reaches 100. Not while deploying. At 0 HP the actor dies at once.
    */
-  private decay(u: Unit): void {
-    u.lifeTicks++;
-    const total = Math.max(1, Math.round(u.def.lifeTime / TICK_MS));
-    const due = Math.floor((u.maxHp * u.lifeTicks) / total);
-    const step = due - u.decayed;
-    u.decayed = due;
-    if (step > 0) {
-      u.hp -= step;
-      if (u.hp <= 0) this.kill(u);
-    }
+  private healthUpdate(u: Unit): void {
+    if (u.state !== ST_ACTIVE || u.hp < 1 || u.tunneling) return;
+    const lt = u.def.lifeTime;
+    if (lt <= 0 || u.tower !== TOWER_NONE) return;
+    const acc = u.decayed + idiv(idiv(u.maxHp * 100000, lt), 20);
+    if (acc < 100) { u.decayed = acc; return; }
+    u.decayed = acc % 100;
+    u.hp -= idiv(acc, 100);
+    if (u.hp > 0) return;
+    u.hp = 0;
+    u.decayed = 0;
+    this.kill(u);
   }
+
 
   // ---------------------------------------------------------------- buffs & area effects
 
@@ -1973,12 +1977,15 @@ export class Battle {
     bs.length = w;
   }
 
+  /** Area effect objects join the world list at the end of the tick; first update next tick. */
   private spawnAreaEffect(team: number, def: AreaEffectDef, x: number, y: number): void {
     const a = new AreaEffect(this.nextAeoId++, def, team, x, y, this.tick);
-    this.areaEffects.push(a);
+    this.newAeos.push(a);
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'aoe', team, x, y, name: def.name, id: a.id });
     if (def.spawnAreaEffect) this.spawnAreaEffect(team, def.spawnAreaEffect, x, y);
   }
+
+  private newAeos: AreaEffect[] = [];
 
   private filterMatch(f: FilterDef | null, team: number, onlyEnemies: boolean, u: Unit): boolean {
     if (u.state === ST_DEAD || u.maxHp <= 0 || u.tunneling) return false;
@@ -2002,18 +2009,32 @@ export class Battle {
    * HitBiggestTargets takes the MaximumTargets highest-HP ones, OneHitPerTarget never repeats.
    * Hit schedule chosen to give Lightning 3 strikes (A on exact timing).
    */
+  /**
+   * AreaEffect_update 0xf7a34c [STAT]: life -= 50 per update; a pulse when the elapsed updates
+   * (LifeDuration - lifeBefore)/50 equal HitSpeedOffset/50, or exceed it by a multiple of HitSpeed/50
+   * (HitSpeed >= 50). Targets: circle overlap with the filter, stable-sorted by distance, then by
+   * hitpoints + shield (HitBiggestTargets), at most MaximumTargets newly hit; already-hit targets
+   * (OneHitPerTarget) are skipped. Per target: pushback (mobile units), damage, buff for BuffTime
+   * (capped at life + HitSpeed with CapBuffTimeToAreaEffectTime), per-target projectile. The object
+   * is removed once its life is negative.
+   */
   private updateAreaEffects(): void {
     const as = this.areaEffects;
     let w = 0;
     for (let i = 0; i < as.length; i++) {
       const a = as[i];
       const def = a.def;
-      while (a.nextHit >= 0 && a.age >= a.nextHit) {
-        this.aeoHit(a);
-        a.nextHit = def.hitSpeed > 0 && a.nextHit + def.hitSpeed <= def.lifeDuration ? a.nextHit + def.hitSpeed : -1;
+      const before = a.life;
+      a.life -= TICK_MS;
+      const el = idiv(def.lifeDuration - before, TICK_MS);
+      const off = idiv(def.hitSpeedOffset, TICK_MS);
+      let pulse = el === off;
+      if (!pulse && def.hitSpeed >= TICK_MS && el > off) {
+        const per = idiv(def.hitSpeed, TICK_MS);
+        pulse = (el - off) % per === 0;
       }
-      a.age += TICK_MS;
-      if (a.age > def.lifeDuration && a.nextHit < 0) a.alive = false;
+      if (pulse) this.aeoHit(a);
+      if (a.life < 0) a.alive = false;
       if (a.alive) as[w++] = a;
     }
     as.length = w;
@@ -2022,37 +2043,63 @@ export class Battle {
   private aeoHit(a: AreaEffect): void {
     const def = a.def;
     const units = this.units;
-    const targets = this.scratch;
+    const targets = this.scratch2;
     targets.length = 0;
+    const R = def.radius;
     for (let i = 0; i < units.length; i++) {
       const t = units[i];
+      if (t.radius <= 0 && t.tower === TOWER_NONE) continue; // only actors in the spatial grid
       if (!this.filterMatch(def.filter, a.team, def.onlyEnemies, t)) continue;
-      if (def.oneHitPerTarget && a.hitIds.includes(t.id)) continue;
-      const dx = t.x - a.x;
-      const dy = t.y - a.y;
-      const r = def.radius + t.radius;
-      if (dx * dx + dy * dy > r * r) continue;
+      // Actor_circleOverlapSq 0xf95084: strict circle test; buildings by their square's closest point
+      if (t.isBuilding) {
+        const r0 = t.radius;
+        const ex = clamp(a.x, t.x - r0, t.x + r0) - a.x;
+        const ey = clamp(a.y, t.y - r0, t.y + r0) - a.y;
+        if (ex > R || ex < -R || ey > R || ey < -R || ex * ex + ey * ey >= R * R) continue;
+      } else {
+        const dx = t.x - a.x;
+        const dy = t.y - a.y;
+        const r = R + t.radius;
+        if (dx * dx + dy * dy >= r * r) continue;
+      }
       targets.push(t);
     }
-    if (def.hitBiggest) targets.sort((p, q) => q.hp - p.hp || p.id - q.id);
-    const n = def.maxTargets > 0 ? Math.min(def.maxTargets, targets.length) : targets.length;
-    let buffTime = def.buffTime;
-    if (def.capBuffTime) buffTime = Math.min(buffTime, Math.max(TICK_MS, def.lifeDuration - a.age));
-    for (let i = 0; i < n; i++) {
+    if (targets.length > 1) {
+      // stable sorts (0xf7bbec by distance, 0xf7cebc by hitpoints + shield, biggest first)
+      const ax = a.x;
+      const ay = a.y;
+      const keyed = targets.map((t, i) => ({ t, i, d: (t.x - ax) * (t.x - ax) + (t.y - ay) * (t.y - ay) }));
+      keyed.sort((p, q) => p.d - q.d || p.i - q.i);
+      if (def.hitBiggest) {
+        keyed.forEach((k, i) => { k.i = i; });
+        keyed.sort((p, q) => (q.t.hp + q.t.shield) - (p.t.hp + p.t.shield) || p.i - q.i);
+      }
+      for (let i = 0; i < keyed.length; i++) targets[i] = keyed[i].t;
+    }
+    let left = def.maxTargets > 0 ? def.maxTargets : targets.length;
+    for (let i = 0; i < targets.length && left > 0; i++) {
       const t = targets[i];
-      if (def.oneHitPerTarget) a.hitIds.push(t.id);
-      if (def.projectile) {
-        // Strike from above (Lightning): a projectile that lands on the target next tick (A).
+      if (def.oneHitPerTarget) {
+        if (a.hitIds.includes(t.id)) continue;
+        a.hitIds.push(t.id);
+      }
+      if (def.pushback > 0) this.applyPushback(t, a.x, a.y, def.pushback, def.pushbackAll);
+      if (def.damage > 0) this.queueDamage(t, def.damage, def.towerDamage, def.crownTowerDamagePercent);
+      if (def.buff) {
+        let bt = def.buffTime;
+        if (def.capBuffTime) bt = Math.min(bt, a.life + def.hitSpeed);
+        if (bt > 0) this.applyBuff(t, def.buff, bt, a.id);
+      }
+      if (def.projectile && def.targetProjectiles) {
+        // bolt from ProjectileStartHeight above the target, aimed at it (lands on its first update)
         const pr = new Projectile(this.nextProjId++, def.projectile, a.team, t.x, t.y, this.tick);
         pr.target = t;
         pr.tx = t.x;
         pr.ty = t.y;
         pr.spell = def.name;
         this.projectiles.push(pr);
-        continue;
       }
-      if (def.damage > 0) this.queueDamage(t, def.damage, def.towerDamage, def.crownTowerDamagePercent);
-      if (def.buff) this.applyBuff(t, def.buff, buffTime, a.id);
+      left--;
     }
     targets.length = 0;
   }
@@ -2280,6 +2327,10 @@ export class Battle {
       for (const u of this.newUnits) units.push(u);
       this.newUnits.length = 0;
     }
+    if (this.newAeos.length) {
+      for (const a of this.newAeos) this.areaEffects.push(a);
+      this.newAeos.length = 0;
+    }
   }
 
   // ---------------------------------------------------------------- end of match
@@ -2334,7 +2385,7 @@ export class Battle {
       h.add(u.idleMs); h.add(u.upMs); h.add(u.tunneling ? 1 : 0);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }
-    for (const a of this.areaEffects) { h.add(a.id); h.add(a.age); h.add(a.nextHit); }
+    for (const a of this.areaEffects) { h.add(a.id); h.add(a.life); }
     for (const p of this.projectiles) {
       h.add(p.id); h.add(p.x); h.add(p.y); h.add(p.tx); h.add(p.ty); h.add(p.target ? p.target.id : -1);
       h.add(p.rangeLeft); h.add(p.returning ? 1 : 0); h.add(p.hitIds.length);

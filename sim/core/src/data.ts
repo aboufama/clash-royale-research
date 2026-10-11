@@ -165,6 +165,11 @@ export interface AreaEffectDef {
   projectile: ProjectileDef | null;
   spawnAreaEffect: AreaEffectDef | null;
   pushback: number;
+  pushbackAll: boolean;
+  relativePushback: boolean;
+  /** One projectile per target (TargetProjectiles); else one centre projectile per pulse. */
+  targetProjectiles: boolean;
+  projectileStartHeight: number;
   unsupported: string[];
 }
 
@@ -308,6 +313,7 @@ const AEO_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Radius', 'LifeDuration', 'HitSpeed', 'HitSpeedOffset', 'Damage', 'Buff', 'BuffTime',
   'CapBuffTimeToAreaEffectTime', 'Filter', 'HitBiggestTargets', 'MaximumTargets', 'OneHitPerTarget', 'Projectile',
   'ProjectileStartHeight', 'SpawnAreaEffectObject', 'Pushback', 'OnlyEnemies', 'CrownTowerDamagePercent',
+  'PushbackAll', 'RelativePushback', 'TargetProjectiles',
 ]);
 const BUFF_FIELDS_OK = new Set([
   'Name', 'Rarity', 'SpeedMultiplier', 'HitSpeedMultiplier', 'SpawnSpeedMultiplier', 'DamagePerSecond', 'HitFrequency',
@@ -415,6 +421,12 @@ export class Defs {
       projectile: projName ? this.projectile(projName, level) : null,
       spawnAreaEffect: spawnName ? this.areaEffect(spawnName, level) : null,
       pushback: num(r, 'Pushback'),
+      pushbackAll: bool(r, 'PushbackAll'),
+      relativePushback: bool(r, 'RelativePushback'),
+      // Lightning sets neither flag yet strikes each target: per-target projectiles assumed when the
+      // object has a projectile and a target cap but no damage of its own (A, see FIDELITY)
+      targetProjectiles: bool(r, 'TargetProjectiles') || (!!projName && num(r, 'MaximumTargets') > 0 && dmg.base === 0),
+      projectileStartHeight: num(r, 'ProjectileStartHeight'),
       unsupported,
     };
     if (def.spawnAreaEffect) unsupported.push(...def.spawnAreaEffect.unsupported);

@@ -13,7 +13,9 @@ test('Zap: level-11 damage 192, stuns 0.5 s, resets the attack', () => {
   const k = addActive(b, 'Knight', 1, 9000, 20000);
   b.spawn(0, 'Zap', 9000, 20000);
   b.run(20);
-  b.step(); // commit tick: AEO created and hits this tick
+  b.step(); // commit tick: the AEO is created and joins the world at the end of the tick
+  assert.equal(k.hp, 1766);
+  b.step(); // its first update (native 0xf7a34c): pulse, damage flushed this tick
   assert.equal(k.hp, 1766 - 192);
   assert.ok(k.buffs.some((x) => x.def.name === 'ZapFreeze'));
   assert.equal(k.atkTimer, 0);

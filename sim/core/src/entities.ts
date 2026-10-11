@@ -97,7 +97,7 @@ export class Unit {
   inGrid: boolean;
   spawnTick: number;
   buffs: BuffInst[];
-  /** Ticks active and HP already lost to building lifetime decay. */
+  /** Ticks active (unused by the native decay) and the lifetime-decay accumulator in hundredths of HP (health +0x34). */
   lifeTicks: number;
   decayed: number;
   /** Spawner: ms until the next group, members left in the current group, ms to the next member. */
@@ -322,10 +322,9 @@ export class AreaEffect {
   team: number;
   x: number;
   y: number;
-  /** ms since creation */
-  age: number;
-  /** ms until the next hit (-1: no more hits) */
-  nextHit: number;
+  /** Remaining life ms (area effect +0x100): LifeDuration, -50 per update; removed once negative. */
+  life: number;
+  /** Ids already hit (OneHitPerTarget, +0x120). */
   hitIds: number[];
   born: number;
   alive: boolean;
@@ -336,8 +335,7 @@ export class AreaEffect {
     this.team = team;
     this.x = x;
     this.y = y;
-    this.age = 0;
-    this.nextHit = def.hitSpeedOffset;
+    this.life = def.lifeDuration;
     this.hitIds = [];
     this.born = tick;
     this.alive = true;
