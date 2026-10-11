@@ -144,6 +144,30 @@ def r5(v: float) -> float | int:
 # SC2 -> web library
 # ---------------------------------------------------------------------------------------------
 
+
+def health_bar_rows() -> list[dict]:
+    """health_bars.csv rows in file order (the client's HealthBars table)."""
+    hb_csv = RAW / "csv_client" / "health_bars.csv"
+    return list(csv.DictReader(io.StringIO(hb_csv.read_text())))[1:]
+
+
+def default_health_bar(hitpoints) -> str | None:
+    """HealthBar for a character/building whose data names none, as the client resolves it at load
+    (0xddff7c -> 0xe1a674): over the HealthBars rows in order, the first with a MinimumHitpointValue
+    (the getter 0xe42144 gives -1 for an empty cell) is taken, and a later row replaces it when its
+    minimum is below the unit's hitpoints at level index 0 (= the data Hitpoints, Tables_scaleByLevel
+    0xe7e418) and above the current pick's minimum (ties keep the earlier row)."""
+    hp = hitpoints if isinstance(hitpoints, int) else 0
+    best, best_min = None, 0
+    for r in health_bar_rows():
+        v = r.get("MinimumHitpointValue")
+        if not v:
+            continue
+        m = int(v)
+        if best is None or (m < hp and m > best_min):
+            best, best_min = r["Name"], m
+    return best
+
 class ScSource:
     """One parsed .sc file plus lazily decoded atlases."""
 
@@ -714,6 +738,8 @@ class Baker:
                   "RotateAngleSpeed", "AttackFinishTime", "JumpEnabled"):
             if k in row:
                 entry[k[0].lower() + k[1:]] = row[k]
+        if not entry.get("healthBar"):
+            entry["healthBar"] = default_health_bar(row.get("Hitpoints"))
         if row.get("ShadowCustom"):
             lib = self.want("sc/effects.sc", row["ShadowCustom"])
             if lib:
