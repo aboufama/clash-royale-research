@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 24,
-    "reviewed_at": "2026-10-11T11:38:49Z",
-    "summary": "Independently repeated complete native position/health streams across 905 samples and all recorded steps/events; preserved the sole host request-label difference explicitly. Reproduced original codec outputs across all 421 resource occurrences, three original container reads, and original Android linker help startup with 17 constructors. Exact ordinary gameplay, complete state/reset and game library registration remain unvalidated."
+    "sequence": 25,
+    "reviewed_at": "2026-10-11T11:49:30Z",
+    "summary": "Independently repeated original linker --list mapping and native-created library records, 26 finite-platform controls, and seven original membership queries in a separate protected guest. All reports match exactly. Target remains unrelocated; game registration, external-action integration, complete state/reset and ordinary-match equivalence remain open."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Two complete Normal/seed1131 diagnostic runs produce identical position/health streams across 905 samples and matching recorded native steps/events. Original Android linker help startup independently executes 3,884 relative relocations, 13 resolvers and 17 constructors. Game library registration and normal Android startup remain incomplete; no ordinary-game equivalence claim."
+        "Repeated diagnostic health/position streams match across 905 samples. Original Android linker initialization, a finite-file --list mapping and seven native library-membership cases independently reproduce exact reports. The mapped target remains unrelocated; game library registration, ordinary Android startup and battle equivalence remain incomplete."
       ]
     },
     {

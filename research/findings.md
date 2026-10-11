@@ -1058,3 +1058,26 @@ against an absent baseline is claimed. Initial and terminal source pins and
 original code-integrity checks pass. The [health repeat record](evidence/native-full-match-health-repeat.json)
 preserves the test-mode, modeled-platform, incomplete-state and reset limits.
 The previously delivered display remains the original position-only replay.
+
+
+## Original library mapping and address lookup
+
+The original Android linker now completes its `--list` path against one pinned
+original ELF supplied through a finite virtual filesystem. Original file loading
+creates a two-node library list and the target's library record, program headers
+and mapping fields. The complete independent report matches byte-for-byte, all
+26 boundary controls pass, and original executable bytes remain unchanged.
+
+The mapped target remains unrelocated: all 3,884 relative relocation slots retain
+their raw values, thirteen resolver slots remain unresolved, and no target
+initializer or entry executes. Self-relocation of the running linker is a
+separate fact. Original missing-configuration warnings are retained. This
+fixture does not register the game library or reproduce Android's full namespace.
+
+A separate protected analysis guest executes the original address-to-library
+lookup on those original-created records. Seven boundary cases return the
+expected original results; all 418 retained memory regions remain unchanged,
+with no memory or interrupt violation. The terminated source guest is never
+resumed, and its memory and 71 recorded registers remain unchanged. Both complete
+lookup reports match exactly. The [linker evidence](evidence/native-original-linker-startup.json)
+records the finite-file, separate-guest and unrelocated-target limits.

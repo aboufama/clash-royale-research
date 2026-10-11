@@ -34,7 +34,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Two complete Normal/seed1131 diagnostic runs produce identical position/health streams across 905 samples and matching recorded native steps/events. Original Android linker help startup independently executes 3,884 relative relocations, 13 resolvers and 17 constructors. Game library registration and normal Android startup remain incomplete; no ordinary-game equivalence claim. |
+| Supporting native runtime | Partial | Repeated diagnostic health/position streams match across 905 samples. Original Android linker initialization, a finite-file --list mapping and seven native library-membership cases independently reproduce exact reports. The mapped target remains unrelocated; game library registration, ordinary Android startup and battle equivalence remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -43,7 +43,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **24** · **2026-10-11T11:38:49Z** · Independently repeated complete native position/health streams across 905 samples and all recorded steps/events; preserved the sole host request-label difference explicitly. Reproduced original codec outputs across all 421 resource occurrences, three original container reads, and original Android linker help startup with 17 constructors. Exact ordinary gameplay, complete state/reset and game library registration remain unvalidated.
+Review **25** · **2026-10-11T11:49:30Z** · Independently repeated original linker --list mapping and native-created library records, 26 finite-platform controls, and seven original membership queries in a separate protected guest. All reports match exactly. Target remains unrelocated; game registration, external-action integration, complete state/reset and ordinary-match equivalence remain open.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -73,7 +73,11 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   Independent reports match exactly; fifteen boundary controls and a missing
   entropy negative pass. This help path exits before library-list initialization,
   so the game's independently reproduced missing-library fatal remains open.
-  See [linker startup evidence](research/evidence/native-original-linker-startup.json).
+  A later original `--list` path creates a real library record for a supplied
+  original ELF, with 26 boundary controls and identical independent reports.
+  That target remains unrelocated and unexecuted. Seven original membership
+  queries in a separate protected guest also repeat exactly; the game library
+  remains unregistered. See [linker evidence](research/evidence/native-original-linker-startup.json).
 - Two complete health-enabled runs produce **byte-identical position/health
   streams across all 905 samples**. All 904 recorded steps, 2,551 main events,
   669 hand events and the native winner also match the earlier diagnostic.

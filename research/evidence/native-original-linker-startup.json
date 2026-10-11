@@ -73,5 +73,41 @@
     "library_lists_remain_zero": true,
     "scope": "Original --help exits before namespace creation. This does not resolve the game missing-soinfo failure.",
     "kernel_inputs": "Declared argv/auxv/IDs, absent virtual urandom, finite supplied entropy, SCHED_OTHER priority0, owned anonymous maps/protections/VMA names, alternate signal stack without signal delivery, virtual stdout/stderr sinks. Unknown operations or exhausted entropy stop."
+  },
+  "subsequent_original_list_mapping": {
+    "independent_report_sha256": "5528af605a8f0566214a0b012601393511d907a35cb640e40fdc49530bf94435",
+    "whole_independent_report_byte_identical": true,
+    "frozen_source_manifest_sha256": "ca7bc6c53dda9b95e3c229eac101b5b2074a1d836547d3bb6dc46ef471387367",
+    "checkpoint_files_verified_before_and_after": 10,
+    "finite_platform_controls_passed": 26,
+    "native_exit_request": {
+      "syscall": 94,
+      "status": 0
+    },
+    "native_library_list_nodes": 2,
+    "target": "The exact pinned original linker ELF supplied as a virtual target file.",
+    "target_program_headers_and_executable_bytes_match_original": true,
+    "target_relative_entries_relocated": 0,
+    "target_IRELATIVE_slots_unresolved": 13,
+    "target_constructor_entries_observed": 0,
+    "target_entry_executed": false,
+    "library_records_and_list_created_by_original_code": true,
+    "host_fabricated_library_records": false,
+    "game_library_registered": false,
+    "explicit_boundary": "One immutable virtual ELF file, finite read/seek/stat/procfd/private-mmap operations, declared absent Android property/config/sysfs paths, virtual standard streams and absent logd socket. Original configuration warning is preserved. Unknown operations stop. File pages beyond EOF are protected stops, not delivered SIGBUS.",
+    "scope": "Original --list maps and registers the target but exits before target relocation or execution. The original running linker self-relocates separately. No ordinary Android namespace or game startup equivalence.",
+    "target_RELR_entries_remaining_raw": 3884
+  },
+  "protected_membership_analysis": {
+    "independent_report_sha256": "00c7da4253af513ce4c97be9362329469b658f623f2c60778eeb4d28aeaaf944",
+    "whole_independent_report_byte_identical": true,
+    "frozen_source_manifest_sha256": "0e99923c7628a5d8879ca9cbcac733dd02186dda4c089d02134a6d5720190813",
+    "checkpoint_files_verified_before_and_after": 9,
+    "original_native_lookup_cases": 7,
+    "retained_memory_regions_nonwritable_and_hash_unchanged": 418,
+    "original_terminal_guest_registers_unchanged": 71,
+    "memory_or_interrupt_violations": 0,
+    "original_terminal_guest_resumed": false,
+    "scope": "A separate analysis guest copies retained original mappings, preserves execute permissions and adds a private writable stack. Original lookup recognizes target entry and final PT_LOAD byte; rejects outside boundaries, unmapped addresses, the self-linker special node and previous game handle. This is a lookup fixture, not a complete or resumable game snapshot."
   }
 }
