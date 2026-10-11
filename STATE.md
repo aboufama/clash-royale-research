@@ -95,10 +95,17 @@ From the cloud, list what should be checked and ask the owner.
 
 ## Next steps
 
-1. **Set up:**
+1. **Set up** (done in the cloud on 2026-10-11; repeat in each fresh container):
    - Verify the inputs with `cd game-files/asset-pack && shasum -a 256 -c ../asset-pack.sha256 --quiet`.
-   - Run `tools/data` (three commands in its README) and set up `tools/art`
-     (`pip install -r tools/art/requirements.txt`).
+     All 10,870 files and the `.apkm` matched.
+   - Run `tools/data` (three commands in its README): 648 files, 0 errors, 66
+     tables plus `cards.json`, in about 2 s.
+   - Set up `tools/art` (`python3 -m venv .venv && .venv/bin/pip install -r tools/art/requirements.txt`)
+     and run `make_samples.py`: Knight, towers, projectiles and two arena
+     backgrounds render correctly. `training_area_bg` is the battlefield
+     surrounded by filler grass, so the viewer must crop it.
+   - The cloud container has Node 22, Python 3.13, Rust, Go and Bun, and can
+     reach the npm registry.
 2. **Confirm the engine base with the owner.** The recommendation is a
    from-scratch TypeScript engine built on the native facts above, because the
    open-source engines differ on fundamentals. Record the choice in
@@ -122,7 +129,10 @@ From the cloud, list what should be checked and ask the owner.
 
 ## Open questions for the owner
 
-- Do they agree with the engine base (from-scratch TypeScript)?
+- Do they agree with the engine base (from-scratch TypeScript)? Proposed to
+  the owner on 2026-10-11; awaiting confirmation before M1.
+- Does a ladder match start with 6 elixir? The data (`StartingElixir` 6) and
+  the native run (60000 at tick 0) both say 6; the usual community figure is 5.
 - What training stack and scale do they plan? This sets how fast the engine needs to be.
 - Which cards or decks should come first after M1?
 
@@ -133,3 +143,6 @@ From the cloud, list what should be checked and ask the owner.
 - Double and triple elixir regen rates are inferred, not observed.
 - Some card stats may round rather than floor (see `docs/DATA_FIELDS.md`).
 - Live game updates after install aren't included in `game-files/`.
+- The overtime tiebreak (lowest tower HP decides a tied match) has a UI string
+  (`TID_OVERTIME_TIEBREAKER`) but no logic in the data. The native test runner
+  scored a tie as a draw (−1), so the tiebreak will be an approximation (A).
