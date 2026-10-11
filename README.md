@@ -12,6 +12,8 @@ fixtures using original-loaded Knight and KingTower records. Separate probes
 construct the original TrainingCamp map geometry and native match objects.
 The original built-in Normal test now completes a 904-step battle with native
 deployment and a native winner under explicit diagnostic platform conditions.
+A second run reproduces every recorded step and both entire event-observer
+files, with a first complete 905-frame capture for visual replay.
 Ordinary-match and byte-identical Android equivalence remain unvalidated.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
@@ -32,16 +34,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Independent replay returns all 763 constructors and 421 inputs; original built-in Normal battle completes 904 steps with accepted native deployments and its own winner. Final code/source integrity passes. Separate original Android manager loads the pinned APK and reads a known file exactly. Modeled platform inputs and test-mode limits remain; ordinary/Android equivalence is unvalidated. |
+| Supporting native runtime | Partial | Two original Normal diagnostic runs complete 904 steps with identical recorded native steps and entire main/hand observer files; final code/source integrity passes. A separate same-guest game/Android API 35 integration executes the actual optional-file consumer. Full battle integration on that platform and ordinary/Android equivalence remain unvalidated. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Partial | Original movement executes in synthetic fixtures and a completed 904-step built-in Normal battle using native TrainingCamp geometry. Selected deployment/actor records are observed; per-frame visual capture, complete movement-state coverage and Android comparison remain pending. |
+| Troop movement | Partial | Original movement executes in a repeated 904-step native diagnostic battle. First complete position capture covers 905 boundaries and 9,247 actor observations, preserving 617 unknown-class observations without invented positions. Selected step/event records match; complete movement state and Android comparison remain pending. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
-| Combat interactions | Partial | Original-loaded Knight/KingTower records drive 400 world ticks, 62 damage applications, projectile processing and lethal Knight removal; complete selected reports match separate runs with executable regions unchanged. Synthetic arena/context/player setup remains. |
+| Combat interactions | Partial | Original-loaded Knight/KingTower records drive 400 world ticks with melee/projectile damage and lethal removal. A selected health reader independently preserves the fixture report and matches 5,425 original leaf calls on copied fields, distinguishing zero HP from unavailable health. Full-state and ordinary-match combat equivalence remain unvalidated. |
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **18** · **2026-10-11T10:39:38Z** · Independently replayed all 421 inputs and completed the original Normal diagnostic battle: 904 returned steps, native status 0/winner 1, eight accepted deployments and twelve selected actor associations, with terminal integrity intact. Added a 39-control offline lineage checker preserving flag-bit semantics and temporal limits. Independently reproduced APK-configured Android asset reads, 13,718 RELR destinations, same-image Bionic prerequisites and read-only visual sampling. Ordinary-match and byte-exact gates remain open.
+Review **21** · **2026-10-11T11:09:43Z** · Repeated the complete 904-step original diagnostic battle with identical recorded step/event evidence; validated its first 905-boundary position replay in-browser. Independently reproduced shared-game Android asset consumption and selected native health observations. Inspected a later original linker registration failure; newer-platform full initialization and ordinary-game byte equivalence remain incomplete.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -53,6 +55,27 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
+- A fresh full run **matches all 904 recorded steps, 2,551 main events and
+  669 hand events** from the first completed diagnostic battle. Its first
+  complete position stream captures every boundary from 0 through 904 and
+  eight native deployments. The replay preserves raw positions, leaves unknown
+  classes unplotted and adds no physics or interpolation. Browser checks cover
+  playback, keyboard controls and narrow/wide light/dark layouts. This is
+  selected-record repeatability, not a comparison of two full position streams
+  or complete-state equivalence. See [repeat and capture evidence](research/evidence/native-full-match-visual-repeat.json).
+- The **original game and Android asset manager now run in one native guest**
+  through the optional-ID consumer. Actual native asset lookup returns the
+  missing-file result; original Bionic handles finite modeled kernel ENOENT
+  inputs. Both independent reports match exactly. The completed battle still
+  uses the earlier diagnostic platform. A later full-data attempt on the new
+  platform stops at original linker library-registration state; its native
+  fatal message is preserved, and integration remains incomplete.
+  See [shared-platform evidence](research/evidence/native-game-android-shared-consumer.json).
+- A future health reader independently preserves the entire 400-tick fixture
+  report and matches 5,425 original leaf calls on selected copied fields.
+  Present zero HP and getter-unavailable health remain distinct. This reader
+  is not part of the current full-match replay and does not infer tower
+  activation. See [health observation evidence](research/evidence/native-health-observation.json).
 - The original built-in `Normal` battle now **terminates after 904 returned
   steps**, with status 0 and winner index 1 from its own end handler. All 421
   data inputs and finalization were independently replayed before this run.
@@ -69,13 +92,14 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 - Independently reproduced a **real Android asset manager configured with the
   pinned asset APK**. Original mode-0 lookup, length, read, EOF and close return
   a known 2,088-byte file exactly; the absent optional file returns null.
-  All twelve selected executable regions remain unchanged. This separate guest
-  uses explicit kernel/TLS/allocation inputs and is not yet integrated into
-  the game. See [configured platform evidence](research/evidence/native-android-configured-manager.json).
+  All twelve selected executable regions remain unchanged. This earlier separate
+  guest uses explicit kernel/TLS/allocation inputs; the shared-game follow-up
+  is described above. See [configured platform evidence](research/evidence/native-android-configured-manager.json).
 - A read-only replay sampler reproduces the existing 400-tick fixture without
-  changing any captured memory or registers. **Full-match frame capture and
-  independent replay are still pending**, so this is not yet the requested
-  visual demo. See [sampling validation](research/evidence/native-visual-sampler-validation.json).
+  changing any captured memory or registers. Its full-bootstrap frame-zero
+  check also preserves all 24 mapped regions, 87 named registers and the
+  allocator cursor before the complete capture above.
+  See [sampling validation](research/evidence/native-visual-sampler-validation.json).
 - A subsequent [loader audit](research/evidence/native-android-loader-audit.json)
   caught an indirect-function symbol classification bug. Entry watches show
   the earlier empty-manager path never reached those resolvers. A corrected
@@ -101,7 +125,7 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   original resource code completes an **empty-resource** promise and wait.
   Actual incomplete waits fail instead of receiving fabricated completion.
   The later 421-input diagnostic also passes this resource stage and its final
-  postprocessor; a playable match remains pending. See
+  postprocessor; ordinary gameplay equivalence remains pending. See
   [threading and resource evidence](research/evidence/native-bionic-threading.json).
 - A locally compiled, authored memory observer preserves full-interval import
   checks. In a 50-parse native CSV microbenchmark, it takes 1.41 seconds versus

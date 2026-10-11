@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "classification": "Independent repeat of the completed native diagnostic battle, now with its first complete per-step position capture; not ordinary-match equivalence",
+  "private_receipts_sha256": {
+    "report-private.json": "ca1068ef678b030e6a1ccded334e282de72911200efa88123e5695911725ecb8",
+    "native-events.json": "719a70e46b005762dbf5bcb61a0193495bdc2b76ac3f1d6979495c7c47f5750d",
+    "native-hand-events.json": "700ab06ce28af39ed3c82f783fa86a37d414cbfc2320ac8c4246e28fab58a4b7",
+    "control-state.json": "8f74aa034e69f110415c462a4b0f055bca3c5e54e6b49801a00000546b8f5457",
+    "visual/frames.jsonl.gz": "5c17e5734a8aa8f2e7df71b3bc89a8698868a1c98c3e3ce56a8be2e8d8713a60",
+    "visual/manifest.json": "c729a19f3c71705d14843fed2034007a27723b2c90e47217c564d2016e6d6d62",
+    "visual/initial-validation.json": "2a7ecadcda742bef4bf9d5b4cf4b8f048af8e4129d840f98e00ace1bfb7bde8d"
+  },
+  "independent_selected_repeat_comparison_sha256": "d2dbcff8218fcce5fe6ff84abdb3a7a2860f8ce87c98900fc5c66c659791860c",
+  "comparison": {
+    "returned_steps_per_run": 904,
+    "entire_main_observer_event_count_per_run": 2551,
+    "entire_hand_observer_event_count_per_run": 669,
+    "entire_observer_files_byte_identical": true,
+    "every_recorded_runner_step_identical": true,
+    "common_full_snapshot_frames": [
+      0,
+      32,
+      288,
+      544,
+      800,
+      904
+    ],
+    "common_native_snapshot_fields_identical": true,
+    "explicit_host_tally_correction": "Only the prior flags==3 tally is recomputed against unchanged events using original bit1 semantics. No native fields are normalized.",
+    "terminal_report_comparison": "All native report fields match, including imported calls, guards, code hashes and budget PCs/registers. Source-closure metadata and host elapsed_seconds are separately reported."
+  },
+  "capture": {
+    "samples": 905,
+    "first_frame": 0,
+    "last_frame": 904,
+    "every_returned_boundary_preserved": true,
+    "actor_observations": 9247,
+    "unknown_class_observations_left_unpositioned": 617,
+    "parent_linked_native_deployment_marks": 8,
+    "compressed_bytes": 49617,
+    "uncompressed_bytes": 1398363,
+    "uncompressed_payload_sha256": "05a480d37b0b858769bf41280db5ec5a3fc27158ef183ce92786b120225d05f1",
+    "closed_without_error": true,
+    "two_full_position_streams_compared": false,
+    "no_physics_or_interpolation": true,
+    "health_captured": false
+  },
+  "frame0_read_only_check": {
+    "mapped_regions": 24,
+    "mapped_bytes": 315916288,
+    "named_registers": 87,
+    "all_region_hashes_bounds_permissions_registers_and_allocator_cursor_unchanged": true
+  },
+  "terminal_integrity": {
+    "original_game_text_unchanged": true,
+    "shipped_cpp_text_unchanged": true,
+    "passed": true,
+    "initial_source_closure": {
+      "task_source_count": 54,
+      "external_runtime_module_count": 254,
+      "manifest_sha256": "fa5c1f204986d032be1cfb83960bea7994fc97de913554b905e2cc3711148856"
+    },
+    "terminal_source_closure": {
+      "manifest_sha256": "657f2026a3bc57802d5c293e42272349f8917177e0725d57e8b918a598df9e13",
+      "initial_source_pins_still_match": true,
+      "new_task_source_count": 0,
+      "new_module_name_count": 21,
+      "terminal_module_count": 328
+    }
+  },
+  "native_result": {
+    "status": 0,
+    "winner_index": 1,
+    "primary_frame": 904,
+    "termination_validated": true
+  },
+  "validation": {
+    "root_comparator_synthetic_controls": 21,
+    "replay_preparation_synthetic_controls": 35,
+    "independent_second_review": true
+  },
+  "limits": [
+    "This is a second run of the original built-in Normal test using the same modeled platform, native random decks, test identities, test global1 and secondary context. It is not an ordinary or Android-device match.",
+    "The event/runner records match exactly, but they are selected observations, not every simulation-affecting field or complete ordered event stream. The new position stream has no older full-position baseline.",
+    "Frame0 and earlier400-tick component checks support read-only sampling; they do not prove universal hook noninterference, opaque CPU/VM equality or a complete reset mechanism.",
+    "Only three constructor-proven actor classes expose positions. Unknown classes and native position sentinels are retained without invented coordinates. No health, terrain geometry, game graphics or inferred seconds appear in the replay.",
+    "Native deployment markers use returned debit-call coordinates with directly observed accepted-command parent links. Delayed actor insertion and command cloning are not promoted to full causal proof.",
+    "Byte-identical ordinary gameplay, complete state/reset, measured self-play throughput and policy training remain unvalidated."
+  ],
+  "byte_exact_gate_satisfied": false,
+  "visual_delivery": {
+    "fragment_sha256": "040d0bad25fd4fe238dd61910aef25911d4c0a99e2a9cbc1d4b979e8d49e4880",
+    "fragment_bytes": 41921,
+    "light_and_dark_content_widths_checked": [
+      320,
+      360,
+      736
+    ],
+    "horizontal_overflow": false,
+    "all_axis_labels_within_width": true,
+    "play_pause_keyboard_scrub_and_actor_selection_passed": true,
+    "state_echo_bug_found_and_fixed": true,
+    "private_browser_qa_sha256": "023bbaadaaad807b472d1c9aa015b03b5fe11e79d0983c2e05af0e7f0d1b4f2e"
+  }
+}

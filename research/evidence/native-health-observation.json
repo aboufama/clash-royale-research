@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "classification": "Read-only selected health observations, independently validated on the existing synthetic 400-tick original combat fixture",
+  "reader_sha256": "aba5f76f63081d64fede146cdeac5fa939321d13ec65cf3ecfd686948cb6db95",
+  "independently_reproduced_private_reports_sha256": {
+    "health_validation": "688be3b325fae9961dcade86aabda5fc7b76b2ec04755172934ecf5a3b633337",
+    "entire_original_fixture": "447aa9f88c5ec8abc8a47cea083746a0c96d793edb5c75ba473013f1225924bf",
+    "visual_validation": "4e5210581c8c33d2425d0b08320ed72874d47aade243bc1e535a12cd5e14a109"
+  },
+  "observed": {
+    "stopped_samples": 400,
+    "present_health_rows": 1341,
+    "getter_unavailable_projectile_rows": 53,
+    "original_leaf_calls_on_separate_selected_copies": 5425,
+    "native_zero_hp_post_clamp_observations": 2,
+    "zero_hp_entry_frames": [
+      270,
+      271
+    ],
+    "mapped_regions_per_sample": 17,
+    "mapped_bytes_per_sample": 51617792,
+    "named_registers_per_sample": 87,
+    "all_before_after_receipts_equal": true,
+    "root_synthetic_reader_controls_passed": 12
+  },
+  "native_getter_evidence": {
+    "actor_health_getter_elf_va": "0xf94628",
+    "health_component_vtable_elf_va": "0x193b660",
+    "hp_getter_elf_va": "0xfca234",
+    "positive_hp_getter_elf_va": "0xfca23c",
+    "availability": "Original getter requires actor flag bit2, signed component count at least3 and nonnull slot2. Flag-clear does not mean storage is absent. Present HP0 remains distinct from unavailable health."
+  },
+  "limits": [
+    "Only three constructor-proven actor classes are interpreted; unknown classes remain unknown. Max HP, shield and tower activation are not inferred.",
+    "Separate original leaf calls use copied selected fields with exact read guards; this is not a full engine snapshot or independent Android oracle.",
+    "Zero-HP states are transient observations after the original clamp, not returned-frame samples.",
+    "Memory/register equality covers mapped guest bytes and87 named registers, not opaque CPU/VM or host state. The fixture retains its synthetic arena/context and platform limits.",
+    "This future reader was not injected into the current full-match visual capture."
+  ],
+  "byte_exact_gate_satisfied": false
+}

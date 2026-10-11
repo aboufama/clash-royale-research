@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 18,
-    "reviewed_at": "2026-10-11T10:39:38Z",
-    "summary": "Independently replayed all 421 inputs and completed the original Normal diagnostic battle: 904 returned steps, native status 0/winner 1, eight accepted deployments and twelve selected actor associations, with terminal integrity intact. Added a 39-control offline lineage checker preserving flag-bit semantics and temporal limits. Independently reproduced APK-configured Android asset reads, 13,718 RELR destinations, same-image Bionic prerequisites and read-only visual sampling. Ordinary-match and byte-exact gates remain open."
+    "sequence": 21,
+    "reviewed_at": "2026-10-11T11:09:43Z",
+    "summary": "Repeated the complete 904-step original diagnostic battle with identical recorded step/event evidence; validated its first 905-boundary position replay in-browser. Independently reproduced shared-game Android asset consumption and selected native health observations. Inspected a later original linker registration failure; newer-platform full initialization and ordinary-game byte equivalence remain incomplete."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Independent replay returns all 763 constructors and 421 inputs; original built-in Normal battle completes 904 steps with accepted native deployments and its own winner. Final code/source integrity passes. Separate original Android manager loads the pinned APK and reads a known file exactly. Modeled platform inputs and test-mode limits remain; ordinary/Android equivalence is unvalidated."
+        "Two original Normal diagnostic runs complete 904 steps with identical recorded native steps and entire main/hand observer files; final code/source integrity passes. A separate same-guest game/Android API 35 integration executes the actual optional-file consumer. Full battle integration on that platform and ordinary/Android equivalence remain unvalidated."
       ]
     },
     {
@@ -63,7 +63,7 @@
       "id": "movement",
       "status": "partial",
       "evidence": [
-        "Original movement executes in synthetic fixtures and a completed 904-step built-in Normal battle using native TrainingCamp geometry. Selected deployment/actor records are observed; per-frame visual capture, complete movement-state coverage and Android comparison remain pending."
+        "Original movement executes in a repeated 904-step native diagnostic battle. First complete position capture covers 905 boundaries and 9,247 actor observations, preserving 617 unknown-class observations without invented positions. Selected step/event records match; complete movement state and Android comparison remain pending."
       ]
     },
     {
@@ -84,7 +84,7 @@
       "id": "combat",
       "status": "partial",
       "evidence": [
-        "Original-loaded Knight/KingTower records drive 400 world ticks, 62 damage applications, projectile processing and lethal Knight removal; complete selected reports match separate runs with executable regions unchanged. Synthetic arena/context/player setup remains."
+        "Original-loaded Knight/KingTower records drive 400 world ticks with melee/projectile damage and lethal removal. A selected health reader independently preserves the fixture report and matches 5,425 original leaf calls on copied fields, distinguishing zero HP from unavailable health. Full-state and ordinary-match combat equivalence remain unvalidated."
       ]
     },
     {

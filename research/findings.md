@@ -824,7 +824,8 @@ TLS template and the original static TLS resolver now execute. Their input
 layout, auxiliary vector, thread identifiers, virtual file metadata, signal
 state and allocator remain explicit diagnostic conditions. Only one APK is
 configured; this is not the complete application's namespace or Android
-process startup. The Android guest is still separate from the running game.
+process startup. This checkpoint used a separate Android guest; the subsequent
+shared-game consumer is described below.
 
 A fresh same-image Bionic prerequisite probe also reproduces 2,016 integer
 conversion cases and 2,024 decimal cases including exact binary64 bits, FPSR
@@ -847,9 +848,10 @@ records the exact scope and source identities.
 Only constructor-proven actor classes expose raw positions and data IDs.
 Unknown classes remain unpositioned; no health values or interpolation are
 invented. Opaque VM state, unlisted registers and host/external state are not
-covered by this receipt. The full-bootstrap adapter and full-match capture
-still need validation. This component check is not the requested full-match
-demo, and no observer was injected into an already running game process.
+covered by this receipt. At this component checkpoint the full-bootstrap
+adapter and full-match capture still needed validation; the later complete
+capture is described below. No observer was injected into an already running
+game process.
 
 
 ## First completed original built-in battle
@@ -885,7 +887,85 @@ a same-actor/world temporal association. Matching earlier hand descriptors,
 queued command fields and execution-time hand getters do not observe the
 native command clone operation or establish complete object causality.
 
-The entire match has not yet been independently replayed, and this first run
-has no per-frame visual-position stream. A fresh run with a validated read-only
-sampler is required for the requested full-match demo. Complete state/reset,
-Android differential validation and policy training remain open.
+This first run has no per-frame visual-position stream. The subsequent repeat
+below adds that capture. Complete state/reset, Android differential validation
+and policy training remain open.
+
+## Complete diagnostic repeat and first full position capture
+
+A fresh process repeats all initialization and the entire 904-step native
+Normal battle. Both entire observer files are byte-identical to the preceding
+run: 2,551 main events and 669 hand events. Every ordered runner-step record
+matches, as do the full selected snapshots at frames 0, 32, 288, 544, 800 and
+904. The old host flags-equals-three tally is explicitly recomputed from its
+unchanged event prefix using native bit-one semantics; no native field is
+normalized. All native terminal-report fields match. Host timing and source
+closure metadata are enumerated separately. A second independent review
+reproduces the same comparison report.
+
+The [capture evidence](evidence/native-full-match-visual-repeat.json) records
+905 stopped boundaries, 9,247 actor observations and eight parent-linked
+native deployment marks. This is the first complete position stream, not a
+comparison of two full position streams. Its gzip footer, length, content hash,
+sequence and complete frame coverage validate. At frame zero the sampler and
+writer preserve all mapped bytes by region hashes, region bounds/permissions,
+87 named registers and the allocator cursor. Final original game/C++ code and
+source-pin checks also pass. These checks do not cover opaque VM/host state.
+
+The interactive replay preserves raw native positions and actor order, with
+no interpolation or generated physics. Unknown classes account for 617 actor
+observations and remain inspectable but unpositioned. The capture includes no
+health or inferred arena geometry. Thirty-five preparation controls and
+21 comparison controls pass. Actual-browser validation covers light/dark
+layouts at 320, 360 and 736 content pixels, playback/pause, keyboard scrubbing,
+actor selection, first deployment and final native winner. A host state-echo
+bug found during testing was repaired in the display code; the embedded
+selected data remained identical.
+
+The diagnostic retains its original test mode, random decks, secondary context
+and explicit modeled platform boundaries. Repeated selected records and a
+visual replay do not satisfy the byte-identical ordinary-game acceptance gate.
+
+## Original game and Android manager share one guest
+
+An independently reproduced integration now places the game, shipped C++ and
+pinned Android35 platform routines in the same Unicorn instance with shared
+native thread storage. All 763 original game constructors return, and the
+original manager is configured from the pinned asset APK. A separate smoke
+probe also reads the same stored 2,088-byte member into game-owned memory.
+The [shared-platform record](evidence/native-game-android-shared-consumer.json)
+pins both complete matching independent reports.
+
+The original optional-ID consumer reaches the actual Android asset entry and
+returns through its original caller with null for the absent member. The
+lookup result now comes from the original configured manager. Original Bionic
+stat/fopen paths receive raw kernel ENOENT for exactly two declared empty
+virtual filesystem paths; eight admission controls pass. The reusable setup
+omits the earlier smoke probe's ad hoc key/mutex calls. It still uses partial
+startup, explicit kernel/TLS inputs, two modeled allocators and one APK.
+Host resource decoding and linkage to the observed parsed-file provider slot
+remain; complete native file ingestion is not established. The completed
+battle above still uses the older platform. A subsequent full-data attempt
+on the new platform stops in original linker code. A smaller isolated probe
+reaches the native fatal diagnostic: the linker cannot find the game's library
+record while registering a thread destructor. Root independently inspected the
+hash-verified stopped-memory capsule and exact diagnostic buffers; it has not
+yet independently rerun this late path. The guarded stop is retained, and
+no registration bypass or success return is substituted.
+
+## Selected native health observation
+
+A separately versioned reader follows the original health getter's flag,
+signed vector-count and slot checks for three proven actor classes. Present
+HP zero is distinct from unavailable health; a clear access flag does not
+assert that storage is absent. The reader makes no native calls or writes.
+Max HP, shields and tower activation are not inferred.
+
+An independent 400-tick fixture replay preserves the whole earlier report and
+all before/after mapped-region/register receipts. Original leaf getters execute
+5,425 times in a separate guarded guest over copied selected fields and agree
+with the observations. Two transient zero-HP states are captured after the
+original damage clamp. Twelve synthetic reader controls pass. The
+[health record](evidence/native-health-observation.json) preserves these
+limits: copied leaf execution is not a full engine clone or Android oracle,
+and this reader is not part of the first complete position capture.

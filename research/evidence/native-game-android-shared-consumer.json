@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "classification": "Original game optional-file consumer and original Android35 asset manager in one isolated native guest; partial startup only",
+  "independently_reproduced_private_reports_sha256": {
+    "manager_and_stored_member": "072c2ec962a69b83b6a5410fddc0292bdd948e62ef99e930772287f3eb7dc50f",
+    "original_optional_id_consumer": "88834862a7f109bf31476449c8c9119e5008454265c11cc2108acc8a6c0a9efa"
+  },
+  "id_consumer_source_closure_sha256": "c04fbde38e00f16a2f8c93147968ac3d3a556a5164814e9901599d468d02e717",
+  "id_consumer_source_count": 37,
+  "observed": {
+    "original_game_constructors_returned": 763,
+    "same_unicorn_instance": true,
+    "same_native_thread_storage_namespace": true,
+    "old_bionic_mapped": false,
+    "modeled_thread_key_or_mutex_history": false,
+    "configured_apk_count": 1,
+    "original_asset_manager_setter_elf_va": "0x1211178",
+    "original_optional_id_consumer_elf_va": "0xdbc488",
+    "actual_native_asset_entry_pc": "0x10001cef8",
+    "original_game_return_pc": "0x1135e1ac",
+    "optional_member": "csv_logic/globalIdDb.csv",
+    "native_access_mode": 0,
+    "native_missing_asset_result": 0,
+    "original_consumer_returned": true,
+    "raw_kernel_missing_file_events": 2,
+    "raw_kernel_errno_result": -2,
+    "native_stat_syscall": 79,
+    "native_openat_syscall": 56,
+    "selected_android_executable_regions_unchanged": 12,
+    "game_post_constructor_executable_regions_unchanged": true,
+    "import_or_deferred_tls_guard_events": 0
+  },
+  "stored_member_control": {
+    "member": "csv_logic/game_tags.csv",
+    "native_read_bytes": 2088,
+    "sha256": "c275d7b87dee5c0d460b2097b75832e167a1f35f07795ff6faf59a1acc191356",
+    "matches_independent_zip_bytes": true,
+    "scope": "Separate manager smoke run. Original game asset-open import dispatches to native Android; length/read/EOF/close are invoked explicitly through the platform control API."
+  },
+  "root_synthetic_missing_file_controls_passed": 8,
+  "limits": [
+    "Partial original early-thread, TLS and library initialization; explicit auxiliary vector, virtual kernel, signal state, memory primitives and two bounded allocators. Selected platform images are RWX. This is not an Android process or device oracle.",
+    "Only the pinned asset APK is installed in the native manager. Framework resources, other splits, overlays and live updates are not represented.",
+    "The actual ID-consumer run omits ad hoc post-constructor key/mutex control calls. The separate earlier manager smoke run includes them and is not claimed as normal startup.",
+    "Host orchestration supplies unchanged resource bytes to original parsers and links parsed-file output at an observed provider slot. Complete original native file ingestion is not established.",
+    "Raw ENOENT is modeled only for the explicitly declared empty virtual update/CWD paths. The original Android asset result is produced by native APK search. The stat_buffer_unchanged receipt field is a pre-snapshot; source review and a separate synthetic control establish buffer preservation.",
+    "The completed diagnostic battle still uses the older modeled asset boundary. Full421 initialization and battle integration on this new shared Android platform remain pending.",
+    "No reset, complete state, ordinary-match or byte-exact equivalence claim."
+  ],
+  "byte_exact_gate_satisfied": false,
+  "subsequent_late_platform_stop": {
+    "full_data_attempt_returned": false,
+    "full_data_attempt_report_sha256": "8aac5c538aaaa2e5be3152d01dc6d9e5f02719cb8fd257695a9f32d3d81a996e",
+    "first_guarded_slot": "0x10b169ea8",
+    "isolated_late_path_report_sha256": "90838947e7247d93f8426f23d53341fa95b75bd7cc60e5e01a631ef5fc193736",
+    "captured_original_diagnostic": "increment_dso_handle_reference_counter: Couldn't find soinfo by dso_handle=0x11882d20",
+    "root_review": "Independently read the hash-verified stopped-memory capsule and exact original writev66/fd2 buffers. This late path was run by the delegated investigator, not yet independently rerun by root.",
+    "interpretation": "Missing original linker library-registration state is a concrete late initialization prerequisite. No success return or registration bypass was substituted."
+  }
+}
