@@ -30,7 +30,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | All 763 original constructors return with original Bionic thread keys and synchronization; original empty-resource promise completion is independently reproduced. Full-interval checks have a verified faster host observer. Complete loaded-data finalization and a playable match remain incomplete. |
+| Supporting native runtime | Partial | All 763 original constructors and 421 native manifest inputs complete ingestion; original resource promise/wait reaches the final postprocessor. Full finalization still stops at filesystem prerequisites. Original owner/provider/directory setup and narrow native file-error handling are independently reproduced; no complete match yet. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -39,7 +39,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **14** · **2026-10-11T08:58:05Z** · Independently reproduced all 763 constructors with original Bionic thread keys and synchronization, plus native empty-resource promise completion and failure controls. Published original-platform adapters and a full-interval C observer whose 50-parse microbenchmark preserves mapped memory and 87 registers. All 182 tests pass with optional native dependencies; full match and battle equivalence remain unvalidated.
+Review **15** · **2026-10-11T09:41:22Z** · Reviewed the 421-input native ingestion run and its unreturned filesystem postprocessor. Independently reproduced original owner, provider and directory setup, plus ten native Bionic file-error controls with identical public-helper reports. Published narrow file-boundary and stopped-memory diagnostics; 211 tests pass with native dependencies. Full match, Android asset-manager state and byte-identical battle equivalence remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -51,11 +51,24 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
+- The full native data run ingests **421 manifest inputs** and passes original
+  resource promise completion, then stops in the final postprocessor because
+  application filesystem setup is missing. Independent probes reproduce the
+  original file-owner/provider constructors and directory setter, preserving
+  the exact optional-file path. Narrow original Bionic file-error handling has
+  ten native controls and 22 public asset-free tests. Full finalization and a
+  complete match remain pending. See [file prerequisite evidence](research/evidence/native-file-prerequisites.json).
+- [Stopped-memory capture](scripts/native_failure_capture.py) and its
+  [offline reader](scripts/read_failure_capsule.py) preserve diagnostic bytes
+  and reject corrupted or missing regions. Seven synthetic tests verify their
+  limits. Raw captures stay private; these tools do not provide reset, rollback
+  or complete VM state.
 - A separate startup follow-up replaces modeled thread keys and locks with
   original pinned Bionic routines. All 763 constructors still return, and
   original resource code completes an **empty-resource** promise and wait.
   Actual incomplete waits fail instead of receiving fabricated completion.
-  Full loaded-data finalization and a playable match remain pending. See
+  The later 421-input run also passes this resource stage; its final
+  postprocessor and a playable match remain pending. See
   [threading and resource evidence](research/evidence/native-bionic-threading.json).
 - A locally compiled, authored memory observer preserves full-interval import
   checks. In a 50-parse native CSV microbenchmark, it takes 1.41 seconds versus

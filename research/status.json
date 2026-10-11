@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 14,
-    "reviewed_at": "2026-10-11T08:58:05Z",
-    "summary": "Independently reproduced all 763 constructors with original Bionic thread keys and synchronization, plus native empty-resource promise completion and failure controls. Published original-platform adapters and a full-interval C observer whose 50-parse microbenchmark preserves mapped memory and 87 registers. All 182 tests pass with optional native dependencies; full match and battle equivalence remain unvalidated."
+    "sequence": 15,
+    "reviewed_at": "2026-10-11T09:41:22Z",
+    "summary": "Reviewed the 421-input native ingestion run and its unreturned filesystem postprocessor. Independently reproduced original owner, provider and directory setup, plus ten native Bionic file-error controls with identical public-helper reports. Published narrow file-boundary and stopped-memory diagnostics; 211 tests pass with native dependencies. Full match, Android asset-manager state and byte-identical battle equivalence remain unvalidated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "All 763 original constructors return with original Bionic thread keys and synchronization; original empty-resource promise completion is independently reproduced. Full-interval checks have a verified faster host observer. Complete loaded-data finalization and a playable match remain incomplete."
+        "All 763 original constructors and 421 native manifest inputs complete ingestion; original resource promise/wait reaches the final postprocessor. Full finalization still stops at filesystem prerequisites. Original owner/provider/directory setup and narrow native file-error handling are independently reproduced; no complete match yet."
       ]
     },
     {

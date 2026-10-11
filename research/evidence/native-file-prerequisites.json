@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "classification": "Native data-finalization diagnosis and independently reproduced platform prerequisites; not a full match or equivalence result",
+  "binary_identity": {
+    "game_recovered_image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "game_library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "shipped_libcxx_sha256": "4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4",
+    "official_aosp_bionic_sha256": "9f1f93bbd186af5c40a93f6ca4425bfdce82b7f3b9c730e59bb5c7fa598593cf"
+  },
+  "full_data_run": {
+    "independently_replayed_complete_run": false,
+    "private_report_sha256": "d9926b5ff9051351fedc5f03f672bddf1165b9cfa296d34bb814b12d1d2a4b6a",
+    "native_manifest_inputs_ingested": 421,
+    "decoded_input_bytes": 19209601,
+    "native_parser_counts": {
+      "toml": 308,
+      "csv": 111,
+      "json": 2
+    },
+    "original_constructors_completed": 763,
+    "native_phase_entry_counts": {
+      "prepare_ids": 158,
+      "first": 164,
+      "second": 158,
+      "third": 157
+    },
+    "phase_limit": "Entry observations alone do not establish every per-collection return. The native postprocessor was subsequently reached.",
+    "original_resource_promise_and_wait_completed": true,
+    "finalizer_returned": false,
+    "battle_runner_attempted": false,
+    "terminal_error": "Unmapped native read in pthread_mutex_lock, argument 0x8c, caused by a missing original file-owner singleton.",
+    "native_pc": "0x240bf588",
+    "native_lr": "0x300e04c4",
+    "post_constructor_text_sha256": "8e97f87eec24190d2a7af446cc1d2b959263bc84a4a2baa3bd4cec993f26d473",
+    "text_matches_post_constructor_baseline": true,
+    "libcxx_code_unchanged": true,
+    "diagnostic_callbacks": 0,
+    "import_data_guard_events": 0,
+    "source_closure_manifest_sha256": "fb293ab47137ebc678e4847b3fdc368ec398928fc37c7e6b715ceb8c379aa97d",
+    "source_closure_limit": "All 33 initially captured authored source files still match. This older driver did not capture a terminal dynamic-module inventory; later drivers do.",
+    "environment_limits": [
+      "Original parsers receive pinned asset bytes through the existing explicit bundle/file-result linkage.",
+      "An original-constructed empty sound manager and its explicit wrapper remain fixture inputs.",
+      "Original self-erasing constructor changes are preserved, not restored."
+    ]
+  },
+  "independently_reproduced_reports": {
+    "file_owner_constructor": {
+      "entry_elf_va": "0x1356804",
+      "private_report_sha256": "d66c7bfa21498983759ef729e17a0c76d5a323fa3eda4f581e448b55e2930d87",
+      "owner_size_bytes": 392,
+      "native_constructed_object_sha256": "7b5a4fabf3ae086631f62996c6ad2ee6add0d84a7d4dbc16ce1b598e362a933a"
+    },
+    "missing_owner_differential": {
+      "private_report_sha256": "dd6786a1813d189663c13f83f00228db7fed97feaa6c81fd6afb9d784d2f9afd",
+      "result": "The same original path resolver faults on 0x8c before owner construction and returns the exact optional relative path after original construction."
+    },
+    "application_filesystem_setup": {
+      "entry_elf_va": "0x1447b38",
+      "private_report_sha256": "c1756fa8284052a9a3b474ee1d295d5ab9468eccc80a01c8d1bc86f3d79744c5",
+      "result": "Original providers and aliases are constructed; empty app directory inputs cause a later malformed relative path, so this alone is not a valid file setup.",
+      "interpretation_correction": "The frozen report field named asset_manager_pointer at game global 0x1aa4aa0 was misidentified. Later JNI tracing associates that argument with available space, not the AAssetManager pointer. No asset-manager initialization is established here."
+    },
+    "directory_setter_and_optional_id_consumer": {
+      "setter_elf_va": "0x1441944",
+      "virtual_application_directory": "/virtual/app",
+      "private_report_sha256": "b2e0d3237c5f0bdcaf2923aa536eca0e8d05fc9514affc3596701c4146693920",
+      "result": "Original setter, provider construction and actual optional-ID consumer reach stat with /virtual/app/update/csv_logic/globalIdDb.csv. The probe intentionally stops at unknown stat; the consumer has not returned.",
+      "input_provenance": "Java passes ApplicationInfo.dataDir into createGameMain; its native path reaches the setter through original jstring conversion. The selected virtual path is an explicit test-environment input, not an observed Android directory."
+    },
+    "bionic_fopen_v1": {
+      "native_cases": 5,
+      "private_report_sha256": "506cb02566d8250d5b3e75011170ef0c48769ab7ccd40f44968be6f2a475067d"
+    },
+    "bionic_fopen_and_stat_v2": {
+      "native_cases": 10,
+      "private_report_sha256": "2d542c39131d59cc9db250db97019dfc33b0108c2f0071d6794aa63e74a554f7",
+      "public_helper_report_sha256": "2d542c39131d59cc9db250db97019dfc33b0108c2f0071d6794aa63e74a554f7",
+      "positive_cases": 6,
+      "negative_cases": 4,
+      "result": "Native Bionic handles mode parsing, errno and failure returns after only raw kernel -ENOENT is supplied at the observed openat/newfstatat boundary. Native stat leaves its 128-byte sentinel output unchanged. No FILE allocation or imported-data guard violation occurs."
+    },
+    "absent_file_boundary_controls": {
+      "asset_free_cases": 18,
+      "private_report_sha256": "77b88d98ae09184926b10e077b7db3159d2d1eb1f91f2079e87fa83c76491b48"
+    }
+  },
+  "absence_domains": {
+    "pinned_asset_pack": "csv_logic/globalIdDb.csv is absent from both the pinned install-time ZIP and its complete 17,307-entry fingerprint. This does not establish absence from later downloads or cached overrides.",
+    "virtual_update_directory": "An explicitly empty virtual update layer is a separate selected input, not evidence about any device filesystem.",
+    "kernel_boundary": "Only a finite, caller-verified absent-path tuple is admitted. Other paths, write modes, flags, syscall sites, changed arguments and unattributed calls stop. Unused ARM64 syscall registers x4/x5 are observed but do not affect four-argument syscalls."
+  },
+  "public_tools": {
+    "original_bionic_absent_file.py": {
+      "sha256": "013e55b8947ee96d2ab944058df35e762bd8c5c7b0196f6ff3e20b85feacf843",
+      "same_verified_private_AST_except_module_docstring": true
+    },
+    "native_failure_capture.py": {
+      "sha256": "0bb15463b9506354eedf0ea483459ba98880ebd4b69614d3f77d816b47068f1a",
+      "same_verified_private_AST_except_module_docstring": true
+    },
+    "read_failure_capsule.py": {
+      "sha256": "a4f94bef2e7da95c088776e22c329739424a371753ce6b21545b24a96270a20a",
+      "same_verified_private_AST_except_module_docstring": true
+    }
+  },
+  "public_validation": {
+    "absent_file_asset_free_tests": 22,
+    "failure_capture_and_reader_synthetic_tests": 7,
+    "original_assets_required_for_public_tests": false
+  },
+  "failure_capture_scope": "Read-only stopped-state registers, bounded pointer/stack/frame diagnostics and optional compressed mapped-memory regions. Reader requires exact region size and SHA-256, rejects gaps and corruption, and never substitutes zero bytes. Raw captures remain private. This is not complete VM state, a reset, rollback or permission to resume a failed engine.",
+  "still_unvalidated": [
+    "Full data finalizer return",
+    "Android asset-provider initialization and ordinary device filesystem fidelity",
+    "Complete native match with legal deployment and a verified result",
+    "Complete state/reset and independent original-device comparison",
+    "Byte-identical battle equivalence and policy training"
+  ]
+}

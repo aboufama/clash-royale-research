@@ -637,3 +637,60 @@ original native bytes are required. The adapter pins Unicorn 2.1.4 and relies
 on its private Python backend ABI. Opaque emulator state, unenumerated registers
 and host runtime state remain outside the comparison. The exact battle gate
 does not change.
+
+## Full data ingestion and original filesystem prerequisites
+
+The full run with original thread keys and synchronization ingests all 421
+native-manifest inputs: 308 TOML, 111 CSV and two JSON inputs, totaling
+19,209,601 decoded bytes. Original resource promise completion and waiting
+finish, and the third typed phase reaches its last observed kind. The final
+postprocessor then faults on a missing native filesystem owner; the enclosing
+finalizer never returns and no battle runner is attempted. This full run has
+not been independently replayed. Phase entry counts alone are not return
+evidence for each individual collection.
+
+Independent probes reproduce the failure with mutex argument `0x8c` and remove
+it by executing the original file-owner constructor. The original application
+filesystem initializer then creates the providers and aliases. Empty directory
+inputs expose a real path error: the provider strips the leading `c` from the
+optional global-ID filename. That malformed path is rejected rather than
+treated as missing. Executing the original directory setter with the explicit
+test input `/virtual/app` produces the correct path
+`/virtual/app/update/csv_logic/globalIdDb.csv` in the original consumer. Java
+and JNI tracing identify the setter's input as the application data directory;
+the virtual path is not a recovered Android device path.
+
+The optional `csv_logic/globalIdDb.csv` is absent from the pinned install-time
+ZIP and complete fingerprint. This packaged-file evidence is distinct from
+an explicitly empty virtual update directory and does not establish absence
+from later downloads or device caches. The native stat boundary probe stops
+without supplying a result, so reaching it is not a returned consumer.
+
+The [absent-file adapter](../scripts/original_bionic_absent_file.py) routes
+`fopen` and `stat` through pinned original Bionic. Only their observed
+`openat`/`newfstatat` kernel boundary may receive raw `-ENOENT`, and only for a
+finite caller-verified absent-path set. Bionic performs its own error handling
+and TLS errno write; the adapter does not write errno, create a fake stream,
+or populate a stat structure. Six native errno/register controls pass;
+four other-path/write-mode controls stop. Independent runs and the public
+helper reproduce the same complete report. Twenty-two public tests cover
+admission, kernel ABI and rejection behavior without original assets.
+
+Read-only [failure capture](../scripts/native_failure_capture.py) now preserves
+stopped registers, bounded stack/frame diagnostics and optionally all mapped
+memory in compressed private files. The [reader](../scripts/read_failure_capsule.py)
+requires exact decompressed lengths and hashes, rejects missing regions and
+never fills gaps with zeros. Seven synthetic controls verify memory retention,
+unchanged guest state, bounded frame traversal, overwrite protection and
+corruption rejection. These diagnostics contain original private inputs and
+must remain outside Git. They do not capture complete emulator/host state,
+restore a process or make a failed engine safe to resume.
+
+The [checkpoint](evidence/native-file-prerequisites.json) pins the observations,
+independent reports and public sources. It also corrects a frozen report's
+mistaken semantic label: global `0x1aa4aa0` was called an asset-manager pointer,
+but later JNI tracing associates the argument with available space. No asset
+manager initialization is established by that field. Original code remains
+unchanged relative to the recorded post-constructor baseline. Full finalization,
+Android asset-provider setup, complete matches and battle equivalence remain
+unvalidated.
