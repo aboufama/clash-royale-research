@@ -769,7 +769,8 @@ class Baker:
             entry["top"] = tops
         for k in ("TurretMovement", "HasRotationOnTimeline", "LifeTime", "AttachedCharacter", "AttachedCharacterHeight",
                   "TileSizeOverride", "CustomAnimationPostfix", "DeathSpawnCharacter", "DeathSpawnCount",
-                  "SpawnCharacter", "SpawnNumber", "DeathAreaEffect", "JumpHeight", "Kamikaze", "ShowHealthNumber"):
+                  "SpawnCharacter", "SpawnNumber", "DeathAreaEffect", "JumpHeight", "Kamikaze", "ShowHealthNumber",
+                  "HidesWhenNotAttacking", "HideTimeMs", "UpTimeMs", "ManaGenerateTimeMs"):
             if k in row and row[k] not in ("", None):
                 entry[k[0].lower() + k[1:]] = row[k]
         return entry

@@ -3,6 +3,8 @@
 //   FUN_00844f78  view angle from the actor facing          FUN_00f81d0c  integer atan2 (degrees)
 //   FUN_0084a7f8  direction clip + mirror for a view angle  FUN_0084a9cc  attack frame vs the hit
 //   FUN_00835fd0  action slots: 0 _run1_, 1 _idle1_, 2 _attack1_, 3 _charge1_, 4 _run1_/_jump1_, 5 _deploy1_
+//   FUN_00836e58 / FUN_00840d44 first branch: buildings drawn from one labelled clip (no anim set)
+//   MovieClip 0x123ee08 (ctor), 0x123f55c (advance), 0x123f458 (goto), 0x1241f50 / 0x1242234
 // The engine supplies the logic state (facing vector, attack timer, walk clock, charge); everything
 // here is view-side and never feeds back into the simulation.
 
@@ -165,9 +167,11 @@ function slotArt(art: CharacterArt, team: 0 | 1, slot: number): [string, ActionA
   return a && a.dirs > 0 ? [key, a] : null;
 }
 
+/** Frame of a label, -1 if absent; a repeated label gives its last frame (lookup 0x123f3c0 searches from the end). */
 function labelFrame(a: ActionArt, name: string): number {
-  for (const [f, lb] of Object.entries(a.labels ?? {})) if (lb === name) return Number(f);
-  return -1;
+  let r = -1;
+  for (const [f, lb] of Object.entries(a.labels ?? {})) if (lb === name) r = Number(f);
+  return r;
 }
 
 /** One frame of FUN_00840d44 for a direction-clip character (anim-set path). */
@@ -306,4 +310,161 @@ export function turretPose(a: number, n: number, turretMovement: number, sinceAt
   const k = turretMovement / (turretMovement * sinceAttackS + 1);
   const rad = a * 0.017453294;
   return { frame, sign: right ? 1 : -1, ox: -(Math.sin(rad) * k), oy: k * Math.cos(rad) };
+}
+
+/**
+ * SC MovieClip playback as the client steps it, once per rendered frame. A new clip plays from frame 0
+ * (ctor 0x123ee08). Advance 0x123f55c: once the accumulated time reaches the frame duration (1/fps)
+ * the clip moves exactly one frame (the whole multiple of the duration is consumed), wrapping inside a
+ * looped range or over the whole clip; time accumulates only while playing. Goto 0x123f458: reaching
+ * the end of an unlooped range stops. playRange 0x1241f50, gotoAndStop 0x1242234.
+ */
+export class ClipPlayer {
+  frame = 0;
+  playing = true;
+  private start = 0;
+  private end = -1;
+  private loop = false;
+  private acc = 0;
+  readonly frames: number;
+  readonly fps: number;
+  constructor(frames: number, fps: number) {
+    this.frames = frames;
+    this.fps = fps;
+  }
+
+  private goto(f: number): void {
+    if (this.end === f && !this.loop && this.playing) { this.acc = 0; this.playing = false; }
+    this.frame = f;
+  }
+
+  gotoAndStop(f: number): void {
+    this.start = f;
+    this.end = -1;
+    this.loop = false;
+    if (f >= 0 && f < this.frames) this.goto(f);
+    else if (f === -1 && !this.playing) return;
+    this.acc = 0;
+    this.playing = false;
+  }
+
+  playRange(a: number, b: number, loop: boolean): void {
+    this.start = a;
+    this.end = b;
+    this.loop = loop && a < b && b !== -1;
+    if (a >= 0 && a < this.frames) this.goto(a);
+    if (a === b) {
+      if (!this.playing) return;
+      this.playing = false;
+    } else {
+      if (this.playing) return;
+      this.playing = true;
+    }
+    this.acc = 0;
+  }
+
+  /** One rendered frame, `dt` seconds after the previous one. */
+  advance(dt: number): void {
+    if (!(dt > 0)) return;
+    const dur = 1 / this.fps;
+    if (dur <= this.acc) {
+      this.acc -= t(this.acc / dur) * dur;
+      let next = this.frame + 1;
+      if (this.loop) {
+        const span = this.end - this.start + 1;
+        next = (span !== 0 ? (next - this.start) % span : next - this.start) + this.start;
+      }
+      this.goto(this.frames !== 0 ? next % this.frames : next);
+    }
+    if (this.playing) this.acc += dt;
+  }
+}
+
+/** Logic inputs for a building drawn from one labelled clip. */
+export interface BuildingInput {
+  /** native actor state: 4 deploying, 2 attacking */
+  state: number;
+  /** deploy time left, ms [actor +0x15c], and DeployTime */
+  deployLeft: number;
+  deployTime: number;
+  /** hide timer [actor +0x138] (HidesWhenNotAttacking) */
+  hideT: number;
+  /** collector generate timer [actor +0x130] */
+  manaT: number;
+  /** an elixir collection happened since the last view frame (view vt+0x130) */
+  collected: boolean;
+  /** seconds since the last view frame */
+  dt: number;
+}
+
+/** (int)((float)a * (float)b / (float)c), the client's float scaling of timeline frames. */
+function fscale(a: number, b: number, c: number): number {
+  return t(Math.fround(Math.fround(Math.fround(a) * Math.fround(b)) / Math.fround(c)));
+}
+
+export interface BuildingAnim {
+  clip: ClipPlayer;
+  /** collector pump playing after a collection (view +0x9b7) */
+  pumping: boolean;
+}
+
+/**
+ * Building views without an anim set, ported from the view setup 0x836e58 and the first branch of
+ * FUN_00840d44. Setup: an `attack` label is shown stopped, a deploy_start/deploy_end pair stops on
+ * deploy_start, other non-hiding non-collector clips play spawn_start..spawn_end when present. Each
+ * frame: while deploying (with the deploy pair) the frame is deploy_start + (deploy_end − deploy_start)
+ * · elapsed / DeployTime (0xf8519c); hiders show |hide timer| on hide_start..hide_end over HideTimeMs,
+ * then appear_start..appear_end over UpTimeMs; the Elixir Collector holds action_frame · timer /
+ * ManaGenerateTimeMs and plays action_frame to the end on each collection (0x84692c); other clips
+ * play idle_start..idle_end once stopped. Turret buildings (HasRotationOnTimeline) use turretPose.
+ * Spawner clips with an action_frame (synced to the spawn timer) do not occur in this build.
+ */
+export function newBuildingAnim(art: CharacterArt, labels: Record<string, number>, frames: number, fps: number): BuildingAnim {
+  const c = new ClipPlayer(frames, fps);
+  const L = (n: string): number => labels[n] ?? -1;
+  if (L('attack') >= 0) c.gotoAndStop(L('attack'));
+  if (L('deploy_start') >= 0 && L('deploy_end') >= 0) c.gotoAndStop(L('deploy_start'));
+  if (!art.hidesWhenNotAttacking && !(art.manaGenerateTimeMs && art.manaGenerateTimeMs > 0)) {
+    const a = L('spawn_start'), b = L('spawn_end');
+    if (a >= 0 && L('attack') <= b) c.playRange(a, b, false);
+  }
+  return { clip: c, pumping: false };
+}
+
+export function animateBuilding(art: CharacterArt, name: string, labels: Record<string, number>, s: BuildingAnim, i: BuildingInput): number {
+  const c = s.clip;
+  const L = (n: string): number => labels[n] ?? -1;
+  const af = L('action_frame');
+  const collector = !!art.manaGenerateTimeMs && art.manaGenerateTimeMs > 0;
+  if (i.collected && collector && af >= 0 && c.frames > 0) {
+    s.pumping = true;
+    c.playRange(af, c.frames - 1, false);
+  }
+  let idle = false;
+  const ds = L('deploy_start'), de = L('deploy_end');
+  if (i.state === 4 && ds >= 0 && de >= 0) {
+    const dtm = i.deployTime;
+    let el = dtm - i.deployLeft;
+    if (dtm <= el) el = dtm;
+    if (el < 1) el = 0;
+    c.gotoAndStop(ds + fscale(de - ds, el, dtm));
+  } else if (art.hidesWhenNotAttacking) {
+    const v = Math.abs(i.hideT);
+    const hide = art.hideTimeMs ?? 0;
+    let a: number, span: number, num: number, den: number;
+    if (hide < v) { a = L('appear_start'); span = L('appear_end') - a; num = v - hide; den = art.upTimeMs ?? 0; }
+    else { a = L('hide_start'); span = L('hide_end') - a; num = v; den = hide; }
+    c.gotoAndStop(a + fscale(num, span, den));
+  } else if (collector) {
+    if (!s.pumping) c.gotoAndStop(fscale(af, i.manaT, art.manaGenerateTimeMs!));
+    if (!c.playing) s.pumping = false;
+  } else {
+    idle = true;
+  }
+  if (idle && (name === 'RageBottle' || !c.playing)) {
+    const a = L('idle_start'), b = L('idle_end');
+    if (a >= 0 && b >= 0) c.playRange(a, b, false);
+  }
+  c.advance(i.dt);
+  return c.frame;
 }

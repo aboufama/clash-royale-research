@@ -123,7 +123,7 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 1. **Remaining native ports** (A rows in docs/FIDELITY.md): the default lane
    goal without a target (0xd43a4c: a mode subsystem at ctx+0x358 whose vt+0x48
    is not yet identified), King activation conditions (TOML scripting),
-   spawner/death-spawn placement, Tesla and Miner state machines, tower update
+   spawner/death-spawn placement, the Miner state machine, tower update
    details, area-effect candidate grid order, the piercing/rolling projectile
    path (CheckCollisions 0xf91790/0xf8f978), projectile spawn offsets
    (0xf8e4c8 angle/TargetToEdge). Done 2026-10-11: pending-damage overkill rule
@@ -143,8 +143,11 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 6. **Viewer fidelity left:** the battle layer's vertical placement under the
    HUD (width framing is ported: 578.5 SC px on tall phones), the arena clip field
    +0x84 used as the 180° turn's ty (768 assumed), how the client picks
-   direction frames under the flip, shadow height fade (0x83c0ac), particle
-   emitter semantics. Decompiles for the view work are in `work/native/decomp_shadow/`.
+   direction frames under the flip, particle emitter semantics, the deploy
+   preview (the engine now snaps drops with the deploy check 0xf9e16c; the
+   viewer still previews at the pointer). 0x83c0ac is the HideBeforeFirstHit
+   scale, which no unit in this build uses. Decompiles for the view work are in
+   `work/native/decomp_shadow/` and `decomp_anim/`.
 
 ## Open questions for the owner
 

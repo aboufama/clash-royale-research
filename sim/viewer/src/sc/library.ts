@@ -91,8 +91,9 @@ export class ScLibrary {
       for (let i = 0; i < c.n.length; i++) frameStart[i + 1] = frameStart[i] + c.n[i];
       const labels = new Map<string, number>();
       const frameLabels = new Map<number, string>();
+      // a repeated label resolves to its last frame, as the client's lookup searches from the end (0x123f3c0)
       for (const [fi, lb] of Object.entries(c.lb ?? {})) {
-        if (!labels.has(lb)) labels.set(lb, +fi);
+        labels.set(lb, +fi);
         frameLabels.set(+fi, lb);
       }
       this.clips.set(+k, {

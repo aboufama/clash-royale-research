@@ -38,6 +38,8 @@ export interface UnitDrawOptions {
    * Tombstone 'deploy', bombs 'attack'); `<state>_start`..`<state>_end` ranges play over stateMs */
   state?: string;
   stateMs?: number;
+  /** single-clip buildings: frame chosen by the client's clip player (sc/anim.ts animateBuilding) */
+  clipFrame?: number;
   /** export + frame + mirror chosen by the client's view update (sc/anim.ts); overrides action/angle */
   sprite?: { export: string; frame: number; mirror: boolean };
   /** facing vector (actor +0xf8/+0xfc) for turrets, and seconds since the last attack (recoil) */
@@ -477,6 +479,8 @@ export class BattleArt {
         o.aim ?? defAim, o.sinceAttackS);
       frame = clip.frames === (clip.turretFrames ?? clip.frames) ? ov.frame ?? 0 : 0;
       named[clip.turretChild] = ov;
+    } else if (o.clipFrame !== undefined) {
+      frame = o.clipFrame;
     } else if (o.state) {
       let st = o.state;
       if (st === 'up' && labels.appear_end !== undefined) st = 'appear_end';

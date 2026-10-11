@@ -1300,7 +1300,6 @@ export class Battle {
     if (d.hitSpeed <= 0) return;
     u.load = Math.max(u.load, 50) - 50;
     u.retargetCd = Math.max(u.retargetCd, 50) - 50;
-    if (u.hidden) return;
     if (u.buffs.length && this.clockDelta(u) === 0) { u.locked = false; return; } // frozen / stunned
     if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
     // keep-target test
@@ -1560,6 +1559,8 @@ export class Battle {
         u.state = ST_ACTIVE;
         // Actors without hitpoints (Rage bottle) expire on landing, triggering their death effect.
         if (u.maxHp <= 0) this.kill(u);
+        // 0xf800bc goes on the tick the deploy ends: collector and hide timer run once already
+        else this.collectAndHide(u);
       }
       return;
     }
@@ -1569,13 +1570,47 @@ export class Battle {
       return;
     }
     if (u.def.spawn) this.updateSpawner(u);
-    if (u.def.manaCollect > 0 && !this.fixture && --u.manaTimer <= 0) {
-      // Elixir Collector: ManaCollectAmount every ManaGenerateTimeMs (D)
-      u.manaTimer = Math.max(1, Math.round(u.def.manaPeriod / TICK_MS));
-      const p = this.players[u.team];
-      p.elixir = Math.min(this.maxElixir, p.elixir + u.def.manaCollect);
-    }
+    this.collectAndHide(u);
+  }
+
+  private collectAndHide(u: Unit): void {
+    if (u.def.manaCollect > 0 && !this.fixture) this.collectorUpdate(u);
     if (u.def.hides) this.updateHiding(u);
+  }
+
+  /**
+   * Elixir Collector, 0xf800bc [STAT]: the generate timer (actor +0x130) gains half the spawn-speed
+   * percentage (0xfc23f0: 100 -> 50 ms) per tick; at ManaGenerateTimeMs the player gets
+   * ManaCollectAmount (0xfa1bb8) and the timer drops by the period, unless that would pass MAX_MANA
+   * (whole elixir, 0xfa1c64): then the timer waits at the period and retries every tick. The view
+   * plays the pump on each collection (vt+0x130 -> 0x84692c). ManaGenerateLimit (no supported card)
+   * is not modelled.
+   */
+  private collectorUpdate(u: Unit): void {
+    const period = u.def.manaPeriod;
+    u.manaT += Math.trunc(this.spawnPct(u) / 2);
+    if (u.manaT < period) return;
+    const p = this.players[u.team];
+    const amount = u.def.manaCollect;
+    if (this.maxElixir < amount + Math.trunc(p.elixir / ELIXIR_ONE) * ELIXIR_ONE) {
+      u.manaT = Math.min(u.manaT, period);
+      return;
+    }
+    u.manaT -= period;
+    p.elixir = Math.min(this.maxElixir, p.elixir + amount);
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'collect', team: u.team, x: u.x, y: u.y, name: u.def.name, id: u.id });
+  }
+
+  /** Spawn-speed percentage 0xfc23f0 (SpawnSpeedMultiplier buffs): clamp(100 + slow) * haste / 100. */
+  private spawnPct(u: Unit): number {
+    if (u.buffs.length === 0) return 100;
+    let haste = 100;
+    let slow = 0;
+    for (const b of u.buffs) {
+      const m = b.def.spawnSpeedMul;
+      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+    }
+    return idiv(clamp(100 + slow, 0, 100) * haste, 100);
   }
 
   /** Native actor state for the movement predicates (actor+0x11c): 4 deploying, 2 attacking, 1 walking. */
@@ -2301,22 +2336,63 @@ export class Battle {
   }
 
   /**
-   * Tesla: hidden (untargetable) while idle; with an enemy in range it rises for UpTimeMs before
-   * attacking, and hides again after HideTimeMs without a target (D times; state machine A).
+   * Hide timer 0xf81b3c (HidesWhenNotAttacking: Tesla) [STAT], once per character update. The unit
+   * wants to hide unless it is attacking or deploying (native states 2 / 4, 0xf85368); the step is
+   * the buff speed scale of 50 ms (0xfc26d4; frozen: no change). Hiding counts the timer from 0 up to
+   * HideTimeMs, where the unit is fully hidden and untargetable (0xf85420). Leaving full hiding it
+   * counts on through UpTimeMs and wraps to 0 (up); interrupted part-way down it turns negative and
+   * climbs back to 0; a rising unit asked to hide again turns around. A building plays HideEffect and
+   * OnHideAction as hiding starts and the appear event 0xf8247c (AppearEffect, OnAppearAction, appear
+   * area object and pushback) as it leaves full hiding or turns back from more than half way down.
    */
   private updateHiding(u: Unit): void {
-    let t = false;
-    for (const c of this.units) if (c.radius > 0 && this.isValidTarget(u, c, false) && this.inRange(u, c, 0)) { t = true; break; }
-    if (t) {
-      u.idleMs = 0;
-      if (u.hidden) {
-        u.upMs += TICK_MS;
-        if (u.upMs >= u.def.upTime) { u.hidden = false; u.upMs = 0; }
+    const d = u.def;
+    const want = u.state !== ST_DEPLOYING && !u.locked;
+    const dt = u.buffs.length ? this.speedScale(u, TICK_MS) : TICK_MS;
+    if (dt === 0) return;
+    const hide = d.hideTime;
+    const cyc = hide + d.upTime;
+    let v = u.hideT;
+    let s = v + dt;
+    if (v < 0 && s >= 0) { v = 0; s += cyc; u.hideT = 0; }
+    let out: number;
+    toEnd: {
+      if (s < 0) {
+        if (!want) { out = s; break toEnd; }
+        s = -s;
+        u.hideT = Math.max(s - dt, 0);
+        if (hide <= s && u.hideT <= hide) { out = hide; break toEnd; }
+      } else {
+        let f = u.hideT;
+        if (!(want || hide <= v || f < 1)) {
+          if (u.isBuilding && hide < s * 2) this.appear(u);
+          f = Math.max(-s - dt, -hide);
+          u.hideT = f;
+          out = -s;
+          if (s !== 0) break toEnd;
+        }
+        if (want) {
+          if (hide <= s && u.hideT <= hide) { out = hide; break toEnd; }
+        } else {
+          out = 0;
+          if (f === 0 || cyc < s) break toEnd;
+        }
       }
-    } else if (!u.hidden) {
-      u.idleMs += TICK_MS;
-      if (u.idleMs >= u.def.hideTime) { u.hidden = true; u.idleMs = 0; u.target = null; u.attackedTarget = false; u.locked = false; }
+      if (u.isBuilding) {
+        if (u.hideT === 0 && this.recordEvents) {
+          this.events.push({ tick: this.tick, type: 'hide', team: u.team, x: u.x, y: u.y, name: d.name, id: u.id });
+        }
+        if (u.hideT === hide) this.appear(u);
+      }
+      out = cyc !== 0 ? s % cyc : s;
     }
+    u.hideT = out;
+    u.hidden = out === hide;
+  }
+
+  /** Appear event 0xf8247c: AppearEffect for the view (no supported unit has appear actions, areas or pushback). */
+  private appear(u: Unit): void {
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'appear', team: u.team, x: u.x, y: u.y, name: u.def.name, id: u.id });
   }
 
   /**
@@ -2883,8 +2959,7 @@ export class Battle {
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.kbActive ? u.kbStep : -1000);
       h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.charge); h.add(u.load); h.add(u.retargetCd);
       h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
-      h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaTimer); h.add(u.hidden ? 1 : 0);
-      h.add(u.idleMs); h.add(u.upMs); h.add(u.tunneling ? 1 : 0);
+      h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaT); h.add(u.hideT); h.add(u.tunneling ? 1 : 0);
       h.add(u.pending); h.add(u.pendingDur); h.add(u.waitTicks); h.add(u.dmgKeys.length);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }

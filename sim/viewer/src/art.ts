@@ -15,8 +15,8 @@ import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
 import type { ArtHooks } from './main.ts';
 import {
-  actionFrameMs, animate, type AnimFrame, type AnimState, BattleArt, EffectPlayer, type Mat, nativeAngle, newAnimState,
-  ScRenderer,
+  actionFrameMs, animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, EffectPlayer,
+  type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer,
 } from './sc/index.ts';
 
 type Team = 0 | 1;
@@ -63,6 +63,11 @@ export class ArtWorld implements WorldRenderer {
   /** Client view state per unit (sc/anim.ts) and this frame's chosen sprite. */
   private anims = new Map<number, AnimState>();
   private sprites = new Map<number, AnimFrame | null>();
+  /** Single-clip buildings (sc/anim.ts animateBuilding): clip player per unit, this frame's frame,
+   * and collections seen since the last frame. */
+  private bAnims = new Map<number, BuildingAnim>();
+  private clipFrames = new Map<number, number>();
+  private collected = new Set<number>();
   private lastSim = -1;
   /** Hit filter per unit (direction picked from the hit vector, sim ms it started) and hits seen. */
   private hits = new Map<number, { dir: 'down' | 'left' | 'up' | 'right'; start: number }>();
@@ -155,6 +160,12 @@ export class ArtWorld implements WorldRenderer {
           team, radius: a?.def.radius, durationMs: a ? a.def.lifeDuration : undefined,
         });
         if (h.handles.length) this.aeoFx.set(e.id, h);
+      } else if (e.type === 'appear' || e.type === 'hide') {
+        // view vt+0x80 with AppearEffect (0xf8247c) / HideEffect (0xf81b3c)
+        const eff = m.characters[e.name]?.effects?.[e.type === 'appear' ? 'appearEffect' : 'hideEffect'] as string | undefined;
+        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+      } else if (e.type === 'collect') {
+        this.collected.add(e.id);
       } else if (e.type === 'cast') {
         const sp = m.spells[e.name];
         const eff = sp?.effect;
@@ -218,7 +229,7 @@ export class ArtWorld implements WorldRenderer {
       if (!ca) continue;
       const st = this.unitState(u, f);
       art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), st.action, st.angle, st.ms,
-        { sprite: this.sprites.get(u.id) ?? undefined });
+        { sprite: this.sprites.get(u.id) ?? undefined, clipFrame: this.clipFrames.get(u.id) });
     }
     this.fx.draw(r, 'Shadow');
     art.endShadowPass(r);
@@ -276,11 +287,8 @@ export class ArtWorld implements WorldRenderer {
       const hit = this.hits.get(u.id);
       const damage = hit ? { dir: hit.dir, ms: sim - hit.start } : undefined;
       const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
-        face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9 };
-      if (u.def.hides) {
-        // Tesla: closed while hidden, rising for UpTimeMs, then up
-        if (u.hidden && u.upMs > 0) { o.state = 'appear'; o.stateMs = u.upMs + f.alpha * 50; } else o.state = u.hidden ? 'hidden' : 'up';
-      }
+        face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9,
+        clipFrame: this.clipFrames.get(u.id) };
       items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
     }
     // projectiles
@@ -363,6 +371,26 @@ export class ArtWorld implements WorldRenderer {
       }));
     }
     for (const id of this.anims.keys()) if (!seen.has(id)) this.anims.delete(id);
+    // buildings drawn from one labelled clip (no anim set, no turret): the client's clip player
+    this.clipFrames.clear();
+    for (const u of b.units) {
+      if (u.state === ST_DEAD || u.tunneling || u.tower !== TOWER_NONE) continue;
+      const ca = m.characters[u.def.name];
+      const clip = u.team === 1 ? (ca?.clip?.red ?? ca?.clip?.blue) : ca?.clip?.blue;
+      if (!ca || !clip || clip.turretChild) continue;
+      const lib = this.art.lib(ca.sc);
+      const labels = lib.labels(clip.export);
+      let s = this.bAnims.get(u.id);
+      if (!s) { s = newBuildingAnim(ca, labels, clip.frames, clip.fps || 30); this.bAnims.set(u.id, s); }
+      seen.add(u.id);
+      this.clipFrames.set(u.id, animateBuilding(ca, u.def.name, labels, s, {
+        state: u.state === ST_DEPLOYING ? 4 : u.locked ? 2 : 0, deployLeft: u.deployTicks * 50,
+        deployTime: (ca.deployTime as number | undefined) ?? u.deployTotal * 50, hideT: u.hideT, manaT: u.manaT,
+        collected: this.collected.has(u.id), dt,
+      }));
+    }
+    this.collected.clear();
+    for (const id of this.bAnims.keys()) if (!seen.has(id)) this.bAnims.delete(id);
     // damage filter (0x83e3d8): quadrant of the hit vector's native angle, offset 135 (flipped view)
     // or 315 degrees: 0 _down, 1 _left, 2 _up, 3 _right; restarts on every hit
     const dirs = ['down', 'left', 'up', 'right'] as const;

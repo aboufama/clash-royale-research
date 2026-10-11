@@ -117,12 +117,16 @@ export class Unit {
   dmgKeyTimes: number[];
   /** Inferno ramp: ms spent attacking the current target. */
   rampMs: number;
-  /** Elixir Collector: ms until the next elixir. */
-  manaTimer: number;
-  /** Tesla: hidden underground; ms idle; ms until up. */
+  /** Elixir Collector: generate timer, ms (actor +0x130). */
+  manaT: number;
+  /**
+   * HidesWhenNotAttacking (Tesla) hide timer, ms (actor +0x138): 0 up; counts to HideTimeMs while
+   * hiding; HideTimeMs..HideTimeMs+UpTimeMs while appearing from fully hidden; negative while coming
+   * back up from part-way (|value| = how far down).
+   */
+  hideT: number;
+  /** Fully hidden, so untargetable: hideT === HideTimeMs (vtf8 0xf85420). */
   hidden: boolean;
-  idleMs: number;
-  upMs: number;
   /** Miner: tunnelling toward (tunnelX, tunnelY) before deploying. */
   tunneling: boolean;
   tunnelX: number;
@@ -218,10 +222,9 @@ export class Unit {
     this.dmgKeys = [];
     this.dmgKeyTimes = [];
     this.rampMs = 0;
-    this.manaTimer = Math.round(def.manaPeriod / 50);
-    this.hidden = def.hides;
-    this.idleMs = 0;
-    this.upMs = 0;
+    this.manaT = 0;
+    this.hideT = 0;
+    this.hidden = false;
     this.tunneling = false;
     this.tunnelX = 0;
     this.tunnelY = 0;
@@ -393,7 +396,7 @@ export interface Command {
 /** Visual events for the viewer (recorded only when enabled). */
 export interface BattleEvent {
   tick: number;
-  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe';
+  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect';
   team: number;
   x: number;
   y: number;

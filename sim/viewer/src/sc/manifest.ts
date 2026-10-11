@@ -71,6 +71,11 @@ export interface CharacterArt {
   tryToFinishAttackAnimation?: boolean;
   animationsKeepLastFrame?: boolean;
   jumpEnabled?: number;
+  // building clip views (sc/anim.ts animateBuilding)
+  hidesWhenNotAttacking?: boolean;
+  hideTimeMs?: number;
+  upTimeMs?: number;
+  manaGenerateTimeMs?: number;
   /** DamageExportName + _down/_left/_up/_right hit filter clips */
   damageFilters?: Record<'down' | 'left' | 'up' | 'right', ClipRef>;
   [k: string]: unknown;

@@ -88,7 +88,7 @@ test('Executioner axe returns and can hit on the way back', () => {
   assert.ok(k.maxHp - k.hp >= 2 * dmg, `hit twice (${k.maxHp - k.hp} vs ${dmg})`);
 });
 
-test('Elixir Collector produces elixir; Tesla hides until an enemy is in range', () => {
+test('Elixir Collector produces elixir; Tesla hide timer', () => {
   const b = newBattle();
   b.spawn(0, 'Elixir Collector', 9000, 5500);
   b.run(21);
@@ -97,14 +97,23 @@ test('Elixir Collector produces elixir; Tesla hides until an enemy is in range',
   b.run(20 + 300);
   assert.ok(b.players[0].elixir >= 10000 + 300 * 178, 'collector added 1 elixir');
 
+  // hide timer 0xf81b3c: starts up (0), goes down over HideTimeMs (800), untargetable only at 800
   const t = still();
   const tesla = addActive(t, 'Tesla', 0, 9000, 8000);
-  assert.equal(tesla.hidden, true);
-  t.run(10);
-  assert.equal(tesla.hidden, true, 'nothing in range');
-  addActive(t, 'Knight', 1, 9000, 12000);
-  t.run(40);
   assert.equal(tesla.hidden, false);
+  t.run(15);
+  assert.equal(tesla.hideT, 750);
+  assert.equal(tesla.hidden, false, 'still going down');
+  t.run(1);
+  assert.equal(tesla.hidden, true, 'fully hidden');
+  t.run(10);
+  assert.equal(tesla.hideT, 800, 'stays hidden with nothing in range');
+  addActive(t, 'Knight', 1, 9000, 12000);
+  let n = 0;
+  while (tesla.hideT === 800 && n++ < 200) t.run(1);
+  assert.equal(tesla.hideT, 850, 'rises once it attacks');
+  t.run(15);
+  assert.equal(tesla.hideT, 0, 'up after UpTimeMs');
   void c;
 });
 
