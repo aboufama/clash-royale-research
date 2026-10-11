@@ -202,12 +202,14 @@ export interface TowerArt {
     destroyed: string; // rubble export (drawn by drawKingTower(destroyed)); destroyedLayer: 'Base' | 'Ground'
     destroyedLayer?: string;
     king: { sc: string; blue: string; red: string; frames: number; fps: number };
+    scale?: number; attachedHeight?: number;
     healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
     shadow: Record<string, number>; effects: Record<string, string>; projectile?: string;
   };
   princess: {
     sc: string; base: { blue: string; red: string }; top: { blue: string; red: string }; character: string;
     destroyed: string; destroyedLayer?: string;
+    scale?: number; attachedHeight?: number;
     healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
     shadow: Record<string, number>; effects: Record<string, string>; projectile?: string;
   };

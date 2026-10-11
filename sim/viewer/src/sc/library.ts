@@ -150,6 +150,57 @@ export class ScLibrary {
     const c = this.clip(exportName);
     return c ? Object.fromEntries(c.labels) : {};
   }
+
+  private boundsCache = new Map<string, [number, number, number, number] | null>();
+
+  /**
+   * Axis-aligned bounds [x0, y0, x1, y1] (export space, SC px) of an export's frame: the union of
+   * its shapes' vertices through the display list (child clips at their frame 0). Null when empty.
+   */
+  frameBounds(exportName: string, frame = 0): [number, number, number, number] | null {
+    const key = `${exportName}#${frame}`;
+    if (this.boundsCache.has(key)) return this.boundsCache.get(key)!;
+    const id = this.exports.get(exportName);
+    const b: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+    if (id !== undefined) this.accBounds(id, frame, [1, 0, 0, 1, 0, 0], b, 0);
+    const out = b[0] <= b[2] ? b : null;
+    this.boundsCache.set(key, out);
+    return out;
+  }
+
+  private accBounds(id: number, frame: number, m: number[], b: number[], depth: number): void {
+    if (depth > 16) return;
+    const shape = this.shapes.get(id);
+    if (shape) {
+      for (const cmd of shape) {
+        const v = cmd.verts;
+        for (let i = 0; i < v.length; i += 4) {
+          const x = m[0] * v[i] + m[2] * v[i + 1] + m[4];
+          const y = m[1] * v[i] + m[3] * v[i + 1] + m[5];
+          if (x < b[0]) b[0] = x;
+          if (y < b[1]) b[1] = y;
+          if (x > b[2]) b[2] = x;
+          if (y > b[3]) b[3] = y;
+        }
+      }
+      return;
+    }
+    const clip = this.clips.get(id);
+    if (!clip) return;
+    const f = Math.max(0, Math.min(clip.frameCount - 1, frame));
+    const bm = this.banks[clip.bank].m;
+    for (let i = clip.frameStart[f]; i < clip.frameStart[f + 1]; i++) {
+      const ci = clip.elements[i * 3];
+      const mi = clip.elements[i * 3 + 1];
+      const cm = mi >= 0 ? [bm[mi * 6], bm[mi * 6 + 1], bm[mi * 6 + 2], bm[mi * 6 + 3], bm[mi * 6 + 4], bm[mi * 6 + 5]] : [1, 0, 0, 1, 0, 0];
+      const mm = [
+        m[0] * cm[0] + m[2] * cm[1], m[1] * cm[0] + m[3] * cm[1],
+        m[0] * cm[2] + m[2] * cm[3], m[1] * cm[2] + m[3] * cm[3],
+        m[0] * cm[4] + m[2] * cm[5] + m[4], m[1] * cm[4] + m[3] * cm[5] + m[5],
+      ];
+      this.accBounds(clip.children[ci], 0, mm, b, depth + 1);
+    }
+  }
 }
 
 /** Loads libraries on demand, de-duplicating concurrent requests. */

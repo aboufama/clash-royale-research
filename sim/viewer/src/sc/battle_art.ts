@@ -205,10 +205,12 @@ export class BattleArt {
     r.draw(lib, t.base[tm], 0, [1, 0, 0, 1, px, py]);
     const pc = this.manifest.characters[t.character];
     if (pc) {
+      // the tower princess is the building's AttachedCharacter, raised by AttachedCharacterHeight
+      const [qx, qy] = this.gameToPx(x, y, t.attachedHeight ?? 0);
       const sp = unitSprite(pc, team, action, angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2), actionMs);
       if (sp) {
         const s = pc.scale / 100;
-        r.draw(this.lib(pc.sc), sp.export, sp.frame, [sp.mirror ? -s : s, 0, 0, s, px, py]);
+        r.draw(this.lib(pc.sc), sp.export, sp.frame, [sp.mirror ? -s : s, 0, 0, s, qx, qy]);
       }
     }
     r.draw(lib, t.top[tm], 0, [1, 0, 0, 1, px, py]);
@@ -502,6 +504,55 @@ export class BattleArt {
   }
 
   // -- health bars -----------------------------------------------------------------------------
+
+  private hbCache = new Map<string, number>();
+
+  /**
+   * Health bar y offset (SC px) from a view's origin, following the client's character view
+   * 0x836e58: the top of the main sprite's frame-0 bounds plus HealthBarOffsetY and the team's
+   * HealthBarOffsetYBlue/Red (0xde1688). Treating the sprite query (vt+0x1b8) as the frame-0
+   * bounds top is an inference.
+   */
+  barOffsetY(libName: string, exportName: string, scale: number, base: number, blue: number, red: number, team: Team): number {
+    const key = `${libName}/${exportName}/${scale}`;
+    let top = this.hbCache.get(key);
+    if (top === undefined) {
+      const lib = this.libs.get(libName);
+      const b = lib?.frameBounds(exportName, 0);
+      top = b ? b[1] * scale : 0;
+      this.hbCache.set(key, top);
+    }
+    return top + base + (team === 0 ? blue : red);
+  }
+
+  /** Tower health bar position (SC px): the tower's main clip (King tower / princess tower base). */
+  towerBarPx(kind: 'king' | 'princessLeft' | 'princessRight', team: Team): [number, number] {
+    const t = kind === 'king' ? this.manifest.towers.king : this.manifest.towers.princess;
+    const [x, y] = this.towerPos(kind, team);
+    const [px, py] = this.gameToPx(x, y);
+    const tm = team === 0 ? 'blue' : 'red';
+    const exp = kind === 'king' ? (team === 0 ? this.manifest.towers.king.blue : this.manifest.towers.king.red)
+      : this.manifest.towers.princess.base[tm];
+    return [px, py + this.barOffsetY(t.sc, exp, (t.scale ?? 100) / 100, 0, t.healthBarOffsetYBlue ?? 0, t.healthBarOffsetYRed ?? 0, team)];
+  }
+
+  /** Unit health bar position (SC px) for a unit drawn at game (x, y), using its idle sprite at spawn facing. */
+  unitBarPx(name: string, team: Team, x: number, y: number): [number, number] {
+    const art = this.manifest.characters[name];
+    const [px, py] = this.gameToPx(x, y, art?.flyingHeight ?? 0);
+    if (!art) return [px, py - 50];
+    let lib = art.sc;
+    let exp: string | null = null;
+    const sp = unitSprite(art, team, 'idle', team === 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+    if (sp) exp = sp.export;
+    else {
+      const clip = team === 1 ? (art.clip?.red ?? art.clip?.blue) : art.clip?.blue;
+      if (clip) { exp = clip.export; lib = art.sc; }
+    }
+    if (!exp) return [px, py - 50];
+    return [px, py + this.barOffsetY(lib, exp, art.scale / 100, art.healthBarOffsetY ?? 0,
+      art.healthBarOffsetYBlue ?? 0, art.healthBarOffsetYRed ?? 0, team)];
+  }
 
   /**
    * Classic health bar (health_bars.csv: hp_player_* / hp_enemy_*). frac 0..1 selects the `bar`

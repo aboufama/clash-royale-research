@@ -69,7 +69,7 @@ export class ArtWorld implements WorldRenderer {
     this.fx = new EffectPlayer(art, 7);
     // Show the field plus a margin of the stadium, with the art's foreshortening.
     cam.aspectY = art.yScale;
-    cam.world = { x0: -1200, y0: -800, x1: 19200, y1: 32800 };
+    cam.world = { x0: -1200, y0: -2200, x1: 19200, y1: 32800 };
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -258,16 +258,17 @@ export class ArtWorld implements WorldRenderer {
       const team = u.team as Team;
       if (u.tower !== TOWER_NONE) {
         const king = u.tower === TOWER_KING;
-        const [sx, sy] = art.gameToPx(u.x, u.y);
+        const kind = king ? 'king' : u.x < 9000 ? 'princessLeft' : 'princessRight';
+        const [sx, sy] = art.towerBarPx(kind, team);
         const type = (king ? m.towers.king.healthBar : m.towers.princess.healthBar) ?? (king ? 'Summoner' : 'Tower');
-        art.drawHealthBar(r, type, team, sx, sy - (king ? 95 : 70), u.hp / u.maxHp, u.def.level, u.hp);
+        art.drawHealthBar(r, type, team, sx, sy, u.hp / u.maxHp, u.def.level, u.hp);
         continue;
       }
       if (u.hp >= u.maxHp && u.shield >= u.def.shieldHitpoints) continue;
       const ca = m.characters[u.def.name];
-      const [sx, sy] = art.gameToPx(f.ux(u), f.uy(u), u.def.flyingHeight);
-      const off = ((ca?.healthBarOffsetY as number | undefined) ?? 0) * 0.5;
-      art.drawHealthBar(r, (ca?.healthBar as string | undefined) ?? 'Medium', team, sx, sy - 50 - off, u.hp / u.maxHp, u.def.level);
+      if (ca?.hideHealthbar) continue;
+      const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u));
+      art.drawHealthBar(r, (ca?.healthBar as string | undefined) ?? 'Medium', team, sx, sy, u.hp / u.maxHp, u.def.level);
     }
     r.end();
   }
