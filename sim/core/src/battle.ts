@@ -332,7 +332,8 @@ export class Battle {
     this.regenElixir();
     this.fireSpellWaves();
     const units = this.units;
-    this.grid.rebuild(units); // pre-tick grid rebuild
+    // The native grid (rebuilt pre-tick) only decides query order; target search and push scan the
+    // list directly and reproduce that order where it matters (see gridBefore).
     for (let i = 0; i < units.length; i++) this.attackUpdate(units[i]); // all attack components
     for (let i = 0; i < units.length; i++) this.movementUpdate(units[i]); // all movement components
     for (let i = 0; i < units.length; i++) if (units[i].buffs.length) this.updateBuffs(units[i]); // buff components
@@ -668,19 +669,26 @@ export class Battle {
     const sight = d.sightRange + u.radius;
     const minR = this.getMinRange(u);
     const exT = this.extraSightCrownTowers;
-    const list = this.grid.queryCircle(u.x, u.y, exT + sight, 1, this.scratch);
+    const R = exT + sight; // grid query radius
+    const units = this.units;
     let best: Unit | null = null;
     let bestD = 0x7fffffff;
-    for (let i = 0; i < list.length; i++) {
-      const c = list[i];
-      if (!this.isValidTarget(u, c, true)) continue;
-      if (minR > 0 && !this.pointInRange(c, u.x, u.y, 0, minR, true)) continue;
+    let bestIdx = -1;
+    for (let i = 0; i < units.length; i++) {
+      const c = units[i];
+      // the grid holds only actors with a collision radius
+      if (c.radius <= 0 || !this.isValidTarget(u, c, true)) continue;
       const dx = c.x - u.x;
       const dy = c.y - u.y;
       const d2 = dx * dx + dy * dy;
       let lim = c.radius + sight;
-      if (c.tower !== TOWER_NONE) lim += exT;
+      if (c.tower !== TOWER_NONE) {
+        lim += exT;
+        const rr = c.radius + R;
+        if (d2 >= rr * rr) continue; // strict grid query edge
+      }
       if (d2 > lim * lim) continue;
+      if (minR > 0 && !this.pointInRange(c, u.x, u.y, 0, minR, true)) continue;
       const clip = d.sightClip;
       if (clip >= 1 && !u.isBuilding) {
         const L = Math.max(0, lim - clip);
@@ -688,13 +696,46 @@ export class Battle {
       }
       const side = d.sightClipSide;
       if (side > 0 && Math.abs(dx) > Math.max(0, lim - side)) continue;
-      if (d2 < bestD) { best = c; bestD = d2; }
+      if (d2 < bestD || (d2 === bestD && best !== null && this.gridBefore(c, i, best, bestIdx, u.x, u.y, R))) {
+        best = c; bestD = d2; bestIdx = i;
+      }
     }
-    list.length = 0;
     if (best) { this.setTarget(u, best, false, true); return; }
     let cand: Unit | null = u.isBuilding || u.tower !== TOWER_NONE ? null : this.defaultTarget(u);
     if (!this.isValidTarget(u, cand, true)) cand = null;
     this.setTarget(u, cand, false, true);
+  }
+
+  /**
+   * Exact native tie-break for equal distances: does `a` come before `b` in the spatial-grid query
+   * order (cells x-outer, y-inner from the query's lower corner; insertion = list order within a
+   * cell)? Cells are 1024 units; an actor occupies the cells of its square radius (+250 if mobile).
+   */
+  private gridBefore(a: Unit, ai: number, b: Unit, bi: number, qx: number, qy: number, R: number): boolean {
+    const ka = this.gridKey(a, qx, qy, R);
+    const kb = this.gridKey(b, qx, qy, R);
+    return ka !== kb ? ka < kb : ai < bi;
+  }
+
+  private gridKey(a: Unit, qx: number, qy: number, R: number): number {
+    const gw = this.grid.w;
+    const gh = this.grid.h;
+    let qx0 = (qx - R) >> 10;
+    let qy0 = (qy - R) >> 10;
+    let qy1 = (qy + R) >> 10;
+    if (qx0 < 0) qx0 = 0;
+    if (qy0 < 0) qy0 = 0;
+    if (qy1 >= gh) qy1 = gh - 1;
+    const r = a.radius + (a.def.speed > 0 ? 250 : 0);
+    let ax0 = (a.x - r) >> 10;
+    let ay0 = (a.y - r) >> 10;
+    if (ax0 < 0) ax0 = 0;
+    if (ay0 < 0) ay0 = 0;
+    if (ax0 >= gw) ax0 = gw - 1;
+    // first occupied cell inside the query rectangle in scan order
+    const cx = Math.max(ax0, qx0);
+    const cy = Math.max(ay0, qy0);
+    return (cx - qx0) * (qy1 - qy0 + 1) + (cy - qy0);
   }
 
   private defaultTarget(u: Unit): Unit | null {
@@ -1055,7 +1096,11 @@ export class Battle {
     if (!u.isAir && !this.fixture) {
       const cell = Arena.cellOf(u.x, u.y);
       const goal = Arena.cellOf(t.x, t.y);
-      if (u.pathGoal !== goal || u.pathVersion !== this.arena.version || (u.pathIdx >= u.path.length && cell !== goal)) {
+      // Re-path on a new target, when the target's cell moved more than one cell from the path goal,
+      // or when the arena changed (A: 0xfcca18 not decoded). An exhausted path walks straight on.
+      const g0 = u.pathGoal;
+      const far = g0 < 0 || Math.abs((g0 % GRID_W) - (goal % GRID_W)) > 1 || Math.abs(Math.floor(g0 / GRID_W) - Math.floor(goal / GRID_W)) > 1;
+      if (far || u.pathVersion !== this.arena.version) {
         u.path = this.arena.findPath(cell, goal, u.team, u.def.jumpEnabled);
         u.pathIdx = 0;
         u.pathGoal = goal;
@@ -1141,11 +1186,20 @@ export class Battle {
   private collidePush(u: Unit): void {
     const r = u.radius;
     if (r === 0) return;
-    const list = this.grid.queryCircle(u.x, u.y, r + 20, 0, this.scratch2);
+    // The native neighbour list comes from the grid (radius + 20); the accumulated push is an
+    // integer sum, so iteration order does not matter and a direct scan is exact.
+    const list = this.units;
     const rCap = r < 500 ? r : 500;
+    const qr = r + 20;
     for (let i = 0; i < list.length; i++) {
       const o = list[i];
-      if (o === u || o.state === ST_DEAD || o.isAir !== u.isAir || o.tunneling) continue;
+      if (o === u || o.state === ST_DEAD || o.isAir !== u.isAir || o.tunneling || o.radius <= 0) continue;
+      {
+        const qx = o.x - u.x;
+        const qy = o.y - u.y;
+        const rr = o.radius + qr;
+        if (qx >= rr || qx <= -rr || qy >= rr || qy <= -rr || qx * qx + qy * qy >= rr * rr) continue; // grid query test
+      }
       const mo = o.mass;
       const hasMove = o.def.speed > 0 && !o.isBuilding;
       const rs = hasMove ? r : rCap;
@@ -1168,7 +1222,6 @@ export class Battle {
       u.pushAccX += idiv((pen + 1) * dx, len);
       u.pushCount++;
     }
-    list.length = 0;
   }
 
   private jumpable(x: number, y: number): boolean {
@@ -1197,9 +1250,7 @@ export class Battle {
    */
   private updateHiding(u: Unit): void {
     let t = false;
-    const list = this.grid.queryCircle(u.x, u.y, this.getRange(u), 1, this.scratch);
-    for (const c of list) if (this.isValidTarget(u, c, false) && this.inRange(u, c, 0)) { t = true; break; }
-    list.length = 0;
+    for (const c of this.units) if (c.radius > 0 && this.isValidTarget(u, c, false) && this.inRange(u, c, 0)) { t = true; break; }
     if (t) {
       u.idleMs = 0;
       if (u.hidden) {
