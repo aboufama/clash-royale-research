@@ -1,4 +1,4 @@
-name: Research progress chart
+name: Checks
 
 on:
   push:
@@ -14,8 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Run standard-library tests
         run: python3 -m unittest discover -s tests -v
       - name: Run synthetic native-state and import-boundary controls
@@ -26,10 +24,15 @@ jobs:
           work/receipt-tests/bin/python -m unittest discover -s tests -p test_native_import_data_guard.py -v
           command -v cc
           work/receipt-tests/bin/python -m unittest discover -s tests -p test_compiled_import_data_guard.py -v
+      - name: Refuse proprietary game files in a public repository
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ -d game-files ] && [ "$REPO_PRIVATE" != "true" ]; then
+            echo "game-files/ contains original game inputs; this repository must be private." >&2
+            exit 1
+          fi
       - name: Check public tree contents
         run: python3 scripts/check_public_tree.py
       - name: Check chart synchronization
         run: python3 scripts/progress.py check
-      - name: Require committed chart review on every branch push
-        if: github.event_name == 'push'
-        run: python3 scripts/progress.py check-push --event "$GITHUB_EVENT_PATH"

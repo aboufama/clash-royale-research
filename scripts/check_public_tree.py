@@ -1,4 +1,8 @@
-"""Reject binary research inputs and accidental local/private files in Git."""
+"""Reject binary research inputs and accidental local/private files in Git.
+
+Exception: game-files/ holds the pinned original game inputs in this private
+repository; there only GitHub's per-file size limit is enforced.
+"""
 
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -33,8 +37,17 @@ FORBIDDEN_ROOTS = {
 }
 
 
+# The repository is private and deliberately carries the pinned original game
+# inputs here. CI separately fails if this directory exists while it is public.
+GAME_FILES_ROOT = "game-files"
+
+
 def problem(path, data):
     path = PurePosixPath(path)
+    if path.parts[0] == GAME_FILES_ROOT:
+        if len(data) > 100_000_000:
+            return "file exceeds GitHub's 100 MB limit"
+        return None
     if path.parts[0] in FORBIDDEN_ROOTS or path.suffix.lower() in FORBIDDEN_SUFFIXES:
         return "local/binary research artifact"
     if path.name == ".env" or path.name.startswith(".env."):

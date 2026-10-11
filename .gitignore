@@ -26,3 +26,13 @@ __pycache__/
 *.log
 *.gpr
 *.rep/
+
+# Proprietary game inputs are committed on purpose: this repository is PRIVATE.
+# CI fails if game-files/ is present while the repository is public.
+!game-files/
+!game-files/**
+
+# Simulator build outputs
+node_modules/
+dist/
+.vite/

@@ -1,61 +1,53 @@
-# Mandatory agent rules
+# Agent rules
 
-## Update the decompilation chart on EVERY push
+Read [GOAL.md](GOAL.md) first, then [HANDOFF.md](HANDOFF.md) for the current
+state and next steps.
 
-This is a hard user requirement. Before any agent pushes any branch:
+## Repository privacy (hard rule)
 
-1. Review the latest evidence and update `research/status.json`. Record a fresh
-   review and describe the changes or checks since the last push. If no native
-   decompilation milestone advanced, explicitly say so; do not invent progress.
-2. Run `python scripts/progress.py render --review "Describe the evidence reviewed"`
-   to increment the review sequence and update the generated status chart
-   in `README.md`. Never manually edit the generated section.
-3. Commit BOTH `research/status.json` and `README.md` in the range being pushed.
-   An uncommitted update does not satisfy the rule. Initial pushes must contain
-   a valid, synchronized committed chart.
-4. Run `python scripts/progress.py check`, the relevant tests, and
-   `python scripts/check_public_tree.py`. Install and use the pre-push hook:
-   `git config core.hooksPath .githooks`.
-5. Do not bypass the hook, skip CI, or weaken these checks to make a push pass.
-   Repair the chart or evidence instead. Branch deletions and tag-only pushes
-   do not publish a new development snapshot and are excluded by the hook.
+- This repository is **private** and contains the original game files in
+  `game-files/`. Never make it public, never copy `game-files/` or anything
+  decoded from it (sprites, atlases, data JSON, audio) into a public location,
+  and never upload it to third-party services.
+- CI fails if `game-files/` exists while the repository is public. Do not
+  weaken that check.
+- Generated or decoded assets go under ignored paths (`work/`, `dist/`), or are
+  rebuilt by scripts. Commit the scripts, not the bulk outputs. Small decoded
+  data the engine needs at runtime (for example gameplay JSON) may be
+  committed under `sim/data/` because the repository is private.
 
-## Evidence and research
+## Simulator work
 
-- HARD USER REQUIREMENT: troop interactions, attacks, projectiles, and towers
-  must be byte/bit identical to the original pinned simulation under identical
-  inputs. No approximate mechanics, numerical tolerances, visual matching, or
-  learned substitutes satisfy the goal. Preserve original simulation code and
-  gameplay data. See `GOAL.md` for the full acceptance criteria.
-- Keep exactness and policy training behind the engine-validation gate. A
-  constructor returning under mocked OS calls is a recovery milestone only.
-  No approximation or unsupported mechanic may be silently promoted to
-  recovered, equivalent, or complete.
-- Complete state capture must include every field affecting future simulation
-  and exact ordered events. Do not drop fields or normalize discrepancies
-  merely to make traces agree. Matching a finite corpus does not prove all-state
-  equivalence; original code/data/runtime preservation must also be established.
+- Record every mechanic's fidelity level (V/P/D/A/–) in
+  [docs/FIDELITY.md](docs/FIDELITY.md) in the same commit that changes it.
+  Never label an approximation as data-driven or ported.
+- Use the build's own data over remembered stats. When you must use outside
+  knowledge, mark it **A** and say where it came from.
+- Keep the engine deterministic: fixed tick, integer/fixed-point game units,
+  seeded RNG, stable iteration order. A replay of (seed, actions) must
+  reproduce the match exactly.
+- The engine must not depend on the renderer; headless and browser use the
+  same core.
+- Keep [HANDOFF.md](HANDOFF.md) current when the state, next steps or open
+  decisions change, so a fresh agent can continue.
+- Record decisions with their reasons in [docs/DECISIONS.md](docs/DECISIONS.md).
 
-- Distinguish observed behavior, static-analysis results, hypotheses, and
-  approximations. Do not mark movement or battle equivalence recovered because
-  a loader runs, a function decompiles, or a replay looks plausible.
-- Pin the exact APK version, hashes, ABI, asset set, and runtime assumptions.
-  New builds get separate records. State every mocked operation in emulators.
-- Preserve reproducible scripts and small summarized results. Store large
-  inputs and generated artifacts under ignored `work/` paths.
-- Keep original APKs, native binaries, protected assets, raw memory dumps,
-  copied game implementation, credentials, and local absolute paths out of Git.
-- Use isolated emulation for foreign native code. Do not silently turn modeled
-  system calls into host operations or interact with a game account.
-- Use parallel agents for independent reverse-engineering, validation, and
-  tooling work when available. Assign distinct files/projects and share concrete
-  findings. The integrating agent must verify claims before publishing them.
-- The next requested visual demo is a full original-engine match with troop
-  placement and interactions. Report isolated recovery milestones in text until
-  that is executable; do not substitute another synthetic component animation.
+## Native research track (paused reference)
 
-## Completion
+- `research/`, `scripts/` and `tests/` hold the exact native-engine work. Its
+  claims keep the strict evidence rules in
+  [research/EXACT_ENGINE_AGENTS.md](research/EXACT_ENGINE_AGENTS.md). The
+  per-push chart review is retired; update `research/status.json` and run
+  `python scripts/progress.py render --review "..."` only when native research
+  changes.
+- Most native recovery artifacts (recovered memory images, Ghidra project,
+  emulator harness state) live only on the owner's Mac under the ignored
+  `work/` directory. They are not in this repository.
 
-Run checks appropriate to the changes. Report what became demonstrably possible,
-what remains unresolved, and the next concrete experiment. Do not claim an exact
-simulator without evidence from the original engine.
+## Checks before pushing
+
+- `python3 -m unittest discover -s tests`
+- `python3 scripts/check_public_tree.py`
+- `python3 scripts/progress.py check`
+- Simulator tests (once `sim/` exists).
+- Install the hook: `git config core.hooksPath .githooks`.

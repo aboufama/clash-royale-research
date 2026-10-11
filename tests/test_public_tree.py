@@ -24,6 +24,13 @@ class PublicTreeTests(unittest.TestCase):
         self.assertIsNotNone(module.problem("research/evidence.json", b"abc\0def"))
         self.assertIsNotNone(module.problem("research/evidence.txt", bytes([255])))
 
+    def test_game_files_allow_binaries_up_to_github_limit(self):
+        self.assertIsNone(module.problem("game-files/apk/game.apkm", b"\0" * 2_000_000))
+        self.assertIsNone(module.problem("game-files/asset-pack/assets/sc/ui.sc", b"\xff\0"))
+        self.assertIsNotNone(module.problem("game-files/big.bin", b"\0" * 100_000_001))
+        # Only the top-level game-files directory is exempt.
+        self.assertIsNotNone(module.problem("research/game-files/game.apk", b"example"))
+
     def test_accepts_small_public_evidence(self):
         self.assertIsNone(
             module.problem("research/evidence/example.json", b'{"returned":false}')

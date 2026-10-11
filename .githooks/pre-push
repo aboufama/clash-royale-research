@@ -1,5 +1,8 @@
 #!/bin/sh
-# Validate the exact commits being pushed, not an uncommitted working copy.
+# Check the native research chart stays synchronized and no stray local or
+# binary files are committed outside game-files/. The chart no longer needs a
+# new review on every push: the native track is a paused reference (AGENTS.md).
 set -eu
 repo_root=$(git rev-parse --show-toplevel)
-exec python3 "$repo_root/scripts/progress.py" --root "$repo_root" check-push
+python3 "$repo_root/scripts/progress.py" --root "$repo_root" check
+exec python3 "$repo_root/scripts/check_public_tree.py"

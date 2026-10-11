@@ -1,4 +1,39 @@
-# Clash Royale native-engine research
+# Clash Royale real-time battle simulator
+
+**Private repository.** It contains original game files in `game-files/`.
+
+The goal is a real-time Clash Royale battle simulator for the pinned Android
+build 160402020. You can place any card for either side, every troop,
+projectile and spell is drawn with the game's original art, and the same
+engine runs headless far faster than real time to train a reinforcement-learning
+policy. Fidelity is judged by an expert player's smell test, with every mechanic's
+source tracked; byte-identical replication is not required. See [GOAL.md](GOAL.md).
+
+**Start here:** [HANDOFF.md](HANDOFF.md) (current state, next steps, open
+decisions) · [AGENTS.md](AGENTS.md) (rules) · [docs/FIDELITY.md](docs/FIDELITY.md)
+(mechanics tracker) · [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `game-files/` | Pinned original inputs: APK bundle and unpacked install-time asset pack, with SHA-256 manifest |
+| `tools/` | Extraction scripts for gameplay data and art |
+| `sim/` | Simulator: TypeScript engine, browser viewer, training bridge (not started) |
+| `docs/` | Fidelity tracker, decisions, prior-work notes |
+| `research/`, `scripts/`, `tests/` | Paused exact native-engine research track (reference and verification oracle) |
+
+## Status
+
+Milestone M0 (inputs and extraction) is in progress. No engine code exists yet.
+
+---
+
+# Native-engine research track (paused reference)
+
+This section is the original README of the exact-emulation effort. It is kept
+because the emulated original engine can serve as a reference for porting and
+checking individual mechanics.
 
 Tools and evidence for recovering the original native battle simulation from a
 pinned Clash Royale Android build, with the goal of an exact environment for
@@ -18,7 +53,7 @@ Ordinary-match and byte-identical Android equivalence remain unvalidated.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
 towers. No approximation counts as success.** The [active goal and acceptance
-criteria](GOAL.md) require original simulation code/data and bit-identical
+criteria](research/EXACT_ENGINE_GOAL.md) require original simulation code/data and bit-identical
 complete per-tick state and events before an environment is accepted for training.
 
 ## Decompilation status
@@ -50,8 +85,8 @@ No overall completion percentage is claimed. Status labels describe the evidence
 <!-- decompile-status:end -->
 
 The chart records demonstrated milestones, not a guessed percentage of the game.
-Every push must review and update it, including pushes with no decompilation
-advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
+It is updated when native research changes; see
+[research/EXACT_ENGINE_AGENTS.md](research/EXACT_ENGINE_AGENTS.md).
 
 ## Current evidence
 
