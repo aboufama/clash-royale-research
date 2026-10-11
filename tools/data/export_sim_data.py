@@ -87,6 +87,15 @@ def main() -> None:
     def table(name: str) -> dict:
         return {k: strip(v) for k, v in load(name).items()}
 
+    texts: dict[str, str] = {}
+    texts_path = ROOT / "extracted/data/raw/csv_client/texts.csv"
+    if texts_path.exists():
+        import csv
+        with texts_path.open(encoding="utf-8", newline="") as f:
+            for row in csv.reader(f):
+                if len(row) > 1 and row[0].startswith("TID_"):
+                    texts[row[0]] = row[1]
+
     cards: dict[str, dict] = {}
     for kind, name in (("troop", "spells_characters"), ("building", "spells_buildings"), ("spell", "spells_other")):
         for rec in rows(load(name)):
@@ -94,6 +103,9 @@ def main() -> None:
                 continue
             r = strip(rec)
             r["_type"] = kind
+            tid = rec.get("TID")
+            if isinstance(tid, str) and tid in texts:
+                r["_displayName"] = texts[tid]
             cards[rec["Name"]] = r
 
     out = {
