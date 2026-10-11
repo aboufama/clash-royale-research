@@ -1,0 +1,40 @@
+{
+  "scope": "Original static descriptor construction to provider boundary, original raw TOML parser, then original merge as separate native calls. Android asset-provider/bootstrap not executed to completion.",
+  "asset_pack_sha256": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3",
+  "manifest_packed_sha256": "534dee697758b92ddc6d8ef9eea01a75ff6f39b44c76c14f3a47c088fa82a93b",
+  "manifest_decoded_sha256": "94bb902053101ddf994ae1d1750fe785813486474029167040579e1dfccddc36",
+  "manifest_decoded_bytes": 17159,
+  "static_bundle_count": 157,
+  "static_path_count": 160,
+  "merged_bundle_count": 158,
+  "merged_path_count": 421,
+  "missing_pinned_paths": [],
+  "returned": true,
+  "text_unchanged": true,
+  "imports": {
+    "_Znam": 2955,
+    "memcpy": 5235,
+    "_Znwm": 2416,
+    "_ZdaPv": 1109,
+    "_ZdlPv": 268,
+    "memset": 268,
+    "strlen": 2202,
+    "__cxa_atexit": 55,
+    "memcmp": 2088,
+    "strnlen": 1305,
+    "_ZNSt6__ndk112__next_primeEm": 7
+  },
+  "schema_version": 1,
+  "claim": "Original static descriptors and original TOML manifest merge produce 158 bundles and 421 ordered asset paths, all present in the pinned pack.",
+  "independent_execution": "Entire private reports match, including every ordered bundle and path; duplicates are preserved.",
+  "limitations": [
+    "The enclosing constructor is stopped at the original provider boundary, then original parsing and merging are called separately.",
+    "Complete Android asset-provider/cache/bootstrap is not executed.",
+    "Manifest construction is an asset-load plan, not successful typed loading of every dependency or battle equivalence.",
+    "Exploratory harness remains local; only summarized evidence is public."
+  ],
+  "scripts_sha256": {
+    "native_manifest.py": "62fbf2953d854ee97f3c06a1603c6d809890767e8c2ca7de1ca8cae7045e0fa8",
+    "probe_native_manifest.py": "5510163713d7e77cf5bf38676286c29483634f9a83c1c8e38e8d3b9293575622"
+  }
+}

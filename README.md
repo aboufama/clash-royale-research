@@ -7,8 +7,10 @@ reinforcement learning.
 The target is behavioral equivalence for a specific build and asset set.
 Extracted card statistics and plausible-looking movement do not establish that
 equivalence. The original native world loop now drives movement and melee
-combat on synthetic fixtures, and the original CSV parser loads game tags.
-A complete battle environment is still unavailable.
+combat on synthetic fixtures. Original data loaders now supply the Knight's
+record, rarity, attack sequence and ID, and the original TOML parser accepts
+all 297 shipped logic TOML assets. A complete battle environment is still
+unavailable.
 
 **Hard requirement: byte-identical troop interactions, attacks, projectiles and
 towers. No approximation counts as success.** The [active goal and acceptance
@@ -28,16 +30,16 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Public tools recover support, 416 selectors and libg from pinned inputs. Original CSV parsing and tag registration now load 62 tags with identical independent image output. Full native/Android and battle-data initialization remain incomplete. |
+| Supporting native runtime | Partial | Public original-parser probe accepts 297/297 pinned logic TOMLs. Original manifest merge yields 158 bundles/421 ordered asset paths. Full native data dependencies and Android asset-provider initialization remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Original movement and actor state updates execute for 60 native world ticks on a synthetic single-actor arena; all recorded fields match independent runs. Real arenas, complete troop state and full-match equivalence remain unvalidated. |
 | Target acquisition | Not recovered | No target acquisition algorithm has been recovered. |
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
-| Combat interactions | Partial | Original world loop executes three 80-tick melee fixtures, scheduling attacks and damage itself. All 240 selected tick records match independent runs, including shield and no-attack controls; synthetic setup, projectiles and full-match parity remain open. |
+| Combat interactions | Partial | Original loaders now supply Knight statistics, Common rarity, attack sequence and IDs; two actors exchange six native melee hits over 80 world ticks, with identical separate reports and unchanged executable regions. Arena/context/targets remain fixtures; full battle parity is unvalidated. |
 | Tower interactions | Not recovered | Authentic tower configuration is available; tower targeting, attack timing, and damage behavior remain unrecovered and unvalidated. |
 | Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
 
-Review **7** · **2026-10-11T07:23:21Z** · Reviewed REA source at 21650455 across native providers, Android/runtime and evidence workflows. Useful Ghidra tracing and provenance patterns are documented with integration limits. This tooling review advances no native recovery or battle-equivalence milestone.
+Review **9** · **2026-10-11T07:32:21Z** · Original TOML probe accepts all 297 pinned assets; separate runs reproduce 158 native manifest bundles, 421 ordered paths and 80 reciprocal Knight world ticks using original-loaded records, rarity, sequences and IDs. Evidence preserves runtime models and synthetic-world limits; full-match parity remains unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -95,7 +97,21 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   shield case ends at 611 HP; omitting attack-component attachment produces no
   damage. All **240 selected tick records** match independent execution, with
   original executable regions unchanged.
-- Native troop-data loading, deployment, autonomous target acquisition, towers,
+- Subsequently executed **80 original world ticks with two Knights loaded by
+  the original CSV/TOML parsers and typed loaders**. Actual rarity records,
+  native-assigned IDs and native-generated attack sequences replace those
+  handwritten inputs. Both Knights take three hits, ending at 453 HP. Complete
+  reports match separate runs, but contain only selected state; arena/context
+  setup and initial targets remain fixtures.
+- Executed the original TOML parser on **297/297 shipped logic TOML assets**,
+  each in a fresh emulator. All return nonnull trees without error callbacks;
+  the original text region remains unchanged. A bounded decimal-to-binary64
+  libc model is explicit. This is parsing, not complete gameplay-data loading.
+- Executed original static asset-descriptor construction and native manifest
+  merging, yielding **158 bundles and 421 ordered paths**, all present in the
+  pinned asset pack. Complete reports match separate runs; Android asset-provider
+  initialization is still incomplete.
+- Complete troop-data dependency loading, deployment, autonomous target acquisition, towers,
   complete match rules and complete per-tick equivalence remain unvalidated.
 
 See [the build record](research/builds/160402020.json) and
@@ -283,6 +299,32 @@ bytes and 16 inline CSV-static-string bytes; it does not serialize table or
 registry heap objects. The melee fixture needs these image globals only.
 For further native data loading, reuse the live `ParserProbe` and
 `initialize_tags` API to retain original heap objects.
+
+Run every shipped logic TOML asset through the original parser:
+
+```sh
+python scripts/probe_original_toml.py \
+  --image work/libg-recovered/libg-memory.bin \
+  --library work/builds/160402020/native/libg.so \
+  --asset-pack work/builds/160402020/install_time_asset_pack.apk \
+  --out work/toml-corpus
+```
+
+Use `--asset characters/knight.toml` to select one exact corpus member. This
+command executes the original TOML static initializer and parser; it does not
+translate files through a replacement TOML parser. Every asset has a fresh
+emulator, so success does not establish a complete live data registry. Original
+Bionic floating-point conversion is not executed: the explicit `atof` model
+supports a bounded decimal grammar and computes normal binary64 results using
+exact rational arithmetic and nearest-even rounding. Unsupported operations stop
+the probe. See [parser evidence](research/evidence/native-toml-corpus.json).
+
+The newer [native-loaded Knight experiment](research/evidence/native-loaded-knight.json)
+and [asset-manifest experiment](research/evidence/native-asset-manifest.json)
+are independently reproduced integration results. Their exploratory harnesses
+remain local pending incorporation into the public command set. They do not
+upgrade the earlier public melee command's synthetic setup or establish a
+complete original-game reference.
 
 See [native CSV/tag evidence](research/evidence/native-csv-tags.json),
 [world-loop melee evidence](research/evidence/native-world-melee.json) and

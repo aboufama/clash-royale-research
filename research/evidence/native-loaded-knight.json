@@ -1,0 +1,854 @@
+{
+  "schema_version": 1,
+  "claim": "Original-loaded Knight records, actual Common rarity and original-assigned IDs drive 80 original world ticks of reciprocal melee in a synthetic world.",
+  "scope": "80 original world ticks with native raw Knight/rarity/global-ID parsing and native component construction. Synthetic empty arena, manual world/context links, selected manually materialized globals and explicitly assigned targets remain; selected state only, not complete battle parity.",
+  "inputs": {
+    "image": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "library": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "knight": "82c000ea05ec5d7e4d344f6153d08a0aca7dc99804666f3c7dce7bb4bf1a44cb",
+    "tags": "88e657c9a71b4039467794f6acfc11ccf775dae78c0aeb1412dcb831a6ba02ff",
+    "globals": "af87c4faf1d965a92a3f3f1b813e683c978c656ed09d041536d0424b0ffd92cd",
+    "rarities": "9d787df584f9c2b44180bac10c5d513bdd94a882f46561fb575a5613b37fd309",
+    "global_ids": "fdc55ba97ce21aadaec9b34c72607db1c5a6e2bbea84a051d56fc5a0669f25c6",
+    "stdlib_sha256": "4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4"
+  },
+  "native_knight": {
+    "hp": 690,
+    "damage": 79,
+    "rarity_resolved": true,
+    "attack_sequences": [
+      {
+        "selector": 0,
+        "timing_modifier_e8": 100,
+        "push_a8": 0,
+        "push_ac": 0
+      }
+    ],
+    "global_id": 34000000
+  },
+  "stages": [
+    "native_csv_tags",
+    "native_owner_and_collections",
+    "native_global_ids_ingestion",
+    "native_rarity_all_three_phases",
+    "native_knight_all_three_phases",
+    "native_world_and_actor_component_constructors"
+  ],
+  "original_entry_counts": {
+    "world_tick": 80,
+    "attack_tick": 160,
+    "health_tick": 160,
+    "actor_tick": 160,
+    "damage_flush": 80,
+    "attack_execute": 6,
+    "melee_execute": 6,
+    "damage_enqueue": 6,
+    "damage_apply": 6,
+    "hp_application": 6
+  },
+  "executable_regions": [
+    {
+      "address": "0x10000000",
+      "bytes": 25685280,
+      "sha256_before": "74c6fb145fb75093289cf3517dc6ac1f47f09d433d4b0a35c91a44df5949f542",
+      "sha256_after": "74c6fb145fb75093289cf3517dc6ac1f47f09d433d4b0a35c91a44df5949f542"
+    },
+    {
+      "address": "0x11ab8000",
+      "bytes": 179380,
+      "sha256_before": "0f04191233848a62afe8d6b2e20254f3e7aef876cd5d1eefa98b296430f5e27c",
+      "sha256_after": "0f04191233848a62afe8d6b2e20254f3e7aef876cd5d1eefa98b296430f5e27c"
+    },
+    {
+      "address": "0x3009ecb0",
+      "bytes": 616000,
+      "sha256_before": "63c50cef874f5cdb51cafe41c9612960a8902632fe827144fb6f414297133ddc",
+      "sha256_after": "63c50cef874f5cdb51cafe41c9612960a8902632fe827144fb6f414297133ddc"
+    }
+  ],
+  "executable_code_unchanged": true,
+  "independent_execution": {
+    "result": "Entire private JSON reports match exactly in separate emulator processes, including all 80 selected tick records, entry counts, imported-operation counts and executable hashes.",
+    "complete_battle_state_compared": false,
+    "independent_live_game_reference": false
+  },
+  "runtime_models": [
+    "Bounded allocation, memory, ASCII string and integer-only diagnostic-formatting imports.",
+    "Original shipped libc++ shared-pointer/mutex/guard code executes; isolated uncontended pthread lock/unlock and gettid are explicit platform models.",
+    "Unknown native operations and game assertions stop execution."
+  ],
+  "limitations": [
+    "Synthetic empty 5x5 arena and manual world/level/context linkage.",
+    "Only selected pathfinding globals are manually materialized from original globals.csv; full globals/modes/arena initialization is incomplete.",
+    "Both initial targets are explicitly assigned with the original target setter; autonomous acquisition is not established.",
+    "One-file global-ID bundle linkage is explicit harness setup; original CSV parsing, ID strategy and ID assignment execute.",
+    "Only the required Knight and rarity records are populated in the relevant native collections; complete dependency assets are not loaded.",
+    "Health starts at 690 and reaches 453; this run does not exercise lethal damage/death, towers or complete match rules.",
+    "Only selected state is recorded. Matching reports does not establish all-state or original Android runtime equivalence.",
+    "Exploratory self-contained harness is retained locally by hash and has not yet been incorporated into the public command set."
+  ],
+  "harness_sha256": {
+    "bounded_format.py": "e0f22a400f31bc2872f5a66c249c2f59057e1dac6b23578bc45afacffb624aa0",
+    "native_csv_tags.py": "93fbdb678ff44091ca29a18df81f807a2f8d1dc9c4770f203e2d12c45cf5b5e3",
+    "native_data.py": "7e0a1827cb044bf9b1f6db4ef131838a04b63ece90c92682160a043c484ffe86",
+    "native_global_ids.py": "294ddadd87ce410d1ba6ef2593b732d2a3e4acb1893529e67abeb6719b982cee",
+    "native_rarity_records.py": "badd5a78a4a941a7a362fb3cdde9c7a4f934b53b6b23635c5b80386a5bf84c9b",
+    "probe_csv.py": "e3ca663210ba795e0a4da5e87184443c6f11285516482fb4864357c93f00f040",
+    "probe_loaded_knight_world_ids.py": "705765d65b7c47fbbc6d49e49dc4e7a3e378c3638fcab16e5daa052cc0de5b49",
+    "probe_original_pathfinding.py": "51c587cf8d8d1aeded645abb3acd07861dfc037b0275822eb582372294aefb34",
+    "sc_lzma.py": "96e9b3d5c80cecc4085bb3a2c20f9f59ab529afe9d63429cdfbab36d7dcf20d4",
+    "source-provenance.json": "7ce09e6d2b2741cf6ece647b8cbd14d316ab17732a851a7f668e6a41dfb34d71"
+  },
+  "ticks": [
+    {
+      "tick": 0,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 750,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 1,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 800,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 2,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 850,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 3,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 900,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 4,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 950,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 5,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 1000,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 6,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 1050,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 7,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 1100,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 8,
+      "target_hp": 690,
+      "source_hp": 690,
+      "attack_timer": 1150,
+      "damage_applies": 0,
+      "attack_calls": 0,
+      "actor_count": 2
+    },
+    {
+      "tick": 9,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1200,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 10,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1250,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 11,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1300,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 12,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1350,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 13,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1400,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 14,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1450,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 15,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1500,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 16,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1550,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 17,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1600,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 18,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1650,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 19,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1700,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 20,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1750,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 21,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1800,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 22,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1850,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 23,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1900,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 24,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 1950,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 25,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2000,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 26,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2050,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 27,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2100,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 28,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2150,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 29,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2200,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 30,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2250,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 31,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2300,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 32,
+      "target_hp": 611,
+      "source_hp": 611,
+      "attack_timer": 2350,
+      "damage_applies": 2,
+      "attack_calls": 2,
+      "actor_count": 2
+    },
+    {
+      "tick": 33,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2400,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 34,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2450,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 35,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2500,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 36,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2550,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 37,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2600,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 38,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2650,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 39,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2700,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 40,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2750,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 41,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2800,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 42,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2850,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 43,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2900,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 44,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 2950,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 45,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3000,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 46,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3050,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 47,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3100,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 48,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3150,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 49,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3200,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 50,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3250,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 51,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3300,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 52,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3350,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 53,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3400,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 54,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3450,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 55,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3500,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 56,
+      "target_hp": 532,
+      "source_hp": 532,
+      "attack_timer": 3550,
+      "damage_applies": 4,
+      "attack_calls": 4,
+      "actor_count": 2
+    },
+    {
+      "tick": 57,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3600,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 58,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3650,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 59,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3700,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 60,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3750,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 61,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3800,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 62,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3850,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 63,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3900,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 64,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 3950,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 65,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4000,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 66,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4050,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 67,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4100,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 68,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4150,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 69,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4200,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 70,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4250,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 71,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4300,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 72,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4350,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 73,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4400,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 74,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4450,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 75,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4500,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 76,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4550,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 77,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4600,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 78,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4650,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    },
+    {
+      "tick": 79,
+      "target_hp": 453,
+      "source_hp": 453,
+      "attack_timer": 4700,
+      "damage_applies": 6,
+      "attack_calls": 6,
+      "actor_count": 2
+    }
+  ],
+  "imports": {
+    "_Znam": 6195,
+    "memcpy": 15872,
+    "_ZdaPv": 3158,
+    "_Znwm": 3314,
+    "memset": 111,
+    "_ZdlPv": 145,
+    "memmove": 20,
+    "strlen": 3511,
+    "__cxa_atexit": 12,
+    "memcmp": 2981,
+    "_ZNSt6__ndk112__next_primeEm": 92,
+    "strncasecmp": 68,
+    "atoi": 1344,
+    "original_libc++:_ZNSt6__ndk119__shared_mutex_baseC1Ev": 4,
+    "original_libc++:_ZNSt6__ndk119__shared_mutex_base11lock_sharedEv": 12,
+    "pthread_mutex_lock": 26,
+    "pthread_mutex_unlock": 26,
+    "original_libc++:_ZNSt6__ndk119__shared_mutex_base13unlock_sharedEv": 12,
+    "original_libc++:_ZNSt6__ndk119__shared_weak_count4lockEv": 1,
+    "original_libc++:__cxa_guard_acquire": 1,
+    "modeled_gettid": 1,
+    "original_libc++:__cxa_guard_release": 1,
+    "strcasecmp": 10,
+    "vsnprintf": 55,
+    "strcmp": 7,
+    "strnlen": 505,
+    "memchr": 10,
+    "__strlen_chk": 698
+  }
+}

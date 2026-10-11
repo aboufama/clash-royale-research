@@ -336,3 +336,59 @@ records the fixture, entry points and observed trace.
 The next missing layer is original battle initialization: full data tables,
 deployment and target acquisition, towers, outer match rules and complete state
 capture. None of these finite fixture results establishes full-match parity.
+
+## Original TOML parsing and native-loaded Knight integration
+
+The original TOML static initializer `0x12a86fc` and parser `0x12a6e64` now
+accept all 297 pinned `csv_logic` TOML assets. Each asset uses a fresh emulator
+and unchanged original input bytes, including the duplicate-table
+`character_buffs.toml` that a conventional TOML parser rejects. All calls
+return nonnull trees with zero error callbacks and unchanged original `.text`.
+The separate executions match every selected deterministic result, input hash,
+import count and observed decimal conversion. Complete parse-tree contents
+have not been independently compared.
+
+Three files require `atof`. The explicit bounded model converts exact decimal
+ratios to normal IEEE binary64 using nearest-even rounding with default FPCR.
+It fails on unsupported syntax, range, subnormal results or nondefault FPCR.
+This model is not recovered Bionic and does not establish full runtime parity.
+An exploratory malformed-input control stopped at an unsupported formatting
+import; it is not evidence that the native parser rejected the input.
+See [the public corpus probe evidence](evidence/native-toml-corpus.json).
+
+The native table owner, original tag and rarity CSV parsers, original Knight
+TOML reader, all three Knight typed-loader phases, original global-ID ingestion
+and native collection preparation now run in one retained emulator heap.
+The original code supplies Knight HP 690, damage 79, Common rarity, ID 34000000
+and its generated attack sequence. Original actor/component constructors create
+the combat objects. These fields and that sequence are no longer handwritten.
+
+Two such actors exchange attacks through 80 original world ticks: both take
+damage at zero-based ticks 9, 33 and 57, reaching HP 611, 532 and 453. The
+original code enqueues and applies all six damage events. Independent execution
+reproduces the entire recorded report, including all 80 selected tick records,
+entry/import counts and all three executable-region hashes. Original libg and
+shipped libc++ executable regions remain unchanged.
+
+The fixture still supplies an empty 5x5 arena, manual world/context links,
+selected globals parsed with Python CSV, and initial targets. It does not load
+all dependency records or test death, autonomous acquisition, towers or match
+rules. Memory/string/platform imports include explicit bounded models. No
+complete state capture or independent live Android battle comparison has run.
+See [the native-loaded Knight evidence](evidence/native-loaded-knight.json);
+its frozen exploratory harness has not yet joined the public command set.
+
+## Original asset manifest
+
+The original static descriptor builder produces 157 bundles with 160 ordered
+paths. Parsing the unchanged `data_manifest.toml` with the original TOML reader
+and calling the original merge produces 158 bundles with 421 ordered paths.
+Every referenced path exists in the pinned pack; duplicates and order are
+preserved. Independent runs reproduce the entire private report, and original
+text stays unchanged.
+
+The enclosing native constructor is stopped at its asset-provider boundary;
+parsing and merging are subsequently invoked as separate original calls.
+This establishes the native asset-load plan, not a completed Android asset
+cache/provider or successful typed loading of every asset. See
+[manifest evidence](evidence/native-asset-manifest.json).

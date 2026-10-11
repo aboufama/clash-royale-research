@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 7,
-    "reviewed_at": "2026-10-11T07:23:21Z",
-    "summary": "Reviewed REA source at 21650455 across native providers, Android/runtime and evidence workflows. Useful Ghidra tracing and provenance patterns are documented with integration limits. This tooling review advances no native recovery or battle-equivalence milestone."
+    "sequence": 9,
+    "reviewed_at": "2026-10-11T07:32:21Z",
+    "summary": "Original TOML probe accepts all 297 pinned assets; separate runs reproduce 158 native manifest bundles, 421 ordered paths and 80 reciprocal Knight world ticks using original-loaded records, rarity, sequences and IDs. Evidence preserves runtime models and synthetic-world limits; full-match parity remains unvalidated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Public tools recover support, 416 selectors and libg from pinned inputs. Original CSV parsing and tag registration now load 62 tags with identical independent image output. Full native/Android and battle-data initialization remain incomplete."
+        "Public original-parser probe accepts 297/297 pinned logic TOMLs. Original manifest merge yields 158 bundles/421 ordered asset paths. Full native data dependencies and Android asset-provider initialization remain incomplete."
       ]
     },
     {
@@ -84,7 +84,7 @@
       "id": "combat",
       "status": "partial",
       "evidence": [
-        "Original world loop executes three 80-tick melee fixtures, scheduling attacks and damage itself. All 240 selected tick records match independent runs, including shield and no-attack controls; synthetic setup, projectiles and full-match parity remain open."
+        "Original loaders now supply Knight statistics, Common rarity, attack sequence and IDs; two actors exchange six native melee hits over 80 world ticks, with identical separate reports and unchanged executable regions. Arena/context/targets remain fixtures; full battle parity is unvalidated."
       ]
     },
     {
