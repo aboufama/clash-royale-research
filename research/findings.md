@@ -1120,10 +1120,45 @@ Both observers have no pending calls or errors. Original game, shipped C++ and
 Bionic code checks pass; all 52 preloaded task sources remain unchanged, with
 no added task source. The 76-file review archive matches before and after the
 run. Forty host/observer controls and two separate offline record reviews pass.
-An independent fresh repetition is still pending. The [one-action evidence](evidence/native-external-action-one-shot.json)
-preserves the exact hashes and finite scope.
+An independent fresh repetition now matches thirteen whole receipt files
+byte-for-byte. The fourteenth, the bootstrap report, differs only in six
+explicitly listed host initialization durations. All other fields, including
+the source manifests, native events, step results and terminal checks, match.
+Fourteen comparison controls reject unexpected native/source differences,
+invalid timing values and attempts to compare a run to itself. Both closed-run
+offline audits also match byte-for-byte. The [one-action evidence](evidence/native-external-action-one-shot.json)
+preserves the exact hashes and finite scope; these receipts do not capture
+every simulation-affecting field.
 
 This is a diagnostic action/step milestone. It does not establish a general legal
 action API, normal client scheduling, reset, complete state, or a full externally
 controlled battle. The context is still the built-in test configuration under
 modeled platform inputs; ordinary-game byte equivalence and training remain gated.
+
+## Original dynamic loading and reserved placement
+
+Following genuine original linker initialization, an explicit analysis caller
+now invokes the original Android dynamic-loader API on a fresh pinned
+`libdl.so`. Original code creates the third library record and performs all
+twelve symbol-relocation stores. Original symbol lookup and address membership
+return the expected native results. A duplicate load retains the same handle
+without further mapping; a missing symbol produces the original error, which
+clears on the next error query. The positive and undeclared-file negative
+reports each repeat byte-for-byte, with 38 boundary controls passing.
+
+A separate probe calls original `mmap64` for a 65,536-byte inaccessible
+reservation, then supplies the documented strict reserved-address input to
+original `android_dlopen_ext`. Native file mappings place the fresh library at
+that address and preserve original page permissions, relocations and lookup
+behavior. A fresh 4,096-byte reservation instead returns the original native
+size error, without target relocations or a new library record. Both complete
+reports repeat exactly, and 42 boundary controls pass.
+
+The original linker and both libraries' executable bytes remain unchanged.
+These target libraries have no initializers, and no target instruction executes.
+The finite virtual files, entropy, process inputs and kernel operations are
+declared harness boundaries. Neither probe registers existing recovered game
+memory or establishes the game's dependency initialization. The [dynamic-loader
+record](evidence/native-original-dlopen.json) retains those limits. The next
+runtime step is original initial-group loading of real Bionic dependencies,
+preserving their TLS and constructor ordering.

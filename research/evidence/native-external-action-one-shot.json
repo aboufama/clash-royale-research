@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "classification": "First observed external-action deployment in a fresh original test context; independent fresh repetition pending",
+  "classification": "Independently repeated external-action deployment in two fresh original test contexts; complete-state and ordinary-game equivalence remain unvalidated",
   "build": "160402020",
   "image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
   "scenario": "Normal",
@@ -81,14 +81,201 @@
   "original_game_and_cpp_and_bionic_code_integrity_passed": true,
   "native_guard_violations": 0,
   "process_closed_successfully": true,
-  "independent_fresh_run_reproduced": false,
+  "independent_fresh_run_reproduced": true,
   "byte_exact_gate_satisfied": false,
   "limits": [
-    "This is one 121-tick diagnostic with one intended action, not a full externally controlled match or general action API.",
+    "Two fresh 121-tick diagnostics each execute the same one intended action; this is not a full externally controlled match or general action API.",
     "A previous built-in action supplies coordinate/slot provenance only. Omitting the random-policy runner changes RNG and scheduling history; parity with that battle is not assumed.",
     "Original Normal test initialization and explicitly modeled asset/platform boundaries remain. Ordinary Android/client/server initialization is not reproduced.",
     "Manual original core stepping omits runner secondary comparison, statistics/result packaging and production timed prediction/checksum/network reconciliation.",
     "Command-to-debit-to-spawn nesting is observed; later live insertion is an exact actor/world pointer association, not proof of all causality or complete state.",
     "No reset, complete per-tick state, general rejection corpus, throughput qualification or training acceptance is established."
-  ]
+  ],
+  "fresh_repeat": {
+    "root_reproduced_comparison_sha256": "2ee6df6e5e4a3d80f4e984fce1be174e7f8ee646385700fc16b2ae6b390b3396",
+    "comparison_controls_passed": 14,
+    "complete_receipt_files_compared": 14,
+    "whole_files_byte_identical": 13,
+    "all_native_and_source_fields_match": true,
+    "unexpected_differences": [],
+    "closed_run_offline_audits_byte_identical": true,
+    "closed_run_offline_audit_sha256": "c641348fc92d1233a8b942ae744dacc77b373fb067f5ca187be34c991a1a048f",
+    "controller_live_and_frozen_files_reverified": 76,
+    "repeat_process_closed_successfully": true,
+    "files": [
+      {
+        "file": "native-events.json",
+        "first_sha256": "dbae88e030435e35a7335feb8ef5165c19e3448a1b7a76aba7cf8e31b9909139",
+        "second_sha256": "dbae88e030435e35a7335feb8ef5165c19e3448a1b7a76aba7cf8e31b9909139",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "native-hand-events.json",
+        "first_sha256": "cac90c17599bb85bc6fbecd0f39de0e74eacb7b5d038e9c2c7ebcd5aab711a7e",
+        "second_sha256": "cac90c17599bb85bc6fbecd0f39de0e74eacb7b5d038e9c2c7ebcd5aab711a7e",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "adapter-report.json",
+        "first_sha256": "dcbb2bd4350ff3d30572572e788706abe07ff0c04c43f3de56536526f8032f9b",
+        "second_sha256": "dcbb2bd4350ff3d30572572e788706abe07ff0c04c43f3de56536526f8032f9b",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "01-pre-core.json",
+        "first_sha256": "bd2e482459bd76be686afc36d9f210106cec01c207a89b8101cd99f5035e84ce",
+        "second_sha256": "bd2e482459bd76be686afc36d9f210106cec01c207a89b8101cd99f5035e84ce",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "02-submission.json",
+        "first_sha256": "096b0e14058fd622bb8e56c59db182cbf2815af94506f70c9396813aec331d9f",
+        "second_sha256": "096b0e14058fd622bb8e56c59db182cbf2815af94506f70c9396813aec331d9f",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "03-post-core.json",
+        "first_sha256": "6bd5455a028dc500ef5419b8347d71999294b248eb52900ca4f3a02821fa1400",
+        "second_sha256": "6bd5455a028dc500ef5419b8347d71999294b248eb52900ca4f3a02821fa1400",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "native-test-mode-read-events.json",
+        "first_sha256": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+        "second_sha256": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "report.json",
+        "first_sha256": "1a9ab2afe8fe78a9bd475a4abb88468e33ad278ceaa20d7c11e2c637339de7fb",
+        "second_sha256": "1a9ab2afe8fe78a9bd475a4abb88468e33ad278ceaa20d7c11e2c637339de7fb",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/test-setup/report-private.json",
+        "first_sha256": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+        "second_sha256": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "preexecution-source-closure/manifest.json",
+        "first_sha256": "3e9b9a7017976f757b3c1612ad711e64028d06b69df82bb428295a8909cb75ed",
+        "second_sha256": "3e9b9a7017976f757b3c1612ad711e64028d06b69df82bb428295a8909cb75ed",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/source-closure/manifest.json",
+        "first_sha256": "ce20522e5f795badca638aa0ac76ca056d4d034cd9f100a545514576db17276b",
+        "second_sha256": "ce20522e5f795badca638aa0ac76ca056d4d034cd9f100a545514576db17276b",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/report-private.json",
+        "first_sha256": "30c4316346d7f3e7eacbf157b9ede1624d7b681a3d5c2992fcfafcc7f9336404",
+        "second_sha256": "76a074d238bff26160f663882357dfa3f7ea529b8a3a7f775f792e0374dbbd8a",
+        "byte_identical": false,
+        "json_structurally_identical": false,
+        "differences": [
+          {
+            "path": [
+              "initialization_budget_batches",
+              0,
+              "elapsed_seconds"
+            ],
+            "first": 17.826,
+            "second": 18.989,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              1,
+              "elapsed_seconds"
+            ],
+            "first": 43.12,
+            "second": 45.369,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              2,
+              "elapsed_seconds"
+            ],
+            "first": 69.715,
+            "second": 72.814,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              3,
+              "elapsed_seconds"
+            ],
+            "first": 23.019,
+            "second": 23.993,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              4,
+              "elapsed_seconds"
+            ],
+            "first": 53.752,
+            "second": 55.732,
+            "allowed_host_elapsed_seconds": true
+          },
+          {
+            "path": [
+              "initialization_budget_batches",
+              5,
+              "elapsed_seconds"
+            ],
+            "first": 95.241,
+            "second": 98.388,
+            "allowed_host_elapsed_seconds": true
+          }
+        ]
+      },
+      {
+        "file": "terminal-source-closure/manifest.json",
+        "first_sha256": "07c3e1abc9af95d28cfc91aa7675a3ba6d1f7c2d9f189a3929d7d1460549bce2",
+        "second_sha256": "07c3e1abc9af95d28cfc91aa7675a3ba6d1f7c2d9f189a3929d7d1460549bce2",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      },
+      {
+        "file": "bootstrap/terminal-source-closure/manifest.json",
+        "first_sha256": "04dfef574a7a37c146da8108284143d1e54b61bc031469e7f3efe29af9e77ec8",
+        "second_sha256": "04dfef574a7a37c146da8108284143d1e54b61bc031469e7f3efe29af9e77ec8",
+        "byte_identical": true,
+        "json_structurally_identical": true,
+        "differences": []
+      }
+    ]
+  }
 }

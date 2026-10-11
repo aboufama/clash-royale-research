@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 26,
-    "reviewed_at": "2026-10-11T12:03:13Z",
-    "summary": "Recorded the first external native troop command: prediction at frame97, original delayed commit at117, debit, spawn and later live insertion; 121 core ticks return with unchanged code/source pins. Independent fresh repetition remains pending. Independently reproduced original Android DSO loading and all eight native symbol relocations. Ordinary-match equivalence, complete state/reset and training remain gated."
+    "sequence": 27,
+    "reviewed_at": "2026-10-11T12:17:13Z",
+    "summary": "Independently reproduced the external troop deployment across two fresh 121-tick runs: thirteen whole receipt files match, with only six bootstrap host times differing in the fourteenth. Original dlopen and strict reserved-address loading also repeat byte-for-byte, including twelve relocations and negative paths. Complete state/reset, ordinary-game exactness and training remain gated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "One fixed external action passes original prediction, queueing, delayed commit, debit and spawn in 121 manual core ticks; fresh repetition remains pending. Original linker maps a genuine Android DSO and resolves its eight imports with byte-identical independent reports. Normal game registration, complete state/reset and ordinary battle equivalence remain incomplete."
+        "Two fresh one-action diagnostics match all native/source receipts, with only six host timings differing; original prediction, queueing, delayed commit, debit and spawn repeat across 121 ticks. Original Android dlopen and strict reserved-address loading also repeat exactly, including twelve imports and native error paths. General battle control, game registration, complete state/reset and ordinary battle equivalence remain incomplete."
       ]
     },
     {

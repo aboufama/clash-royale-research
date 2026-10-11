@@ -34,7 +34,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | One fixed external action passes original prediction, queueing, delayed commit, debit and spawn in 121 manual core ticks; fresh repetition remains pending. Original linker maps a genuine Android DSO and resolves its eight imports with byte-identical independent reports. Normal game registration, complete state/reset and ordinary battle equivalence remain incomplete. |
+| Supporting native runtime | Partial | Two fresh one-action diagnostics match all native/source receipts, with only six host timings differing; original prediction, queueing, delayed commit, debit and spawn repeat across 121 ticks. Original Android dlopen and strict reserved-address loading also repeat exactly, including twelve imports and native error paths. General battle control, game registration, complete state/reset and ordinary battle equivalence remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -43,7 +43,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **26** · **2026-10-11T12:03:13Z** · Recorded the first external native troop command: prediction at frame97, original delayed commit at117, debit, spawn and later live insertion; 121 core ticks return with unchanged code/source pins. Independent fresh repetition remains pending. Independently reproduced original Android DSO loading and all eight native symbol relocations. Ordinary-match equivalence, complete state/reset and training remain gated.
+Review **27** · **2026-10-11T12:17:13Z** · Independently reproduced the external troop deployment across two fresh 121-tick runs: thirteen whole receipt files match, with only six bootstrap host times differing in the fourteenth. Original dlopen and strict reserved-address loading also repeat byte-for-byte, including twelve relocations and negative paths. Complete state/reset, ordinary-game exactness and training remain gated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -55,12 +55,14 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
-- The **first externally submitted troop command executes through original code**.
+- The **first externally submitted troop command repeats through original code**.
   Native prediction succeeds at frame 97; original queue timing commits it at
   frame 117, charges elixir and spawns an actor later observed in the live list.
   All 121 manually scheduled core ticks return, with no random-policy entry,
-  code change or source-pin mismatch. This is one diagnostic action; a fresh
-  independent repetition and ordinary-match equivalence remain pending.
+  code change or source-pin mismatch. Across two fresh runs, thirteen complete
+  receipt files match byte-for-byte; the fourteenth differs only in six listed
+  host initialization times. This verifies one diagnostic action, with complete
+  state and ordinary-match equivalence still unvalidated.
   See [external-action evidence](research/evidence/native-external-action-one-shot.json).
 - The **original decompressor reproduces all 419 compressed inputs** in the
   421-occurrence diagnostic resource manifest; the other two inputs are raw
@@ -89,6 +91,14 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   pass and independent reports match exactly. The DSO has entry zero, so this
   does not establish a runnable application or game loading.
   See [linker evidence](research/evidence/native-original-linker-startup.json).
+- The **original dynamic loader now loads a fresh second Android library**,
+  resolves all twelve imports, reuses its handle on duplicate loading and
+  supplies original symbol lookup/error behavior. A separate documented
+  reserved-address request maps it at the requested address; an undersized
+  reservation is rejected by original code. Both positive and negative reports
+  repeat byte-for-byte, with 38 and 42 boundary controls respectively. These
+  are tiny-library probes under explicit kernel inputs, not game registration
+  or full Android startup. See [dynamic-loader evidence](research/evidence/native-original-dlopen.json).
 - Two complete health-enabled runs produce **byte-identical position/health
   streams across all 905 samples**. All 904 recorded steps, 2,551 main events,
   669 hand events and the native winner also match the earlier diagnostic.

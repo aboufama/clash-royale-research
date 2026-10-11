@@ -71,9 +71,12 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 3. Finish original Android linker/process initialization. The shared game/Android
    asset manager reaches actual native file consumers, but the full-data path
    still stops at library registration needed by thread-destructor setup.
-4. Expose external actions through original command construction and dispatch,
+4. One externally selected troop deployment now repeats exactly through original
+   construction, prediction, queueing, delayed commit, debit and spawn in two
+   fresh 121-tick diagnostic runs. Extend this to ordered actions for both owners
    and establish the original context/step contract. The current complete runner
-   uses its own input policy; it is not yet a training environment.
+   uses its own input policy; the external-action probe is not yet a full match
+   or training environment.
 5. Capture every simulation-affecting field and ordered event, establish a
    complete reset mechanism, and validate the supported runtime and ordinary
    match behavior. Position/health observations and finite matching diagnostic
