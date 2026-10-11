@@ -1,6 +1,6 @@
 // Viewer entry: real-time loop at the engine's 20 Hz with render interpolation, hands for
 // both players with drag-and-drop, a sandbox palette, pause/step/speed controls.
-import { Battle, type CardDef, M1_CARDS, type GameData } from '../../core/src/index.ts';
+import { Battle, type CardDef, type GameData, supportedCards } from '../../core/src/index.ts';
 import gameDataJson from '../../data/gamedata.json';
 import { Camera } from './camera.ts';
 import { Frame, type WorldRenderer } from './frame.ts';
@@ -298,7 +298,7 @@ class App {
   buildPalette(): void {
     const el = $('palette');
     el.innerHTML = '';
-    for (const name of M1_CARDS) {
+    for (const name of supportedCards(this.battle.defs)) {
       const card = this.battle.defs.card(name, 11);
       const c = document.createElement('div');
       c.className = 'card';

@@ -11,9 +11,12 @@
 // Each function below says where its behaviour comes from; see docs/FIDELITY.md.
 
 import { Arena, ARENA_H, ARENA_W, CELL, GRID_W } from './arena.ts';
-import { Defs, ELIXIR_ONE, TICK_MS, type CardDef, type GameData, type ProjectileDef, type Timeline, type UnitDef } from './data.ts';
 import {
-  type BattleEvent, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, ST_ACTIVE, ST_DEAD,
+  type AreaEffectDef, type BuffDef, Defs, ELIXIR_ONE, type CardDef, type FilterDef, type GameData, type ProjectileDef, TICK_MS,
+  type Timeline, type UnitDef,
+} from './data.ts';
+import {
+  AreaEffect, type BattleEvent, BuffInst, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, ST_ACTIVE, ST_DEAD,
   ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS, Unit,
 } from './entities.ts';
 import { clamp, Hasher, idiv, isqrt, Rng } from './math.ts';
@@ -92,6 +95,7 @@ export class Battle {
   tick = 0;
   units: Unit[] = [];
   projectiles: Projectile[] = [];
+  areaEffects: AreaEffect[] = [];
   players: [Player, Player];
   commands: Command[] = [];
   result: BattleResult | null = null;
@@ -101,6 +105,7 @@ export class Battle {
 
   private nextId = 5000000;
   private nextProjId = 4000000;
+  private nextAeoId = 3000000;
   private newUnits: Unit[] = [];
   private spellWaves: { tick: number; team: number; card: CardDef; x: number; y: number }[] = [];
   // Damage queue (parallel arrays, reused)
@@ -244,7 +249,7 @@ export class Battle {
     let maxY = 14500;
     // Pocket (A): with the enemy Princess tower on that side destroyed, the zone extends into
     // that half of the enemy side up to y 25000 (mirrored frame). Community knowledge, unverified.
-    if (card.type !== 'spell') {
+    if (card.type !== 'spell' && !this.fixture) {
       const sideLeft = mx < 9000;
       // In the mirrored frame of team 1, "left" is the enemy's right tower.
       const tower = team === 0 ? enemy.princess[sideLeft ? 0 : 1] : enemy.princess[sideLeft ? 1 : 0];
@@ -325,6 +330,7 @@ export class Battle {
     for (let i = 0; i < units.length; i++) this.updateAttack(units[i]);
     for (let i = 0; i < units.length; i++) this.updateActor(units[i]);
     this.updateProjectiles();
+    this.updateAreaEffects();
     this.flushDamage();
     this.removeDead();
     this.checkEnd();
@@ -360,6 +366,10 @@ export class Battle {
     }
     const card = c.card;
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: c.x, y: c.y, name: card.name, id: -1 });
+    if (card.areaEffect) {
+      this.spawnAreaEffect(c.team, card.areaEffect, c.x, c.y);
+      return;
+    }
     if (card.spellProjectile) {
       for (let w = 0; w < card.waves; w++) {
         const t = this.tick + Math.round((w * card.waveInterval) / TICK_MS);
@@ -439,7 +449,7 @@ export class Battle {
   // ---------------------------------------------------------------- targeting & attack
 
   private canAttack(u: Unit, t: Unit): boolean {
-    if (t.team === u.team || t.state === ST_DEAD) return false;
+    if (t.team === u.team || t.state === ST_DEAD || t.maxHp <= 0) return false;
     const d = u.def;
     if (t.isAir ? !d.attacksAir : !d.attacksGround) return false;
     if (d.targetOnlyBuildings && !t.isBuilding) return false;
@@ -482,6 +492,10 @@ export class Battle {
       if (isTower || u.isBuilding) reach = u.def.range + t.radius;
       else reach = u.def.sightRange + t.radius + (t.tower !== TOWER_NONE ? this.extraSightCrownTowers : 0);
       if (d2 > reach * reach) continue;
+      if (u.def.minimumRange > 0) {
+        const m = u.def.minimumRange + t.radius;
+        if (d2 < m * m) continue;
+      }
       // nearest by centre distance [OBS native-automatic-combat: the Knight chose the enemy
       // Knight at 1000 over the King at 1118 although the King's edge was nearer]
       if (best === null || d2 < bestD) { best = t; bestD = d2; }
@@ -502,15 +516,39 @@ export class Battle {
     return null;
   }
 
-  /** Attack clock increment: 50 x max(100, haste)/100 x clamp(100-slow)/100 [STAT/OBS]. */
-  private clockDelta(_u: Unit): number {
-    return TICK_MS; // no buffs yet
+  /**
+   * Attack clock increment: 50 x max(100, strongest haste)/100 x clamp(100 - strongest slow, 0..100)/100
+   * with integer truncation [STAT time_delta_scale; OBS haste 150 -> 75, slow -35 -> 32, both -> 48].
+   */
+  private clockDelta(u: Unit): number {
+    if (u.buffs.length === 0) return TICK_MS;
+    let haste = 100;
+    let slow = 0;
+    for (const b of u.buffs) {
+      const m = b.def.hitSpeedMul;
+      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+    }
+    return idiv(idiv(TICK_MS * haste, 100) * clamp(100 + slow, 0, 100), 100);
+  }
+
+  /** Movement speed with buffs, same shape as the attack clock (A for movement). */
+  private moveSpeed(u: Unit): number {
+    const sp = u.def.speed;
+    if (u.buffs.length === 0) return sp;
+    let haste = 100;
+    let slow = 0;
+    for (const b of u.buffs) {
+      const m = b.def.speedMul;
+      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+    }
+    return idiv(idiv(sp * haste, 100) * clamp(100 + slow, 0, 100), 100);
   }
 
   private updateAttack(u: Unit): void {
     if (u.state !== ST_ACTIVE) return;
     if (u.tower === TOWER_KING && u.kingState !== KING_ACTIVE) return;
     if (u.def.hitSpeed <= 0) return;
+    if (u.buffs.length && this.clockDelta(u) === 0) return; // frozen/stunned
     let t = u.target;
     if (t !== null && (t.state === ST_DEAD || !this.canAttack(u, t))) {
       t = null;
@@ -600,7 +638,8 @@ export class Battle {
 
   /** Damage every enemy whose collision circle meets the area (A: edge overlap rule). */
   private areaDamage(team: number, x: number, y: number, radius: number, air: boolean, ground: boolean,
-    damage: number, towerDamage: number, pct: number, pushback: number, pushAll: boolean): void {
+    damage: number, towerDamage: number, pct: number, pushback: number, pushAll: boolean,
+    buff: BuffDef | null = null, buffTime = 0, sourceId = -1): void {
     const units = this.units;
     for (let i = 0; i < units.length; i++) {
       const t = units[i];
@@ -611,7 +650,9 @@ export class Battle {
       const r = radius + t.radius;
       const d2 = dx * dx + dy * dy;
       if (d2 > r * r) continue;
+      if (t.maxHp <= 0) continue;
       this.queueDamage(t, damage, towerDamage, pct);
+      if (buff) this.applyBuff(t, buff, buffTime, sourceId);
       if (pushback > 0 && !t.isBuilding && (pushAll || !t.def.ignorePushback)) {
         const d = isqrt(d2);
         // Knockback spread over 4 ticks (A).
@@ -628,9 +669,14 @@ export class Battle {
 
   private updateActor(u: Unit): void {
     if (u.state === ST_DEAD) return;
+    if (u.buffs.length) this.updateBuffs(u);
     if (u.state === ST_DEPLOYING) {
       if (u.deployTicks > 0) u.deployTicks--;
-      if (u.deployTicks === 0) u.state = ST_ACTIVE;
+      if (u.deployTicks === 0) {
+        u.state = ST_ACTIVE;
+        // Actors without hitpoints (Rage bottle) expire on landing, triggering their death effect.
+        if (u.maxHp <= 0) this.kill(u);
+      }
       return;
     }
     if (u.tower === TOWER_KING && u.kingState === KING_ACTIVATING) {
@@ -638,7 +684,10 @@ export class Battle {
       if (--u.kingTicks <= 0) u.kingState = KING_ACTIVE;
       return;
     }
-    if (u.isBuilding) return;
+    if (u.isBuilding) {
+      if (u.def.lifeTime > 0) this.decay(u);
+      return;
+    }
     if (u.pushTicks > 0) this.applyPush(u);
     u.moving = false;
     if (!u.locked && u.target !== null && u.def.speed > 0) this.moveToward(u, u.target);
@@ -693,6 +742,22 @@ export class Battle {
     if (mx !== 0 || my !== 0) this.tryMove(u, mx, my);
   }
 
+  /**
+   * Building lifetime: HP decays linearly so the building expires after LifeTime ms of being
+   * active (D: LifeTime; A: linear integer schedule).
+   */
+  private decay(u: Unit): void {
+    u.lifeTicks++;
+    const total = Math.max(1, Math.round(u.def.lifeTime / TICK_MS));
+    const due = Math.floor((u.maxHp * u.lifeTicks) / total);
+    const step = due - u.decayed;
+    u.decayed = due;
+    if (step > 0) {
+      u.hp -= step;
+      if (u.hp <= 0) this.kill(u);
+    }
+  }
+
   private applyPush(u: Unit): void {
     const n = u.pushTicks;
     const sx = idiv(u.pushX, n);
@@ -744,7 +809,8 @@ export class Battle {
     const dy = gy - u.y;
     const d = isqrt(dx * dx + dy * dy);
     if (d === 0) return;
-    const sp = u.def.speed;
+    const sp = this.moveSpeed(u);
+    if (sp <= 0) return;
     const step = sp < d ? sp : d;
     const mx = idiv(dx * step, d);
     const my = idiv(dy * step, d);
@@ -767,6 +833,140 @@ export class Battle {
     if (mx !== 0 && this.arena.walkableAt(nx, u.y)) { u.x = nx; return true; }
     if (my !== 0 && this.arena.walkableAt(u.x, ny)) { u.y = ny; return true; }
     return false;
+  }
+
+  // ---------------------------------------------------------------- buffs & area effects
+
+  /**
+   * Apply (or refresh) a buff. Stacking buffs keep one instance per source, others one per
+   * buff. Damage/heal ticks every HitFrequency, the first one HitFrequency after application
+   * (immediately for HitTickFromSource buffs) — chosen so Poison deals 8 ticks and Earthquake 3 (A).
+   * A full stop (-100 hit speed) resets the attack wind-up (A, community knowledge: Zap/Freeze reset).
+   */
+  applyBuff(u: Unit, def: BuffDef, timeMs: number, sourceId: number): void {
+    if (u.state === ST_DEAD) return;
+    const ticks = Math.max(1, Math.ceil(timeMs / TICK_MS));
+    for (const b of u.buffs) {
+      if (b.def === def && (!def.stacking || b.sourceId === sourceId)) {
+        if (ticks > b.ticksLeft) b.ticksLeft = ticks;
+        return;
+      }
+    }
+    const inst = new BuffInst(def, sourceId, ticks);
+    const raw = this.data.buffs[def.name];
+    inst.hitTimer = raw && raw.HitTickFromSource === true ? 0 : def.hitFrequency;
+    u.buffs.push(inst);
+    if (def.hitSpeedMul <= -100) {
+      u.atkTimer = 0;
+      u.locked = false;
+      u.target = null;
+    }
+  }
+
+  private updateBuffs(u: Unit): void {
+    const bs = u.buffs;
+    let w = 0;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      const d = b.def;
+      if (d.dps > 0 || d.hps > 0) {
+        b.hitTimer -= TICK_MS;
+        if (b.hitTimer <= 0) {
+          b.hitTimer += d.hitFrequency;
+          if (d.dps > 0) {
+            let amount = Math.floor((d.dps * d.hitFrequency) / 1000);
+            if (d.buildingDamagePercent > 0 && u.isBuilding && u.tower === TOWER_NONE) amount = Math.floor((amount * d.buildingDamagePercent) / 100);
+            this.queueDamage(u, amount, -1, d.crownTowerDamagePercent);
+          }
+          if (d.hps > 0 && u.tower === TOWER_NONE) u.hp = Math.min(u.maxHp, u.hp + Math.floor((d.hps * d.hitFrequency) / 1000));
+        }
+      }
+      if (--b.ticksLeft > 0) bs[w++] = b;
+    }
+    bs.length = w;
+  }
+
+  private spawnAreaEffect(team: number, def: AreaEffectDef, x: number, y: number): void {
+    const a = new AreaEffect(this.nextAeoId++, def, team, x, y, this.tick);
+    this.areaEffects.push(a);
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'aoe', team, x, y, name: def.name, id: a.id });
+    if (def.spawnAreaEffect) this.spawnAreaEffect(team, def.spawnAreaEffect, x, y);
+  }
+
+  private filterMatch(f: FilterDef | null, team: number, onlyEnemies: boolean, u: Unit): boolean {
+    if (u.state === ST_DEAD || u.maxHp <= 0) return false;
+    if (f === null) return onlyEnemies ? u.team !== team : true;
+    if (!((f.enemy && u.team !== team) || (f.own && u.team === team))) return false;
+    if (f.towersOnly && u.tower === TOWER_NONE) return false;
+    if (f.buildingsOnly && !u.isBuilding) return false;
+    if (f.exBuildings && u.isBuilding && u.tower === TOWER_NONE) return false;
+    if (f.exKing && u.tower === TOWER_KING) return false;
+    if (f.exPrincess && u.tower === TOWER_PRINCESS) return false;
+    if (f.exFlying && u.isAir) return false;
+    if (f.include && !f.include.includes(u.def.name)) return false;
+    if (f.exclude && f.exclude.includes(u.def.name)) return false;
+    return true;
+  }
+
+  /**
+   * Area effects hit at HitSpeedOffset, then every HitSpeed while age <= LifeDuration (a single
+   * hit when HitSpeed is 0). Targets: actors matching the Filter whose circle meets the radius;
+   * HitBiggestTargets takes the MaximumTargets highest-HP ones, OneHitPerTarget never repeats.
+   * Hit schedule chosen to give Lightning 3 strikes (A on exact timing).
+   */
+  private updateAreaEffects(): void {
+    const as = this.areaEffects;
+    let w = 0;
+    for (let i = 0; i < as.length; i++) {
+      const a = as[i];
+      const def = a.def;
+      while (a.nextHit >= 0 && a.age >= a.nextHit) {
+        this.aeoHit(a);
+        a.nextHit = def.hitSpeed > 0 && a.nextHit + def.hitSpeed <= def.lifeDuration ? a.nextHit + def.hitSpeed : -1;
+      }
+      a.age += TICK_MS;
+      if (a.age > def.lifeDuration && a.nextHit < 0) a.alive = false;
+      if (a.alive) as[w++] = a;
+    }
+    as.length = w;
+  }
+
+  private aeoHit(a: AreaEffect): void {
+    const def = a.def;
+    const units = this.units;
+    const targets = this.scratch;
+    targets.length = 0;
+    for (let i = 0; i < units.length; i++) {
+      const t = units[i];
+      if (!this.filterMatch(def.filter, a.team, def.onlyEnemies, t)) continue;
+      if (def.oneHitPerTarget && a.hitIds.includes(t.id)) continue;
+      const dx = t.x - a.x;
+      const dy = t.y - a.y;
+      const r = def.radius + t.radius;
+      if (dx * dx + dy * dy > r * r) continue;
+      targets.push(t);
+    }
+    if (def.hitBiggest) targets.sort((p, q) => q.hp - p.hp || p.id - q.id);
+    const n = def.maxTargets > 0 ? Math.min(def.maxTargets, targets.length) : targets.length;
+    let buffTime = def.buffTime;
+    if (def.capBuffTime) buffTime = Math.min(buffTime, Math.max(TICK_MS, def.lifeDuration - a.age));
+    for (let i = 0; i < n; i++) {
+      const t = targets[i];
+      if (def.oneHitPerTarget) a.hitIds.push(t.id);
+      if (def.projectile) {
+        // Strike from above (Lightning): a projectile that lands on the target next tick (A).
+        const pr = new Projectile(this.nextProjId++, def.projectile, a.team, t.x, t.y, this.tick);
+        pr.target = t;
+        pr.tx = t.x;
+        pr.ty = t.y;
+        pr.spell = def.name;
+        this.projectiles.push(pr);
+        continue;
+      }
+      if (def.damage > 0) this.queueDamage(t, def.damage, def.towerDamage, def.crownTowerDamagePercent);
+      if (def.buff) this.applyBuff(t, def.buff, buffTime, a.id);
+    }
+    targets.length = 0;
   }
 
   // ---------------------------------------------------------------- projectiles
@@ -811,9 +1011,10 @@ export class Battle {
   private impact(p: Projectile): void {
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id });
     if (p.radius > 0) {
-      this.areaDamage(p.team, p.x, p.y, p.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, p.def.pushbackAll);
+      this.areaDamage(p.team, p.x, p.y, p.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, p.def.pushbackAll, p.def.targetBuff, p.def.buffTime, p.id);
     } else if (p.target !== null) {
       this.queueDamage(p.target, p.damage, p.towerDamage, p.crownPct);
+      if (p.def.targetBuff) this.applyBuff(p.target, p.def.targetBuff, p.def.buffTime, p.id);
     }
   }
 
@@ -854,6 +1055,7 @@ export class Battle {
     t.state = ST_DEAD;
     if (this.recordEvents) this.events.push({ tick: this.tick, type: t.tower ? 'tower' : 'death', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id });
     if (t.isBuilding) this.arena.setOcclusion(t.team, t.x, t.y, t.radius, false);
+    if (t.def.deathAreaEffect) this.spawnAreaEffect(t.team, t.def.deathAreaEffect, t.x, t.y);
     if (t.tower !== TOWER_NONE) {
       const owner = this.players[t.team];
       const other = this.players[1 - t.team];
@@ -926,7 +1128,9 @@ export class Battle {
       h.add(u.id); h.add(u.x); h.add(u.y); h.add(u.hp); h.add(u.shield); h.add(u.state);
       h.add(u.deployTicks); h.add(u.atkTimer); h.add(u.atkDelay); h.add(u.target ? u.target.id : -1);
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.pushTicks);
+      for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }
+    for (const a of this.areaEffects) { h.add(a.id); h.add(a.age); h.add(a.nextHit); }
     for (const p of this.projectiles) {
       h.add(p.id); h.add(p.x); h.add(p.y); h.add(p.tx); h.add(p.ty); h.add(p.target ? p.target.id : -1);
     }

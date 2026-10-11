@@ -57,7 +57,15 @@ Engine: `sim/core` (TypeScript, 20 Hz, integer game units). Tests: `cd sim && np
 | Towers | Tower targeting | A | Nearest enemy in range, locked until out of range or dead | Trace ✓ (Kings in fixture) | |
 | Spells | Fireball, Arrows | D/A | Projectile, speed, radius, damage, crown-tower % from data (D); launched from the caster's King tower (A); Arrows: 3 waves 200 ms apart, damage radius = card Radius 3500 (A: the 10 visual arrows ignored) | – | |
 | Spells | Crown-tower damage reduction | D/A | CrownTowerDamagePercent or TowerDamage (D); floor rounding (A) | – | |
-| Effects | Stun, slow, freeze, rage, pull | – | | | |
+| Effects | Buff speed / hit-speed multipliers (stun, slow, freeze, rage) | D | SpeedMultiplier/HitSpeedMultiplier from buffs; attack clock = 50×max(100,haste)/100×clamp(100−slow)/100 truncated (STAT formula); same shape for movement (A) | Clock formula ✓ (native fixture values 75/32/48) | |
+| Effects | Stun/freeze resets the attack | A | A −100 hit-speed buff zeroes the attack timer and drops the target (community knowledge) | – | |
+| Effects | Damage / heal over time | D/A | DamagePerSecond, HealPerSecond, HitFrequency, BuildingDamagePercent, CrownTowerDamagePercent (D); first tick one HitFrequency after application, immediate for HitTickFromSource (A: gives Poison 8 ticks, Earthquake 3) | – | |
+| Effects | Buff stacking | D/A | EnableStacking: one instance per source; else refresh (A on refresh rule) | – | |
+| Effects | Pull (Tornado), invisibility, damage reduction | – | | | |
+| Spells | Area effect objects (Zap, Freeze, Poison, Lightning, Rage) | D/A | Radius, LifeDuration, HitSpeed/Offset, Damage/TowerDamage, Buff/BuffTime, Filter (game_object_filters), HitBiggestTargets, MaximumTargets, OneHitPerTarget, SpawnAreaEffectObject (D); hit schedule offset, offset+HitSpeed… ≤ LifeDuration (A: gives Lightning 3 strikes); Lightning bolt as a projectile landing next tick (A) | – | |
+| Spells | Rage (bottle + area) | D | RageBottle lands (DeployTime 500), expires, spawns the Rage AEO and RageDamage | – | |
+| Buildings | Lifetime decay | D/A | LifeTime from data (D); linear integer HP decay while active (A) | – | |
+| Buildings | Minimum range (Mortar) | D | MinimumRange excluded from targeting and range checks | – | |
 | Special | Charge, dash, jump, spawners, death spawn, chain, evolutions, champions | – | Planned for M4 | | |
 | Scaling | Level and rarity scaling | D | floor(base × M[L−1−rel]/100), towers from tower scaling | Known L11 values ✓ | |
 

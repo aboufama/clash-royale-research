@@ -21,6 +21,8 @@ export interface GameData {
   areaEffects: Record<string, Rec>;
   buffs: Record<string, Rec>;
   cards: Record<string, Rec>;
+  filters: Record<string, Rec>;
+  damageTypes: Record<string, Rec>;
 }
 
 export interface Timeline {
@@ -52,9 +54,10 @@ export function scaleStat(data: GameData, base: number, level: number, rarity: s
   return Math.floor((base * data.powerMultiplier[idx]) / 100);
 }
 
-/** Damage may be a number or {BaseDamage, TowerDamage}. */
-function damageOf(r: Rec): { base: number; tower: number } {
-  const v = r.Damage;
+/** Damage may be a number, {BaseDamage, TowerDamage}, or the name of a DAMAGE_TYPE. */
+function damageOf(r: Rec, types?: Record<string, Rec>): { base: number; tower: number } {
+  let v = r.Damage;
+  if (typeof v === 'string' && types && types[v]) v = types[v];
   if (typeof v === 'number') return { base: v, tower: -1 };
   if (v && typeof v === 'object') {
     const o = v as Rec;
@@ -76,6 +79,65 @@ export interface ProjectileDef {
   onlyEnemies: boolean;
   pushback: number;
   pushbackAll: boolean;
+  /** Buff applied to everything the projectile damages (Ice Spirit freeze, Snowball slow...). */
+  targetBuff: BuffDef | null;
+  buffTime: number; // ms
+}
+
+/** Object filter (game_object_filters.toml): which actors an area effect touches. */
+export interface FilterDef {
+  name: string;
+  enemy: boolean;
+  own: boolean;
+  /** MatchTypeBuildings: buildings only; MatchTowers: crown towers only. */
+  buildingsOnly: boolean;
+  towersOnly: boolean;
+  exBuildings: boolean;
+  exKing: boolean;
+  exPrincess: boolean;
+  exTowers: boolean;
+  exFlying: boolean;
+  include: string[] | null;
+  exclude: string[] | null;
+}
+
+export interface BuffDef {
+  name: string;
+  /** Percent: >= 100 is a haste factor (130 = x1.3), < 0 a slow (-30 = x0.7, -100 = stop). 0 = none. */
+  speedMul: number;
+  hitSpeedMul: number;
+  spawnSpeedMul: number;
+  dps: number; // scaled damage per second
+  hitFrequency: number; // ms between damage/heal ticks
+  hps: number; // scaled heal per second
+  crownTowerDamagePercent: number;
+  buildingDamagePercent: number; // 0 = none (350 = x3.5 vs buildings)
+  damageReduction: number;
+  stacking: boolean;
+  unsupported: string[];
+}
+
+export interface AreaEffectDef {
+  name: string;
+  radius: number;
+  lifeDuration: number; // ms
+  hitSpeed: number; // ms between hits, 0 = single hit
+  hitSpeedOffset: number; // ms before the first hit
+  damage: number;
+  towerDamage: number;
+  crownTowerDamagePercent: number;
+  buff: BuffDef | null;
+  buffTime: number;
+  capBuffTime: boolean;
+  filter: FilterDef | null;
+  onlyEnemies: boolean;
+  hitBiggest: boolean;
+  maxTargets: number;
+  oneHitPerTarget: boolean;
+  projectile: ProjectileDef | null;
+  spawnAreaEffect: AreaEffectDef | null;
+  pushback: number;
+  unsupported: string[];
 }
 
 export interface UnitDef {
@@ -110,6 +172,7 @@ export interface UnitDef {
   ignorePushback: boolean;
   kamikaze: boolean;
   lifeTime: number;
+  deathAreaEffect: AreaEffectDef | null;
   /** Mechanics this definition uses that the engine does not implement yet. */
   unsupported: string[];
 }
@@ -124,6 +187,8 @@ export interface CardDef {
   /** Spell projectile (Fireball, Arrows...) */
   spellProjectile: ProjectileDef | null;
   spellRadius: number;
+  /** Area effect spell (Zap, Freeze, Poison, Lightning...). */
+  areaEffect: AreaEffectDef | null;
   waves: number;
   waveInterval: number; // ms
   canDeployOnEnemySide: boolean;
@@ -141,11 +206,22 @@ const UNIT_FIELDS_OK = new Set([
   'StopMovementAfterMS', 'WaitMS', 'AttackFinishTime', 'OverrideAttackFinishTime', 'TryToFinishAttackAnimation',
   'TryToFinishAttackAnimationBeforeNextAttack', 'AttackDashTime', 'SpawnAngleShift', 'IsBuilding', 'Ability',
   'ClonedVersion', 'IgnoreBuff', 'IgnoreResurrect', 'IgnoreClone', 'CustomSpawnFilter', 'LifeTime',
+  'DeathAreaEffect',
 ]);
 const PROJECTILE_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Speed', 'Damage', 'Radius', 'Homing', 'AoeToAir', 'AoeToGround', 'OnlyEnemies', 'Gravity',
   'CrownTowerDamagePercent', 'DeflectBehaviour', 'DeflectRadius', 'Pushback', 'PushbackAll', 'DamageScalingMode',
-  'ConstantHeight', 'HideWhenDelayed', 'MinDistance', 'ShakesTargets',
+  'ConstantHeight', 'HideWhenDelayed', 'MinDistance', 'ShakesTargets', 'TargetBuff', 'BuffTime',
+]);
+const AEO_FIELDS_OK = new Set([
+  'Name', 'Rarity', 'Radius', 'LifeDuration', 'HitSpeed', 'HitSpeedOffset', 'Damage', 'Buff', 'BuffTime',
+  'CapBuffTimeToAreaEffectTime', 'Filter', 'HitBiggestTargets', 'MaximumTargets', 'OneHitPerTarget', 'Projectile',
+  'ProjectileStartHeight', 'SpawnAreaEffectObject', 'Pushback', 'OnlyEnemies', 'CrownTowerDamagePercent',
+]);
+const BUFF_FIELDS_OK = new Set([
+  'Name', 'Rarity', 'SpeedMultiplier', 'HitSpeedMultiplier', 'SpawnSpeedMultiplier', 'DamagePerSecond', 'HitFrequency',
+  'HealPerSecond', 'CrownTowerDamagePercent', 'BuildingDamagePercent', 'DamageReduction', 'EnableStacking',
+  'HitTickFromSource', 'NoEffectToCrownTowers', 'TID',
 ]);
 
 export class Defs {
@@ -153,9 +229,106 @@ export class Defs {
   private unitCache = new Map<string, UnitDef>();
   private projCache = new Map<string, ProjectileDef>();
   private cardCache = new Map<string, CardDef>();
+  private aeoCache = new Map<string, AreaEffectDef>();
+  private buffCache = new Map<string, BuffDef>();
+  private filterCache = new Map<string, FilterDef>();
 
   constructor(data: GameData) {
     this.data = data;
+  }
+
+  filter(name: string): FilterDef {
+    const hit = this.filterCache.get(name);
+    if (hit) return hit;
+    const r = this.data.filters[name] ?? {};
+    const fl = r.Filters;
+    const list: string[] = Array.isArray(fl) ? (fl as string[]) : typeof fl === 'string' ? [fl] : [];
+    const def: FilterDef = {
+      name,
+      enemy: r.MatchTeamEnemy === true,
+      own: r.MatchTeamOwn === true,
+      buildingsOnly: r.MatchTypeBuildings === true && r.MatchTypeCharacters !== true,
+      towersOnly: r.MatchTowers === true,
+      exBuildings: list.includes('Buildings'),
+      exKing: list.includes('Summoner') || list.includes('Towers'),
+      exPrincess: list.includes('PrincessTowers') || list.includes('Towers'),
+      exTowers: list.includes('Towers'),
+      exFlying: list.includes('Flying'),
+      include: Array.isArray(r.IncludeCharactersWithData) ? (r.IncludeCharactersWithData as string[]) : null,
+      exclude: Array.isArray(r.ExcludeCharactersWithData) ? (r.ExcludeCharactersWithData as string[]) : null,
+    };
+    this.filterCache.set(name, def);
+    return def;
+  }
+
+  buff(name: string, level: number): BuffDef {
+    const key = `${name}@${level}`;
+    const hit = this.buffCache.get(key);
+    if (hit) return hit;
+    const r = this.data.buffs[name];
+    if (!r) throw new Error(`unknown buff ${name}`);
+    const rarity = str(r, 'Rarity');
+    const unsupported: string[] = [];
+    for (const k of Object.keys(r)) if (!BUFF_FIELDS_OK.has(k)) unsupported.push(`${name}.${k}`);
+    const def: BuffDef = {
+      name,
+      speedMul: num(r, 'SpeedMultiplier'),
+      hitSpeedMul: num(r, 'HitSpeedMultiplier'),
+      spawnSpeedMul: num(r, 'SpawnSpeedMultiplier'),
+      dps: scaleStat(this.data, num(r, 'DamagePerSecond'), level, rarity),
+      hitFrequency: num(r, 'HitFrequency', 1000),
+      hps: scaleStat(this.data, num(r, 'HealPerSecond'), level, rarity),
+      crownTowerDamagePercent: num(r, 'CrownTowerDamagePercent'),
+      buildingDamagePercent: num(r, 'BuildingDamagePercent'),
+      damageReduction: num(r, 'DamageReduction'),
+      stacking: bool(r, 'EnableStacking'),
+      unsupported,
+    };
+    this.buffCache.set(key, def);
+    return def;
+  }
+
+  areaEffect(name: string, level: number): AreaEffectDef {
+    const key = `${name}@${level}`;
+    const hit = this.aeoCache.get(key);
+    if (hit) return hit;
+    const r = this.data.areaEffects[name];
+    if (!r) throw new Error(`unknown area effect ${name}`);
+    const rarity = str(r, 'Rarity');
+    const unsupported: string[] = [];
+    for (const k of Object.keys(r)) if (!AEO_FIELDS_OK.has(k)) unsupported.push(`${name}.${k}`);
+    const dmg = damageOf(r, this.data.damageTypes);
+    const buffName = str(r, 'Buff');
+    const buff = buffName ? this.buff(buffName, level) : null;
+    if (buff) unsupported.push(...buff.unsupported);
+    const projName = str(r, 'Projectile');
+    const spawnName = str(r, 'SpawnAreaEffectObject');
+    const filterName = str(r, 'Filter');
+    const def: AreaEffectDef = {
+      name,
+      radius: num(r, 'Radius'),
+      lifeDuration: num(r, 'LifeDuration'),
+      hitSpeed: num(r, 'HitSpeed'),
+      hitSpeedOffset: num(r, 'HitSpeedOffset'),
+      damage: scaleStat(this.data, dmg.base, level, rarity),
+      towerDamage: dmg.tower >= 0 ? scaleStat(this.data, dmg.tower, level, rarity) : -1,
+      crownTowerDamagePercent: num(r, 'CrownTowerDamagePercent'),
+      buff,
+      buffTime: num(r, 'BuffTime'),
+      capBuffTime: bool(r, 'CapBuffTimeToAreaEffectTime'),
+      filter: filterName ? this.filter(filterName) : null,
+      onlyEnemies: r.OnlyEnemies !== false,
+      hitBiggest: bool(r, 'HitBiggestTargets'),
+      maxTargets: num(r, 'MaximumTargets'),
+      oneHitPerTarget: bool(r, 'OneHitPerTarget'),
+      projectile: projName ? this.projectile(projName, level) : null,
+      spawnAreaEffect: spawnName ? this.areaEffect(spawnName, level) : null,
+      pushback: num(r, 'Pushback'),
+      unsupported,
+    };
+    if (def.spawnAreaEffect) unsupported.push(...def.spawnAreaEffect.unsupported);
+    this.aeoCache.set(key, def);
+    return def;
   }
 
   projectile(name: string, level: number): ProjectileDef {
@@ -164,8 +337,9 @@ export class Defs {
     if (hit) return hit;
     const r = this.data.projectiles[name];
     if (!r) throw new Error(`unknown projectile ${name}`);
-    const dmg = damageOf(r);
+    const dmg = damageOf(r, this.data.damageTypes);
     const rarity = str(r, 'Rarity');
+    const tb = str(r, 'TargetBuff');
     const def: ProjectileDef = {
       name,
       speed: num(r, 'Speed'),
@@ -179,6 +353,8 @@ export class Defs {
       onlyEnemies: r.OnlyEnemies !== false,
       pushback: num(r, 'Pushback'),
       pushbackAll: bool(r, 'PushbackAll'),
+      targetBuff: tb ? this.buff(tb, level) : null,
+      buffTime: num(r, 'BuffTime'),
     };
     this.projCache.set(key, def);
     return def;
@@ -200,8 +376,12 @@ export class Defs {
       for (const k of Object.keys(this.data.projectiles[projName])) {
         if (!PROJECTILE_FIELDS_OK.has(k)) unsupported.push(`${projName}.${k}`);
       }
+      if (projectile.targetBuff) unsupported.push(...projectile.targetBuff.unsupported);
     }
-    const dmg = damageOf(r);
+    const dmg = damageOf(r, this.data.damageTypes);
+    const dae = str(r, 'DeathAreaEffect');
+    const deathAreaEffect = dae ? this.areaEffect(dae, level) : null;
+    if (deathAreaEffect) unsupported.push(...deathAreaEffect.unsupported);
     const def: UnitDef = {
       name,
       kind: r._kind === 'building' ? 'building' : 'character',
@@ -234,6 +414,7 @@ export class Defs {
       ignorePushback: bool(r, 'IgnorePushback'),
       kamikaze: bool(r, 'Kamikaze'),
       lifeTime: num(r, 'LifeTime'),
+      deathAreaEffect,
       unsupported,
     };
     this.unitCache.set(key, def);
@@ -264,6 +445,8 @@ export class Defs {
       onlyEnemies: true,
       pushback: 0,
       pushbackAll: false,
+      targetBuff: null,
+      buffTime: 0,
     };
     const def: UnitDef = {
       name,
@@ -297,6 +480,7 @@ export class Defs {
       ignorePushback: true,
       kamikaze: false,
       lifeTime: 0,
+      deathAreaEffect: null,
       unsupported: [],
     };
     this.unitCache.set(key, def);
@@ -332,9 +516,12 @@ export class Defs {
         if (!PROJECTILE_FIELDS_OK.has(k)) unsupported.push(`${projName}.${k}`);
       }
     }
-    if (r.AreaEffectObject !== undefined) unsupported.push('AreaEffectObject');
+    const aeoName = str(r, 'AreaEffectObject');
+    const areaEffect = aeoName ? this.areaEffect(aeoName, level) : null;
+    if (areaEffect) unsupported.push(...areaEffect.unsupported);
+    if (spellProjectile?.targetBuff) unsupported.push(...spellProjectile.targetBuff.unsupported);
     const type = (r._type as CardDef['type']) ?? 'troop';
-    if (!sc && !projName) unsupported.push('no SummonCharacter/Projectile');
+    if (!sc && !projName && !aeoName) unsupported.push('no SummonCharacter/Projectile/AreaEffectObject');
     const def: CardDef = {
       name,
       type,
@@ -344,6 +531,7 @@ export class Defs {
       summon,
       spellProjectile,
       spellRadius: num(r, 'Radius'),
+      areaEffect,
       waves: num(r, 'ProjectileWaves', 1),
       waveInterval: num(r, 'ProjectileWaveInterval'),
       canDeployOnEnemySide: bool(r, 'CanDeployOnEnemySide'),
@@ -353,6 +541,19 @@ export class Defs {
     this.cardCache.set(key, def);
     return def;
   }
+}
+
+/** Playable (not event-only) cards whose every mechanic the engine implements, by elixir then name. */
+export function supportedCards(defs: Defs, level = 11): string[] {
+  const out: { name: string; cost: number }[] = [];
+  for (const [name, r] of Object.entries(defs.data.cards)) {
+    if (r.NotVisible === true || r.NotInUse === true) continue;
+    let card: CardDef;
+    try { card = defs.card(name, level); } catch { continue; }
+    if (card.unsupported.length === 0) out.push({ name, cost: card.cost });
+  }
+  out.sort((a, b) => a.cost - b.cost || (a.name < b.name ? -1 : 1));
+  return out.map((c) => c.name);
 }
 
 /** Cards the engine fully supports in this milestone (checked by tests). */

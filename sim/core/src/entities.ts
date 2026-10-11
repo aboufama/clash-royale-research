@@ -1,7 +1,7 @@
 // Battle actors. One monomorphic class per actor kind keeps V8 fast: every field is
 // initialised in the constructor and only ever holds one type.
 
-import type { CardDef, ProjectileDef, UnitDef } from './data.ts';
+import type { AreaEffectDef, BuffDef, CardDef, ProjectileDef, UnitDef } from './data.ts';
 
 export const ST_DEPLOYING = 0;
 export const ST_ACTIVE = 1;
@@ -16,6 +16,22 @@ export const KING_ACTIVATING = 1;
 export const KING_ACTIVE = 2;
 
 const NO_PATH = new Int32Array(0);
+
+/** A buff on a unit. One instance per (buff, source) when the buff stacks, else per buff. */
+export class BuffInst {
+  def: BuffDef;
+  sourceId: number;
+  ticksLeft: number;
+  /** ms until the next damage/heal tick. */
+  hitTimer: number;
+
+  constructor(def: BuffDef, sourceId: number, ticks: number) {
+    this.def = def;
+    this.sourceId = sourceId;
+    this.ticksLeft = ticks;
+    this.hitTimer = 0;
+  }
+}
 
 export class Unit {
   id: number;
@@ -60,6 +76,10 @@ export class Unit {
   pushY: number;
   pushTicks: number;
   spawnTick: number;
+  buffs: BuffInst[];
+  /** Ticks active and HP already lost to building lifetime decay. */
+  lifeTicks: number;
+  decayed: number;
 
   constructor(id: number, def: UnitDef, card: string, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -98,6 +118,9 @@ export class Unit {
     this.pushY = 0;
     this.pushTicks = 0;
     this.spawnTick = tick;
+    this.buffs = [];
+    this.lifeTicks = 0;
+    this.decayed = 0;
   }
 
   get alive(): boolean {
@@ -160,6 +183,35 @@ export class Projectile {
   }
 }
 
+/** Area effect object (Zap, Freeze, Poison, Rage...). */
+export class AreaEffect {
+  id: number;
+  def: AreaEffectDef;
+  team: number;
+  x: number;
+  y: number;
+  /** ms since creation */
+  age: number;
+  /** ms until the next hit (-1: no more hits) */
+  nextHit: number;
+  hitIds: number[];
+  born: number;
+  alive: boolean;
+
+  constructor(id: number, def: AreaEffectDef, team: number, x: number, y: number, tick: number) {
+    this.id = id;
+    this.def = def;
+    this.team = team;
+    this.x = x;
+    this.y = y;
+    this.age = 0;
+    this.nextHit = def.hitSpeedOffset;
+    this.hitIds = [];
+    this.born = tick;
+    this.alive = true;
+  }
+}
+
 export interface Command {
   team: number;
   card: CardDef;
@@ -174,7 +226,7 @@ export interface Command {
 /** Visual events for the viewer (recorded only when enabled). */
 export interface BattleEvent {
   tick: number;
-  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot';
+  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe';
   team: number;
   x: number;
   y: number;

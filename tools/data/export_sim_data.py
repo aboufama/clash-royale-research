@@ -31,12 +31,12 @@ ROOT = Path(__file__).resolve().parents[2]
 # Field names that only drive visuals, sound, UI or meta-game. Anything not
 # matched stays in the export, so new gameplay fields are never dropped silently.
 VISUAL = re.compile(
-    r"(Effect|Export|FileName|SWF|Shadow|Sound|^TID|Icon|Prestige|HealthBar|PrefabAsset|"
+    r"((?<!Area)Effect(?!Object)|Export|FileName|SWF|Shadow|Sound|^TID|Icon|Prestige|HealthBar|PrefabAsset|"
     r"UseAnimator|DeployBaseAnim|LoopingFilter|CrowdEffects|ShaderFX|StatsTags|ClientActions|"
     r"Highres|Placeholder|AutoChess|CustomAnimation|VisualLayer|HasRotationOnTimeline|"
     r"HideHealthbar|ShowHealthNumber|TrailEffect|Scale$|^Scale|AnimationsKeepLastFrame|"
     r"DontStopMoveAnim|TurretMovement|SkinType|CardPropertyTags|Stats$|UnlockArena|"
-    r"PveDefenseType|Tribe|PrestigeCount|SortOrder|NotInUse|MarkEffect|FilterFile|FilterExportName|"
+    r"PveDefenseType|Tribe|PrestigeCount|SortOrder|MarkEffect|FilterFile|FilterExportName|"
     r"AudioPitch|LoopMoveEffect|TargetEffectY|HasDamageVisualPivot|use360Frames|ExportName)"
 )
 
@@ -124,6 +124,8 @@ def main() -> None:
         "projectiles": table("projectiles"),
         "areaEffects": table("area_effect_objects"),
         "buffs": table("character_buffs"),
+        "damageTypes": {k: {kk: vv for kk, vv in v.items() if kk != "_meta"} for k, v in load("damage_types").items()},
+        "filters": {k: {kk: vv for kk, vv in v.items() if kk != "_meta"} for k, v in load("game_object_filters").items()},
         "cards": cards,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
