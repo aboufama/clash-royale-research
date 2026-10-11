@@ -30,20 +30,20 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Milestone | Status | Evidence / limit |
 | --- | --- | --- |
 | APK provenance and signatures | Verified | Base and ARM64 split pass APK v3 and SourceStamp verification; manifest reports 160402020. |
-| Pinned install-time assets | Verified | Signed build-160402020 install-time pack acquired; all 17,307 fingerprint entries match (10,719 ZIP files and 6,588 SQLite BLOBs), including 389/389 csv_logic files. Later live updates remain unverified. |
+| Pinned install-time assets | Verified | Signed build-160402020 install-time pack acquired; all 17,307 fingerprint entries match (10,719 ZIP files and 6,588 SQLite BLOBs), including 389/389 csv_logic files. Later live updates remain unverified. Original decoder independently reproduces all 419 compressed occurrences in the 421-input diagnostic manifest, with exact bytes and full consumption; two raw JSON inputs remain unchanged. A separate original container path passes three unchanged files. Neither proves live update selection or full Android resource startup. |
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | Two original Normal diagnostic runs complete 904 steps with identical recorded native steps and entire main/hand observer files; final code/source integrity passes. A separate same-guest game/Android API 35 integration executes the actual optional-file consumer. Full battle integration on that platform and ordinary/Android equivalence remain unvalidated. |
+| Supporting native runtime | Partial | Two complete Normal/seed1131 diagnostic runs produce identical position/health streams across 905 samples and matching recorded native steps/events. Original Android linker help startup independently executes 3,884 relative relocations, 13 resolvers and 17 constructors. Game library registration and normal Android startup remain incomplete; no ordinary-game equivalence claim. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
-| Troop movement | Partial | Original movement executes in a repeated 904-step native diagnostic battle. First complete position capture covers 905 boundaries and 9,247 actor observations, preserving 617 unknown-class observations without invented positions. Selected step/event records match; complete movement state and Android comparison remain pending. |
+| Troop movement | Partial | Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
-| Combat interactions | Partial | Original-loaded Knight/KingTower records drive 400 world ticks with melee/projectile damage and lethal removal. A selected health reader independently preserves the fixture report and matches 5,425 original leaf calls on copied fields, distinguishing zero HP from unavailable health. Full-state and ordinary-match combat equivalence remain unvalidated. |
+| Combat interactions | Partial | Repeated full diagnostic captures match 8,160 observations with HP present, 470 getter-unavailable rows and 617 unknown-class rows, retaining zero HP distinctly. The prior 400-tick melee/projectile fixture and 5,425 original leaf calls support the scoped reader. Full-state and ordinary-match combat equivalence remain unvalidated. |
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **21** · **2026-10-11T11:09:43Z** · Repeated the complete 904-step original diagnostic battle with identical recorded step/event evidence; validated its first 905-boundary position replay in-browser. Independently reproduced shared-game Android asset consumption and selected native health observations. Inspected a later original linker registration failure; newer-platform full initialization and ordinary-game byte equivalence remain incomplete.
+Review **24** · **2026-10-11T11:38:49Z** · Independently repeated complete native position/health streams across 905 samples and all recorded steps/events; preserved the sole host request-label difference explicitly. Reproduced original codec outputs across all 421 resource occurrences, three original container reads, and original Android linker help startup with 17 constructors. Exact ordinary gameplay, complete state/reset and game library registration remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -55,14 +55,37 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
 
-- A fresh full run **matches all 904 recorded steps, 2,551 main events and
-  669 hand events** from the first completed diagnostic battle. Its first
-  complete position stream captures every boundary from 0 through 904 and
-  eight native deployments. The replay preserves raw positions, leaves unknown
-  classes unplotted and adds no physics or interpolation. Browser checks cover
-  playback, keyboard controls and narrow/wide light/dark layouts. This is
-  selected-record repeatability, not a comparison of two full position streams
-  or complete-state equivalence. See [repeat and capture evidence](research/evidence/native-full-match-visual-repeat.json).
+- The **original decompressor reproduces all 419 compressed inputs** in the
+  421-occurrence diagnostic resource manifest; the other two inputs are raw
+  JSON. Independent runs match the complete report, including exact output
+  bytes, full input consumption and nine negative controls. This qualifies
+  the decoder on the pinned corpus; original file/provider startup remains
+  separate. See [native codec evidence](research/evidence/native-original-codec-corpus.json).
+- A separate original file/container path now parses headers, allocates,
+  decodes and releases three unchanged resources with identical independent
+  reports. Five malformed/bound controls and seven file-boundary rejections
+  pass. This uses an explicit immutable-file fixture, with original object
+  constructors and unchanged native code; it is not Android provider startup.
+  See [container evidence](research/evidence/native-original-container-wrapper.json).
+- The original Android linker now executes startup from an unrelocated ELF,
+  including **3,884 relative relocation writes, 13 resolver results and all
+  17 constructors**, then prints its original help and requests exit 0.
+  Independent reports match exactly; fifteen boundary controls and a missing
+  entropy negative pass. This help path exits before library-list initialization,
+  so the game's independently reproduced missing-library fatal remains open.
+  See [linker startup evidence](research/evidence/native-original-linker-startup.json).
+- Two complete health-enabled runs produce **byte-identical position/health
+  streams across all 905 samples**. All 904 recorded steps, 2,551 main events,
+  669 hand events and the native winner also match the earlier diagnostic.
+  Present HP, unavailable health and unknown classes remain distinct. One
+  omitted host request label is recorded separately; no native difference is
+  discarded. These are selected observations, not complete-state equivalence.
+  See [health repeat evidence](research/evidence/native-full-match-health-repeat.json).
+- The delivered [full diagnostic replay](research/evidence/native-full-match-visual-repeat.json)
+  shows the earlier position-only capture and eight native deployments.
+  It preserves raw positions, leaves unknown classes unplotted and adds no
+  physics or interpolation. Browser checks cover playback, keyboard controls
+  and narrow/wide light/dark layouts. The newer health data is not yet displayed.
 - The **original game and Android asset manager now run in one native guest**
   through the optional-ID consumer. Actual native asset lookup returns the
   missing-file result; original Bionic handles finite modeled kernel ENOENT
@@ -71,10 +94,10 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   platform stops at original linker library-registration state; its native
   fatal message is preserved, and integration remains incomplete.
   See [shared-platform evidence](research/evidence/native-game-android-shared-consumer.json).
-- A future health reader independently preserves the entire 400-tick fixture
+- The health reader independently preserves the entire 400-tick fixture
   report and matches 5,425 original leaf calls on selected copied fields.
   Present zero HP and getter-unavailable health remain distinct. This reader
-  is not part of the current full-match replay and does not infer tower
+  does not infer tower
   activation. See [health observation evidence](research/evidence/native-health-observation.json).
 - The original built-in `Normal` battle now **terminates after 904 returned
   steps**, with status 0 and winner index 1 from its own end handler. All 421

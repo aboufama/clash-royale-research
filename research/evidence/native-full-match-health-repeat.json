@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "classification": "Independently repeated complete native diagnostic with exact captured position and health streams; ordinary-game equivalence unvalidated",
+  "build": "160402020",
+  "independent_comparison_sha256": "578e566c6c99a8be64a49c298454ba3cfe5aecbf868eca45d074e21e6e7b8f68",
+  "root_comparator_source_sha256": "ae8d74124a7251d18e67087e4af662f45933cc233ac9cde90b2ca93cb1610b00",
+  "private_receipts_sha256": {
+    "native-events.json": "719a70e46b005762dbf5bcb61a0193495bdc2b76ac3f1d6979495c7c47f5750d",
+    "native-hand-events.json": "700ab06ce28af39ed3c82f783fa86a37d414cbfc2320ac8c4246e28fab58a4b7",
+    "control-state.json": "8f74aa034e69f110415c462a4b0f055bca3c5e54e6b49801a00000546b8f5457",
+    "test-setup/report-private.json": "e65cc5611b02f48320a92177cc6b41295639007b9c941104c7bbed913a5f219d",
+    "visual/initial-validation.json": "2a7ecadcda742bef4bf9d5b4cf4b8f048af8e4129d840f98e00ace1bfb7bde8d",
+    "visual/frames.jsonl.gz": "b0eaa68cb1855acde522fb37c3e6d427b85caf36a784317c089d50336ae78b3d",
+    "visual/manifest.json": "c7817cd1eadc5274856fa076a5b2878c65ba69e59d9283e378eb274106bb98df",
+    "native-test-mode-read-events.json": "86ee96bbb3f906b7b229d4d29db708b81c161a45d47002802c6778d4e3803451",
+    "report-private.json": "4810f33fbf996b2b2e54afb74ab67e2804908cd504e9a9839b197330164ecda8"
+  },
+  "repetition": {
+    "native_steps_per_run": 904,
+    "samples_per_run": 905,
+    "two_entire_health_position_streams_byte_identical": true,
+    "every_full_position_sample_matches_previous_visual_only_run": true,
+    "main_observer_events_per_run": 2551,
+    "hand_observer_events_per_run": 669,
+    "entire_main_and_hand_observer_files_byte_identical": true,
+    "every_recorded_native_runner_step_identical": true,
+    "all_native_report_fields_equal": true,
+    "native_report_comparison_exceptions": "Only host initialization elapsed_seconds and separately retained source/observer metadata. Native budget PCs, registers, order and all other report fields are exact.",
+    "control_receipts": [
+      {
+        "file": "control-000001.json",
+        "whole_file_byte_identical": false,
+        "host_metadata_difference": {
+          "path": "/command/id",
+          "baseline": "repeat-32",
+          "candidate": "field absent"
+        },
+        "all_native_and_capture_fields_equal": true
+      },
+      {
+        "file": "control-000002.json",
+        "whole_file_byte_identical": true,
+        "host_metadata_difference": null,
+        "all_native_and_capture_fields_equal": true
+      },
+      {
+        "file": "control-000003.json",
+        "whole_file_byte_identical": true,
+        "host_metadata_difference": null,
+        "all_native_and_capture_fields_equal": true
+      },
+      {
+        "file": "control-000004.json",
+        "whole_file_byte_identical": true,
+        "host_metadata_difference": null,
+        "all_native_and_capture_fields_equal": true
+      },
+      {
+        "file": "control-000005.json",
+        "whole_file_byte_identical": true,
+        "host_metadata_difference": null,
+        "all_native_and_capture_fields_equal": true
+      },
+      {
+        "file": "control-000006.json",
+        "whole_file_byte_identical": true,
+        "host_metadata_difference": null,
+        "all_native_and_capture_fields_equal": true
+      }
+    ],
+    "host_request_id_audit": "The omitted optional label in the first root request is stored/emitted by the host controller only. Native advance receives no request object or id; both original receipts are preserved."
+  },
+  "capture": {
+    "first_frame": 0,
+    "last_frame": 904,
+    "actor_observations": 9247,
+    "health_availability_counts": {
+      "present": 8160,
+      "unavailable_flag_clear": 470,
+      "unknown_actor_class": 617
+    },
+    "observed_present_zero_HP_frames": [
+      904
+    ],
+    "compressed_bytes": 87558,
+    "uncompressed_bytes": 3964189,
+    "uncompressed_payload_sha256": "d4353b8ec28c753e89fb143f7e57dfb90ba6737ba71a626d8650c58d874ff075",
+    "closed_without_error": true,
+    "health_sampler_sha256": "aba5f76f63081d64fede146cdeac5fa939321d13ec65cf3ecfd686948cb6db95",
+    "visual_sampler_sha256": "14e933f976110e6af7fd889c3654cea5299fc33fffcdffc6886f911f44041378"
+  },
+  "state_and_source_checks": {
+    "initial_all_mapped_regions_registers_allocator_cursor_unchanged": true,
+    "initial_receipt_identical_to_prior_run": true,
+    "task_source_count": 58,
+    "initial_manifest_sha256": "11adc2cc50bfcb6011c8dc5739150ece11d71230585c2ae97e9165510c86e6bd",
+    "terminal_source_closure": {
+      "manifest_sha256": "3fdba2a2fb3abe85cd1210f47cbcc64686c2d742d78148118a91d5e53fc9f9e3",
+      "initial_source_pins_still_match": true,
+      "new_task_source_count": 0,
+      "new_module_name_count": 21,
+      "terminal_module_count": 332
+    },
+    "both_entire_source_manifests_identical_between_health_runs": true,
+    "current_task_source_pins_independently_reverified": 58,
+    "terminal_original_code_integrity_passed": true
+  },
+  "filtered_observer": {
+    "retained_C_read_filter_used": true,
+    "final_read_events": 0,
+    "final_read_receipts_between_health_runs_byte_identical": true,
+    "older_visual_only_run_has_no_final_read_receipt": true,
+    "scope": "Read-only host callback filtering; preserved original code and native call order. This record makes no full-match speedup claim."
+  },
+  "native_result": {
+    "status": 0,
+    "winner_index": 1,
+    "primary_frame": 904,
+    "native_end_validated": true
+  },
+  "limits": [
+    "Both executions are the original built-in Normal/seed1131 diagnostic with original random input policy, test global1 and secondary context, on the existing modeled platform.",
+    "Position, current HP, availability and selected event records are not complete simulation state. Unknown classes remain unpositioned and health unknown. Max HP, shields and tower activation are not inferred.",
+    "An actor disappearing from the live list is not sufficient evidence of death. Sampled zero HP is retained distinctly from unavailable health.",
+    "Before/after sampling receipts and finite exact repetitions do not prove opaque VM noninterference, complete reset, ordinary-game equivalence or Android-device parity.",
+    "The previously delivered visual replay is the position-only capture; this checkpoint adds verified health data without claiming the existing display was updated."
+  ],
+  "byte_exact_gate_satisfied": false
+}

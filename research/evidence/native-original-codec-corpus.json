@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "classification": "Original native decompression independently verified over the complete421-input diagnostic manifest; file-provider startup remains separate",
+  "build": "160402020",
+  "source_game_elf_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+  "source_game_image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+  "source_asset_pack_sha256": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3",
+  "source_loader_manifest_sha256": "fe0cf3a9d532a64f82bdf7b01602dc5868f5f3255f968728bc4c71b9e1ee6607",
+  "independent_report_sha256": "c0805373d4e3561952ed44fba8fdac78bd0fd6d6b49b90caa2d4a6455bf07126",
+  "entire_independent_report_byte_identical": true,
+  "direct_authored_source_pins_verified_before_and_after": 4,
+  "source_scope": "Four direct probe/harness/helper files, not a complete Python/runtime closure. Original native/file inputs pinned separately.",
+  "corpus": {
+    "manifest_inputs": 421,
+    "unique_manifest_paths": 416,
+    "native_compressed_inputs": 419,
+    "uncompressed_JSON_inputs": 2,
+    "native_status_counts": {
+      "4": 419
+    },
+    "negative_controls": 9,
+    "native_decoded_output_bytes": 16708622,
+    "native_consumed_compressed_payload_bytes": 4011464,
+    "unchanged_JSON_bytes": 2500979,
+    "every_original_manifest_occurrence_preserved": true,
+    "all_compressed_cases_match_host_decoder_bytes_and_pinned_loader_plaintext_hash": true,
+    "all_native_input_buffers_unchanged": true,
+    "all_output_canaries_preserved": true,
+    "entire_original_image_unchanged_in_every_case": true,
+    "stub_as_data_guard_events": 0
+  },
+  "original_native_path": [
+    "decoder allocation",
+    "decoder initialization",
+    "decode",
+    "decoder free"
+  ],
+  "negative_controls": [
+    {
+      "name": "one_byte_truncated",
+      "allocation_return": 0,
+      "native_return": 0,
+      "native_status": 3,
+      "complete_compressed_consumption": true,
+      "declared_output_produced": false,
+      "strict_adapter_accepts": false
+    },
+    {
+      "name": "half_payload_truncated",
+      "allocation_return": 0,
+      "native_return": 0,
+      "native_status": 3,
+      "complete_compressed_consumption": true,
+      "declared_output_produced": false,
+      "strict_adapter_accepts": false
+    },
+    {
+      "name": "unsupported_property_225",
+      "allocation_return": 4,
+      "strict_adapter_accepts": false
+    },
+    {
+      "name": "property_length4",
+      "allocation_return": 4,
+      "strict_adapter_accepts": false
+    },
+    {
+      "name": "output_capacity_short",
+      "allocation_return": 0,
+      "native_return": 1,
+      "native_status": 2,
+      "complete_compressed_consumption": true,
+      "declared_output_produced": false,
+      "strict_adapter_accepts": false
+    },
+    {
+      "name": "trailing_input_byte",
+      "allocation_return": 0,
+      "native_return": 0,
+      "native_status": 4,
+      "complete_compressed_consumption": false,
+      "declared_output_produced": true,
+      "strict_adapter_accepts": false
+    },
+    {
+      "name": "output_bound_32000001",
+      "host_admission_rejected_before_native_calls": true
+    },
+    {
+      "name": "output_bound_-1",
+      "host_admission_rejected_before_native_calls": true
+    },
+    {
+      "name": "output_bound_True",
+      "host_admission_rejected_before_native_calls": true
+    }
+  ],
+  "admission_lesson": "Native return0 alone is insufficient. Accepted corpus cases additionally require observed status4, complete compressed-input consumption, exact declared output length, unchanged inputs/canaries/code and independent byte comparison.",
+  "limits": [
+    "Host ZIP extraction supplies exact packed bytes; original Android resource/file/provider startup is not tested.",
+    "Original codec result status4 is retained and interpreted only alongside full input consumption, exact declared length and independently matching plaintext bytes.",
+    "Explicit host new[]/delete[]/memcpy and synthetic TLS remain platform inputs.",
+    "Finite malformed controls validate this adapter domain; no universal malformed decoder safety or cryptographic authenticity claim.",
+    "The host still provides buffers and selects decoder ABI lengths/state. This does not establish the original container wrapper, asynchronous resource provider, or normal Android initialization.",
+    "Byte-identical resource output on this finite pinned corpus does not establish byte-identical battles."
+  ],
+  "byte_exact_gate_satisfied": false
+}

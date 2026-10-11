@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "classification": "Original file and compressed-container constructors independently verified on three immutable packed-file fixtures; no Android provider or battle parity",
+  "independent_report_sha256": "c9112ebfc3cfccaa0677cde6b4806c2530f3696fbef5b70db139b83cc8380aeb",
+  "whole_independent_report_byte_identical": true,
+  "input_sha256": {
+    "libg_image": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "libg": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "libcxx": "4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4",
+    "bionic": "9f1f93bbd186af5c40a93f6ca4425bfdce82b7f3b9c730e59bb5c7fa598593cf",
+    "asset_pack": "3e62afcf73786919be08b0a48f1744d82b618642fed8e8db7d1a76b5b2eb3fd3"
+  },
+  "source_pins_sha256": "2e0bfce35e7ff6984f333da82e2d97ee75a5c3ca6fc91687e08e23420e0124c2",
+  "imported_task_local_source_files_verified_before_and_after": 19,
+  "source_scope": "Task-local Python sources only; not complete Python/Unicorn runtime closure.",
+  "native_path": [
+    "original POSIX-backed resource-file constructor",
+    "original container stream constructor",
+    "original nine-byte header parser and decoder setup",
+    "original output allocation, buffered read and decoder",
+    "original output/stream/file destructors"
+  ],
+  "cases": [
+    {
+      "path": "csv_logic/game_tags.csv",
+      "packed_bytes": 2088,
+      "declared_output_bytes_from_native_getter": 5082,
+      "plaintext_sha256": "88e657c9a71b4039467794f6acfc11ccf775dae78c0aeb1412dcb831a6ba02ff",
+      "matches_independent_plaintext_bytes": true,
+      "native_remaining_to_decode": 0,
+      "native_remaining_compressed_bytes": 0,
+      "all_original_destructors_returned": true,
+      "all_original_executable_regions_unchanged": true,
+      "guard_events": 0,
+      "strict_observer_accepts": true
+    },
+    {
+      "path": "csv_logic/globals.csv",
+      "packed_bytes": 6622,
+      "declared_output_bytes_from_native_getter": 25764,
+      "plaintext_sha256": "af87c4faf1d965a92a3f3f1b813e683c978c656ed09d041536d0424b0ffd92cd",
+      "matches_independent_plaintext_bytes": true,
+      "native_remaining_to_decode": 0,
+      "native_remaining_compressed_bytes": 0,
+      "all_original_destructors_returned": true,
+      "all_original_executable_regions_unchanged": true,
+      "guard_events": 0,
+      "strict_observer_accepts": true
+    },
+    {
+      "path": "csv_logic/characters/knight.toml",
+      "packed_bytes": 724,
+      "declared_output_bytes_from_native_getter": 2039,
+      "plaintext_sha256": "82c000ea05ec5d7e4d344f6153d08a0aca7dc99804666f3c7dce7bb4bf1a44cb",
+      "matches_independent_plaintext_bytes": true,
+      "native_remaining_to_decode": 0,
+      "native_remaining_compressed_bytes": 0,
+      "all_original_destructors_returned": true,
+      "all_original_executable_regions_unchanged": true,
+      "guard_events": 0,
+      "strict_observer_accepts": true
+    }
+  ],
+  "malformed_and_bound_controls": [
+    {
+      "name": "short_header",
+      "original_initial_invalid_byte": 1,
+      "strict_observer_accepts": false,
+      "decoder_returns": []
+    },
+    {
+      "name": "invalid_magic",
+      "original_initial_invalid_byte": 1,
+      "strict_observer_accepts": false,
+      "decoder_returns": []
+    },
+    {
+      "name": "truncated_payload",
+      "original_initial_invalid_byte": 0,
+      "strict_observer_accepts": false,
+      "native_remaining_to_decode": 16,
+      "native_remaining_compressed_bytes": 0,
+      "native_final_invalid_byte": 0,
+      "decoder_returns": [
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 5082,
+          "input_capacity": 2078,
+          "output_bytes": 5066,
+          "consumed_input_bytes": 2078,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        },
+        {
+          "return_u32": 0,
+          "status_u32": 3,
+          "output_capacity": 16,
+          "input_capacity": 0,
+          "output_bytes": 0,
+          "consumed_input_bytes": 0,
+          "finish_mode": 1
+        }
+      ]
+    },
+    {
+      "name": "trailing_byte",
+      "original_initial_invalid_byte": 0,
+      "strict_observer_accepts": false,
+      "native_remaining_to_decode": 0,
+      "native_remaining_compressed_bytes": 1,
+      "native_final_invalid_byte": 0,
+      "decoder_returns": [
+        {
+          "return_u32": 0,
+          "status_u32": 4,
+          "output_capacity": 5082,
+          "input_capacity": 2080,
+          "output_bytes": 5082,
+          "consumed_input_bytes": 2079,
+          "finish_mode": 1
+        }
+      ]
+    },
+    {
+      "name": "output_bound",
+      "original_initial_invalid_byte": 0,
+      "strict_observer_accepts": false,
+      "host_output_bound_rejected": true,
+      "decoder_returns": []
+    }
+  ],
+  "finite_platform_rejection_controls": [
+    {
+      "name": "unknown_path",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    },
+    {
+      "name": "write_mode",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    },
+    {
+      "name": "unknown_FILE",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    },
+    {
+      "name": "unknown_fd",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    },
+    {
+      "name": "write_mapping",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    },
+    {
+      "name": "discard_advice",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    },
+    {
+      "name": "unsupported_file_operation",
+      "terminal_after_rejection": true,
+      "native_code_unchanged": true
+    }
+  ],
+  "malformed_input_lesson": "A requested-size native output buffer and native invalid flag0 do not prove complete decoding. The truncated case produces5066 of5082 bytes/status3; complete-production and consumption checks reject it.",
+  "limits": [
+    "Isolated container API on one immutable virtual packed file; not Android AAssetManager, complete resource/provider startup, or battle fidelity.",
+    "Host adapters: fopen rb opaque FILE, fileno17, exact ARM64 fstat metadata, mmap read/shared exact payload, MADV_WILLNEED residency hint, fclose, munmap, bounded strlen/allocation/free/memory primitives.",
+    "Shipped original libc++ call_once/refcount methods and pinned original Bionic mutex/condition/sysconf execute with the existing explicit one-thread/TLS/allocator platform.",
+    "The header and native decoder lengths come from original game methods; host supplies only packed-file bytes, filename, flags0, caller storage and output request copied from native getter.",
+    "Original wrapper may produce a requested-size buffer for malformed data; strict observer acceptance independently requires complete native decoder production, status and consumption. No universal malformed-input safety or cryptographic authenticity claim.",
+    "Original data bindings and native writable globals change; only original executable regions are asserted unchanged. Source manifest pins task-local Python modules, not the entire Python/Unicorn runtime."
+  ],
+  "byte_exact_gate_satisfied": false,
+  "host_supplies_zeroed_caller_storage": true,
+  "game_object_fields_initialized_by_original_constructors": true
+}

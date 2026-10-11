@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 21,
-    "reviewed_at": "2026-10-11T11:09:43Z",
-    "summary": "Repeated the complete 904-step original diagnostic battle with identical recorded step/event evidence; validated its first 905-boundary position replay in-browser. Independently reproduced shared-game Android asset consumption and selected native health observations. Inspected a later original linker registration failure; newer-platform full initialization and ordinary-game byte equivalence remain incomplete."
+    "sequence": 24,
+    "reviewed_at": "2026-10-11T11:38:49Z",
+    "summary": "Independently repeated complete native position/health streams across 905 samples and all recorded steps/events; preserved the sole host request-label difference explicitly. Reproduced original codec outputs across all 421 resource occurrences, three original container reads, and original Android linker help startup with 17 constructors. Exact ordinary gameplay, complete state/reset and game library registration remain unvalidated."
   },
   "milestones": [
     {
@@ -21,7 +21,7 @@
       "id": "asset_pack",
       "status": "verified",
       "evidence": [
-        "Signed build-160402020 install-time pack acquired; all 17,307 fingerprint entries match (10,719 ZIP files and 6,588 SQLite BLOBs), including 389/389 csv_logic files. Later live updates remain unverified."
+        "Signed build-160402020 install-time pack acquired; all 17,307 fingerprint entries match (10,719 ZIP files and 6,588 SQLite BLOBs), including 389/389 csv_logic files. Later live updates remain unverified. Original decoder independently reproduces all 419 compressed occurrences in the 421-input diagnostic manifest, with exact bytes and full consumption; two raw JSON inputs remain unchanged. A separate original container path passes three unchanged files. Neither proves live update selection or full Android resource startup."
       ]
     },
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "Two original Normal diagnostic runs complete 904 steps with identical recorded native steps and entire main/hand observer files; final code/source integrity passes. A separate same-guest game/Android API 35 integration executes the actual optional-file consumer. Full battle integration on that platform and ordinary/Android equivalence remain unvalidated."
+        "Two complete Normal/seed1131 diagnostic runs produce identical position/health streams across 905 samples and matching recorded native steps/events. Original Android linker help startup independently executes 3,884 relative relocations, 13 resolvers and 17 constructors. Game library registration and normal Android startup remain incomplete; no ordinary-game equivalence claim."
       ]
     },
     {
@@ -63,7 +63,7 @@
       "id": "movement",
       "status": "partial",
       "evidence": [
-        "Original movement executes in a repeated 904-step native diagnostic battle. First complete position capture covers 905 boundaries and 9,247 actor observations, preserving 617 unknown-class observations without invented positions. Selected step/event records match; complete movement state and Android comparison remain pending."
+        "Complete repeated diagnostic position streams match at 905 boundaries and 9,247 actor observations; 617 unknown-class rows remain unpositioned. All prior visual-only samples also match. Complete movement state and Android comparison remain pending."
       ]
     },
     {
@@ -84,7 +84,7 @@
       "id": "combat",
       "status": "partial",
       "evidence": [
-        "Original-loaded Knight/KingTower records drive 400 world ticks with melee/projectile damage and lethal removal. A selected health reader independently preserves the fixture report and matches 5,425 original leaf calls on copied fields, distinguishing zero HP from unavailable health. Full-state and ordinary-match combat equivalence remain unvalidated."
+        "Repeated full diagnostic captures match 8,160 observations with HP present, 470 getter-unavailable rows and 617 unknown-class rows, retaining zero HP distinctly. The prior 400-tick melee/projectile fixture and 5,425 original leaf calls support the scoped reader. Full-state and ordinary-match combat equivalence remain unvalidated."
       ]
     },
     {

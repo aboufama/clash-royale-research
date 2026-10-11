@@ -62,21 +62,29 @@ simulation. Unsupported mechanics keep the exactness milestone incomplete.
 
 1. Pinned install-time asset pack acquired and verified; still establish which
    fingerprint and cache overrides the reference runtime selects.
-2. Support code, original selector records and `libg` code are recovered from
-   original inputs through public tools with explicit runtime models. Complete
-   original game initialization without forced success or synthetic battle state.
-3. Original world ticks now drive movement and melee on synthetic fixtures;
-   original CSV parsing and game-tag registration execute from pinned bytes.
-   Continue native troop/sequence/global data loading, original deployment,
-   target acquisition, towers and outer match initialization. World-loop
-   execution alone does not supply those missing dependencies.
-4. Build an unmodified-engine reference runner and complete state-capture path.
-   Synthetic object layouts and isolated function results do not satisfy it.
-5. Implement the battle adapter and exact comparisons before policy training.
+2. The diagnostic pipeline supplies all 421 resource inputs for original parsing
+   and finalization; the original built-in Normal runner then creates its own
+   test battle and reaches its native winner.
+   Independent complete runs reproduce the selected steps and events. Preserve
+   this reproducible checkpoint while replacing its remaining modeled platform
+   boundaries with original Android routines and audited kernel inputs.
+3. Finish original Android linker/process initialization. The shared game/Android
+   asset manager reaches actual native file consumers, but the full-data path
+   still stops at library registration needed by thread-destructor setup.
+4. Expose external actions through original command construction and dispatch,
+   and establish the original context/step contract. The current complete runner
+   uses its own input policy; it is not yet a training environment.
+5. Capture every simulation-affecting field and ordered event, establish a
+   complete reset mechanism, and validate the supported runtime and ordinary
+   match behavior. Position/health observations and finite matching diagnostic
+   runs do not replace these requirements.
+6. Measure deterministic headless throughput and implement self-play and policy
+   training only after the exactness gate passes.
 
 The README chart reports evidence achieved toward these stages. It is reviewed
 and updated on every push under the rules in [AGENTS.md](AGENTS.md).
 
-The user has seen an isolated original-pathfinding visualization. The next
-requested visual demo must show a full match with troop placement and original
-troop interactions. Intermediate component recovery is reported in text.
+The full native diagnostic replay has been delivered with troop placement and
+observed interactions. Its test-mode and modeled-platform limits remain visible.
+Future demos must continue to use verified original execution, retain unknown
+fields honestly and never substitute generated battle mechanics.

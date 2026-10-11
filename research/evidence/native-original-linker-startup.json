@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "classification": "Independently reproduced original linker initialization boundaries; runtime integration remains incomplete",
+  "linker_sha256": "3f3047ad0ce58675d3a106b1a5d67840e71f4c1a193f7062ec40ea740f349790",
+  "resource_tls_boundary": {
+    "independent_report_sha256": "efa0fa05486210a3d1bcf687ae2e7cf9a305355269fbbf903ba96fc06a1e7263",
+    "reference_report_sha256": "67f7441c7c6f65b3cdf1a03b04da73ba20e08e5b13e319bb57c6b628381d2289",
+    "independent_validation_sha256": "d660aaac2dc71ea0d21198a27a204a613b91ef03af6499ce3ea766fb93013a90",
+    "expected_process_exit_code": 1,
+    "native_failure": "Original linker cannot find the game library record while registering a thread destructor.",
+    "stopped_syscall": "writev to stderr; no kernel success supplied",
+    "original_resolver_calls": 13,
+    "all_native_report_fields_match": true,
+    "whole_report_bytes_identical": false,
+    "host_metadata_difference": "Twelve library path strings are absolute in the independent invocation and relative in the reference; each resolves to the same pinned input.",
+    "stopped_capsule_report_identical": true,
+    "mapped_region_receipts_identical_and_independent_dump_hashes_verified": 37,
+    "original_tls_push_completed": false,
+    "original_tls_pop_completed": false
+  },
+  "raw_linker_startup": {
+    "independent_report_sha256": "0a028002efe688ec30613d125c3e7c9ebc78a7e36c6c1c47e3ad5503bab6c6b9",
+    "whole_independent_report_byte_identical": true,
+    "frozen_source_manifest_sha256": "4dd9f9224ed6b4e718c1f405a341049c541dac25a10eae1d5b9fe1951f67c11f",
+    "frozen_source_files_verified": 4,
+    "starts_from_original_unrelocated_ELF": true,
+    "original_entrypoint_elf_va": "0x1543d4",
+    "original_native_RELR_writes_matching_expected": 3884,
+    "original_native_IRELATIVE_results_matching_separate_dispatch": 13,
+    "all_original_executable_regions_unchanged": true,
+    "explicit_process_inputs": "Direct linker --help argv, empty environment, bounded auxiliary vector including declared hardware capabilities and16 supplied random bytes; modeled PID/TID1000.",
+    "modeled_kernel_operations": [
+      "getpid/gettid",
+      "one original temporary-TLS mmap request",
+      "set_tid_address for the verified original thread field"
+    ],
+    "stopped_at": "faccessat for /dev/urandom, before library-list initialization",
+    "library_lists_initialized": false,
+    "native_startup_complete": false
+  },
+  "limits": [
+    "These are isolated same-image Android35 prerequisites. They do not establish ordinary-game or Android-device parity.",
+    "The native diagnostic battle uses the earlier modeled platform; this linker is not integrated into a complete game process.",
+    "The missing-library fatal is preserved; no game assertion, native fatal branch, library record, or success result is patched.",
+    "Original kernel process inputs remain explicitly supplied. Completing one startup path will not prove every Android runtime behavior."
+  ],
+  "byte_exact_gate_satisfied": false,
+  "subsequent_original_help_startup": {
+    "independent_positive_report_sha256": "74f698caa2c6a3d3a9646d7ea12b8117915e3c9bd57f297a3093e9770d266ff5",
+    "whole_positive_report_byte_identical": true,
+    "frozen_files_verified": 9,
+    "boundary_controls_passed": 15,
+    "native_missing_entropy_negative_exit_code": 1,
+    "negative_stop": "Unsupported original linker syscall 278",
+    "negative_report_sha256": "1b95df026f988ae62c45bb9044962805c66b1763e5371eb1d71a25514763c087",
+    "game_library_loaded": false,
+    "original_constructor_count": 17,
+    "all_constructor_returns_observed_in_original_order": true,
+    "native_exit_request": {
+      "syscall": 94,
+      "status": 0
+    },
+    "exit_teardown_modeled": false,
+    "stdout_bytes": 530,
+    "stdout_sha256": "cbb24b3d872a923129449371d1c2d9848c11936268f86e33f1b188a5349bc97b",
+    "native_RELR_writes": 3884,
+    "native_IRELATIVE_results": 13,
+    "original_executable_code_unchanged": true,
+    "actual_original_ELF_segment_permissions_applied": true,
+    "native_RELRO_mprotect_applied": true,
+    "finite_getrandom_input_bytes": 40,
+    "getrandom_bytes_consumed": 40,
+    "library_lists_remain_zero": true,
+    "scope": "Original --help exits before namespace creation. This does not resolve the game missing-soinfo failure.",
+    "kernel_inputs": "Declared argv/auxv/IDs, absent virtual urandom, finite supplied entropy, SCHED_OTHER priority0, owned anonymous maps/protections/VMA names, alternate signal stack without signal delivery, virtual stdout/stderr sinks. Unknown operations or exhausted entropy stop."
+  }
+}

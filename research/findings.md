@@ -948,10 +948,13 @@ remain; complete native file ingestion is not established. The completed
 battle above still uses the older platform. A subsequent full-data attempt
 on the new platform stops in original linker code. A smaller isolated probe
 reaches the native fatal diagnostic: the linker cannot find the game's library
-record while registering a thread destructor. Root independently inspected the
-hash-verified stopped-memory capsule and exact diagnostic buffers; it has not
-yet independently rerun this late path. The guarded stop is retained, and
-no registration bypass or success return is substituted.
+record while registering a thread destructor. Root first inspected the
+hash-verified stopped-memory capsule and exact diagnostic buffers, then
+independently reproduced the isolated failing path. All native report fields
+and the 37 mapped-region receipts match; only twelve host library-path strings
+differ in absolute versus relative spelling and resolve to the same inputs.
+The guarded stop is retained, and no registration bypass or success return is
+substituted. This isolated repetition does not rerun the later full-data path.
 
 ## Selected native health observation
 
@@ -969,3 +972,89 @@ original damage clamp. Twelve synthetic reader controls pass. The
 [health record](evidence/native-health-observation.json) preserves these
 limits: copied leaf execution is not a full engine clone or Android oracle,
 and this reader is not part of the first complete position capture.
+
+## Original decoder over the complete diagnostic resource corpus
+
+Two independent executions of the original ARM64 decoder reproduce all 419
+compressed occurrences in the 421-input manifest. The two remaining inputs
+are unchanged raw JSON. Repeated template paths stay in their original order;
+the corpus has 416 unique paths. All 16,708,622 decoded bytes match the host
+reference byte-for-byte and the pinned loader's plaintext hashes. All
+4,011,464 compressed payload bytes are consumed. Each case preserves its
+original input, output canary and entire original code image with no
+stub-as-data guard event. The complete independent reports are byte-identical.
+
+Six original malformed-input probes and three host admission controls show
+why a native return value of zero is insufficient: truncated input can return
+zero with incomplete output, and trailing data can remain unconsumed. The
+accepted corpus checks status, input consumption, declared output length and
+exact output bytes together. The [codec evidence](evidence/native-original-codec-corpus.json)
+preserves these finite limits. Host ZIP extraction, explicit allocation/memory
+operations and synthetic thread storage remain; the original container wrapper
+and asynchronous file-provider startup are separate work.
+
+A subsequent [container checkpoint](evidence/native-original-container-wrapper.json)
+uses original resource-file and stream constructors, header parsing, decoder
+setup, output allocation/read and destructors for three unchanged inputs.
+Host code supplies zeroed caller storage and one explicit immutable virtual
+packed file; original methods initialize the object fields and derive the
+header lengths. Both complete reports match exactly, and original executable
+regions in the game, shipped C++ and pinned Bionic remain unchanged. Native
+writable globals and explicit imported-data bindings are not claimed unchanged.
+
+Five malformed/bound cases and seven finite-file rejection cases pass. The
+native wrapper can return a requested-size buffer while decoding fewer bytes,
+so neither that buffer nor its invalid flag alone establishes valid content.
+The strict observer checks production and consumption without changing the
+original behavior. This three-input container fixture is distinct from the
+full codec corpus and does not initialize the Android resource provider.
+
+## Original linker self-initialization
+
+An isolated fresh guest starts the original, unrelocated Android35 linker at
+its native initialization entry with explicit process arguments and auxiliary
+vector inputs. Original code performs all 3,884 RELR writes and produces the
+same thirteen IRELATIVE results as the separately exercised original dispatcher.
+Executable bytes remain unchanged. An independent run reproduces the whole
+report exactly.
+
+This probe stops at the original request to check `/dev/urandom`; its library
+lists remain uninitialized. The [startup evidence](evidence/native-original-linker-startup.json)
+records the supplied kernel/process inputs and the separate game-resource
+failure above. It establishes an original initialization route to investigate,
+not a completed process loader, registered game library, or Android battle.
+
+A subsequent frozen probe supplies a finite entropy transcript and narrowly
+modeled kernel memory, scheduler and signal-stack inputs. Original code now
+runs all seventeen initializer entries, prints the original help text and
+requests `exit_group(0)`. The complete independent report and 530 output bytes
+match exactly, all original executable bytes remain unchanged, and fifteen
+boundary controls pass. Omitting the entropy transcript stops at the original
+getrandom call. ELF segment permissions and original RELRO requests apply to
+the guest. This normal help branch exits before namespace creation: the game
+library registration problem remains unresolved, and exit teardown is not
+modeled.
+
+## Complete repeated health and position capture
+
+Two fresh executions of the complete diagnostic capture identical compressed
+health/position streams at all 905 boundaries. All 9,247 actor observations and
+their order match; health is present in 8,160 rows, unavailable by the original
+getter flag in 470, and unknown for the remaining 617. One present zero-HP row
+occurs at frame 904. Disappearance from the live list is not classified as death.
+Every earlier position-only sample also matches its corresponding fields.
+
+Both entire main and hand event files, every native runner-step record, the
+native winner, source manifests and initial read-only state receipts match.
+The first root request omitted an optional host label; the controller never
+passes that label to native execution. Both original receipts are retained,
+and the exact metadata difference is enumerated. Later control files match
+byte-for-byte. All native report fields match; only host timing and explicitly
+separated source/observer metadata are excluded from that native comparison.
+
+The retained C read filter also closes cleanly with identical final receipts.
+The prior visual-only run lacks a final read-event receipt, so no comparison
+against an absent baseline is claimed. Initial and terminal source pins and
+original code-integrity checks pass. The [health repeat record](evidence/native-full-match-health-repeat.json)
+preserves the test-mode, modeled-platform, incomplete-state and reset limits.
+The previously delivered display remains the original position-only replay.
