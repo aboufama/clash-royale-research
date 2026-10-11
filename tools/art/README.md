@@ -74,21 +74,19 @@ at the data radius in SC pixels (Freeze 3000 -> `spell_freeze_radius_blue` 178 p
 29.85), which independently confirms the arena scale. Tower ruins come from the permanent particle
 of the tower DeathEffect (`Tower_destroyed_ground2` King, `Tower_destroyed_ground1` Princess).
 
-### Arena alignment (Goblin Stadium `goblin_bgr`, export-local SC pixels, scale 1)
+### Arena alignment (client projection, libg 0x857ffc)
 
-    px = -1.6  + (x - 9000)  / 1000 * 29.85
-    py = 383.4 - (y - 16000) / 1000 * 24.2        (blue at the bottom, +y toward red)
+    world = logic * 0.002                     (FUN_00851b54)
+    sx = -270 + 15 * wx                       (ox = -(36 >> 1) * 15, 0x8578e4)
+    sy =    0 + 12 * (wy - wz / 2)            (oy = 0)
 
-Derived by fitting the art: the checkerboard tile edges of both field halves (least squares,
-residuals < 1.4 px; x 29.85 px/tile, y 24.2 px/tile, i.e. the ground is foreshortened to 0.81),
-the river and both bridge clips centred on y = 16000 (bridge `ty` 383 + 0.4), the bridges and
-lanes at x 3500 / 14500, and the King / Princess pad centres (within ~1 px). Units, towers and the
-arena share one pixel scale: the King tower art is 120 px = 4 tiles, the Princess base fits its
-3x3 pad, and a unit sprite is drawn at `Scale / 100` around its origin. Confidence: high for x/y
-(towers sit on their pads, bridges on the lanes, decorations from `goblin_arena.csv` line up with
-the walls), medium for heights: `zPxPer1000 = 17.5` assumes an orthographic camera
-(`29.85 * cos(asin(0.81))`), used for flying heights, projectile arcs and particle z.
-Location objects (`locations/*.csv`) use y downward from the red edge: `y_game = 32000 - y`.
+i.e. 30 SC px per tile across, 24 along (0.8 foreshortening) and 12 px per 1000 units of
+height, with the arena export drawn at the battle layer origin. This is the unflipped view
+(logic y = 0 at the top). The viewer who is logic player 0 (blue, bottom) gets wx' = 36 - wx,
+wy' = 64 - wy and the arena clip turned 180 degrees; location decorations are placed before that
+flag is set and keep their unflipped positions. `sim/viewer/src/sc/battle_art.ts` implements both.
+An earlier least-squares fit to the checker tiles (29.85 x 24.2 px, 17.5 px per 1000 height) was
+close on the ground but put flying units, projectile arcs and the tower princess 46 % too high.
 
 ### Renderer fidelity vs `render.py`
 
@@ -100,8 +98,7 @@ treats all non-normal modes as additive), masks (modifiers 38/39/40) are applied
 buffer (render.py ignores them), text fields are drawn with the Supercell-Magic font.
 
 Approximations (not recovered from the game code): particle emitter semantics (see
-`sim/viewer/src/sc/effects.ts`), unit shadows (sprite silhouettes scaled/skewed by the Shadow*
-fields, blurred, tinted with the location's Shadow colour), projectile frame selection (frames
+`sim/viewer/src/sc/effects.ts`), projectile frame selection (frames
 read as pitch toward/away from the camera), nested clips sharing one clock (render.py's model),
 the King turret frame mapping (36 frames over 180 degrees), health-bar placement, HUD layout
 (card slots from the `cardArea`/`nextCard1` placeholders, elixir-bar stretching). Not

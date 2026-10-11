@@ -189,6 +189,8 @@ export interface ArenaArt {
   originGame: [number, number];
   zPxPer1000: number;
   shadow: Record<string, number>;
+  /** client_globals SHADOW_BLUR_DISTANCE (hundredths; composite tap distance factor) */
+  shadowBlurDistance?: number;
   clouds?: { sc: string; export: string; count?: number; minscale?: number; maxscale?: number; minspeed?: number;
     maxspeed?: number; minalpha?: number; maxalpha?: number; randomflip?: boolean };
   [k: string]: unknown;

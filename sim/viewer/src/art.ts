@@ -69,6 +69,7 @@ export class ArtWorld implements WorldRenderer {
     this.fx = new EffectPlayer(art, 7);
     // Show the field plus a margin of the stadium, with the art's foreshortening.
     cam.aspectY = art.yScale;
+    cam.mirrorX = art.flip; // the blue player's native view runs logic x right-to-left
     cam.world = { x0: -1200, y0: -2200, x1: 19200, y1: 32800 };
   }
 
@@ -77,10 +78,10 @@ export class ArtWorld implements WorldRenderer {
     this.canvas.height = Math.round(height * dpr);
     this.cam.fit(width, height, dpr);
     // Derive the SC-pixel view from the camera: gameToPx is affine with the same scales.
-    const a = this.art.manifest.arena;
-    this.s = (this.cam.scaleX * 1000) / a.pxPerTileX;
-    this.vx = this.cam.ox - this.s * (a.originPx[0] - (a.originGame[0] * a.pxPerTileX) / 1000);
-    this.vy = this.cam.oy - this.s * (a.originPx[1] + (a.originGame[1] * a.pxPerTileY) / 1000);
+    this.s = (this.cam.scaleX * 1000) / this.art.pxPerTileX;
+    const [px, py] = this.art.gameToPx(9000, 16000);
+    this.vx = this.cam.sx(9000) - this.s * px;
+    this.vy = this.cam.sy(16000) - this.s * py;
   }
 
   // ---------------------------------------------------------------- events -> effects
@@ -159,18 +160,31 @@ export class ArtWorld implements WorldRenderer {
       for (const [id, h] of this.aeoFx) if (!b.areaEffects.some((q) => q.id === id)) { h.stop(); this.aeoFx.delete(id); }
     }
 
-    // unit shadows
-    const sh = m.arena.shadow;
+    // shadow layer: decorations, crown towers, units (one silhouette buffer, one composite)
     r.beginShadows();
+    art.drawArenaShadows(r, sim);
     for (const u of b.units) {
-      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.state === ST_DEPLOYING || u.tunneling) continue;
+      if (u.tower === TOWER_NONE || u.state === ST_DEAD) continue;
+      const team = u.team as Team;
+      if (u.tower === TOWER_KING) {
+        let act: number | undefined;
+        if (u.kingState === KING_ACTIVATING) act = (66 - u.kingTicks) * 50 + f.alpha * 50;
+        else if (u.kingState !== KING_INACTIVE) act = 3300 + sim;
+        art.drawTowerShadow(r, 'king', team, sim, act);
+      } else {
+        const aim = u.target ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
+        art.drawTowerShadow(r, u.x < 9000 ? 'princessLeft' : 'princessRight', team, sim, undefined, aim);
+      }
+    }
+    for (const u of b.units) {
+      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling) continue;
       const ca = m.characters[u.def.name];
       if (!ca) continue;
       const st = this.unitState(u, f);
       art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), st.action, st.angle, st.ms);
     }
     this.fx.draw(r, 'Shadow');
-    r.endShadows([(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, (sh.ShadowA ?? 50) / 100], 2.5);
+    art.endShadowPass(r);
     this.fx.draw(r, 'Base');
 
     const items: DrawItem[] = [];
@@ -198,7 +212,7 @@ export class ArtWorld implements WorldRenderer {
     // arena decorations on the object layer
     for (const o of m.arena.objects) {
       if (o.layer !== 'Object') continue;
-      const [px, py] = art.gameToPx(o.x, 32000 - o.y);
+      const [px, py] = art.decoPx(o);
       items.push({ y: py, draw: () => r.draw(art.lib(o.sc), o.export, 0, [1, 0, 0, 1, px, py]) });
     }
     // units (0-HP actors such as death bombs and the Rage bottle are drawn too)

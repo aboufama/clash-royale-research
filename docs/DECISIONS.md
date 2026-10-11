@@ -117,3 +117,24 @@ change it.
   from scratch. See "Open questions for the owner" in [STATE.md](../STATE.md). If
   throughput is too low for training, port the core to Rust or C++ (with WASM
   for the browser) behind the same interface.
+
+## 2026-10-11 — Viewer: the client's projection and shadow pass, blue sees the turned view
+
+- **Decision:** draw the battle with the client's projection (0x857ffc: 30 × 24
+  SC px per tile, 12 px per 1000 height) and shadow pass (FUN_00851d7c matrices,
+  shadow_2d_composite), and show the blue player the 180°-turned view the client
+  gives logic player 0 (logic x runs right-to-left, the arena clip turned,
+  decorations unflipped because they are placed before the flag is set).
+- **Why:** the owner wants it visually indistinguishable from the game. The
+  earlier fitted alignment was close on the ground but 46 % high for heights,
+  and the earlier shadows were upright, blurred approximations.
+- **Would change if:** a phone screenshot shows a different orientation or
+  decoration layout for the blue player.
+
+## 2026-10-11 — Public GitHub Pages demo from a private repository
+
+- **Decision:** add a Pages workflow that bakes the original art in CI and
+  publishes the playable viewer.
+- **Why:** the owner asked for a demo they can play on their phone and chose
+  public Pages after being told it publishes Supercell's art and data. The
+  repository itself stays private and the public-repo guard stays in CI.

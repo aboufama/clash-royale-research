@@ -9,7 +9,9 @@
 //   - text fields (Canvas2D-rasterised, cached),
 //   - named-child overrides (Supercell code swaps placeholder children such as the King tower's
 //     `king_dummy`/`turret`, health-bar `bar` frames and text instances at runtime),
-//   - a soft-shadow pass (silhouettes into an offscreen buffer, blurred, tinted).
+//   - the shadow pass of the game's 2D renderer: silhouettes (sprite alpha x vertex alpha,
+//     custom_sprite_shadow) into an offscreen buffer, then one composite (shadow_2d_composite):
+//     4 taps at (+-ox, +-oy), summed, clamped to 1, times the location shadow colour.
 // Nested clips receive `childFrame` (default = the root frame), i.e. one shared clock like
 // render.py; pass a separate childFrame to hold the root on a frame while children animate.
 //
@@ -18,7 +20,7 @@
 //   r.begin([r, g, b, a]?)                   // clears, resets stats; call once per frame
 //   r.setView(a, b, c, d, tx, ty)            // SC pixels -> canvas pixels (flushes)
 //   r.draw(lib, 'Knight_run1_5', frame, matrix?, color?, opts?)
-//   r.beginShadows(); ...draw silhouettes...; r.endShadows([r, g, b, a], blurPx)
+//   r.beginShadows(); ...draw silhouettes...; r.endShadows([r, g, b, a], [ox, oy])
 //   r.end()                                  // flushes; r.stats = {drawCalls, triangles}
 // Mirroring: pass a matrix with a negative x scale, e.g. [-s, 0, 0, s, x, y].
 // Textures are premultiplied (createImageBitmap premultiplyAlpha) and mip-mapped.
@@ -113,23 +115,19 @@ layout(location=0) in vec2 aPos;
 out vec2 vUv;
 void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
+// sc3d/shaders/shadow_2d_composite.frag (libg 160402020): four taps of the silhouette buffer at
+// (+ox,+oy) (-ox,+oy) (-ox,-oy) (+ox,-oy), summed, clamped to 1, times u_c (premultiplied).
 const BLUR_FS = `#version 300 es
 precision mediump float;
 in vec2 vUv;
 uniform sampler2D uSrc;
-uniform vec2 uStep;     // texel step * direction
-uniform vec4 uTint;     // premultiplied output colour for the final pass, or (1,1,1,1)
-uniform float uSigma;
+uniform vec2 uOff;
+uniform vec4 uC;
 out vec4 outColor;
 void main() {
-  float a = 0.0, wsum = 0.0;
-  for (int i = -12; i <= 12; i++) {
-    float w = exp(-0.5 * float(i * i) / max(uSigma * uSigma, 0.0001));
-    a += texture(uSrc, vUv + uStep * float(i)).a * w;
-    wsum += w;
-  }
-  a /= wsum;
-  outColor = uTint * a;
+  float s = texture(uSrc, vUv + uOff).a + texture(uSrc, vUv + vec2(-uOff.x, uOff.y)).a
+          + texture(uSrc, vUv - uOff).a + texture(uSrc, vUv + vec2(uOff.x, -uOff.y)).a;
+  outColor = uC * min(s, 1.0);
 }`;
 
 interface GlTex {
@@ -339,8 +337,11 @@ export class ScRenderer {
     this.applyView();
   }
 
-  /** Blur the silhouettes and composite them with a premultiplied-able colour [r, g, b, a] (0..1). */
-  endShadows(rgba: [number, number, number, number], blurPx = 3): void {
+  /**
+   * Composite the silhouettes onto the screen like shadow_2d_composite: `c` is the shader's u_c
+   * (premultiplied colour, blended ONE / ONE_MINUS_SRC_ALPHA), `off` the tap offset in buffer texels.
+   */
+  endShadows(c: [number, number, number, number], off: [number, number] = [0, 0]): void {
     this.flush();
     const gl = this.gl;
     this.inShadows = false;
@@ -348,33 +349,18 @@ export class ScRenderer {
     gl.blendEquation(gl.FUNC_ADD);
     gl.useProgram(this.blurProg);
     gl.bindVertexArray(this.quadVao);
-    const uStep = gl.getUniformLocation(this.blurProg, 'uStep');
-    const uTint = gl.getUniformLocation(this.blurProg, 'uTint');
-    const uSigma = gl.getUniformLocation(this.blurProg, 'uSigma');
     gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uSrc'), 0);
     gl.activeTexture(gl.TEXTURE0);
     const [w, h] = this.fboSize;
-    const sigma = Math.max(0.01, blurPx / 2);
-    const step = Math.max(1, sigma / 4); // 25 taps cover ~3 sigma
-    // horizontal into fbo[1]
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[1].fb);
-    gl.viewport(0, 0, w, h);
-    gl.disable(gl.BLEND);
-    gl.bindTexture(gl.TEXTURE_2D, this.fbos[0].tex);
-    gl.uniform2f(uStep, step / w, 0);
-    gl.uniform4f(uTint, 1, 1, 1, 1);
-    gl.uniform1f(uSigma, sigma / step);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    // vertical onto the screen, tinted
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.width, this.height);
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
-    gl.bindTexture(gl.TEXTURE_2D, this.fbos[1].tex);
-    gl.uniform2f(uStep, 0, step / h);
-    gl.uniform4f(uTint, rgba[0] * rgba[3], rgba[1] * rgba[3], rgba[2] * rgba[3], rgba[3]);
+    gl.bindTexture(gl.TEXTURE_2D, this.fbos[0].tex);
+    gl.uniform2f(gl.getUniformLocation(this.blurProg, 'uOff'), off[0] / w, off[1] / h);
+    gl.uniform4f(gl.getUniformLocation(this.blurProg, 'uC'), c[0], c[1], c[2], c[3]);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    this.stats.drawCalls += 2;
+    this.stats.drawCalls += 1;
     gl.bindVertexArray(null);
     gl.useProgram(this.prog);
     this.curBlend = -1;
@@ -730,7 +716,7 @@ export class ScRenderer {
       gl.deleteTexture(f.tex);
     }
     this.fbos = [];
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 1; i++) {
       const tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);

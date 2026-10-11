@@ -258,9 +258,9 @@ function drawArenaScene(t: number): void {
   fx.draw(r, 'Ground');
   fx.draw(r, 'GroundAbility');
 
-  // shadows (approximation)
-  const sh = m.arena.shadow;
+  // shadows
   r.beginShadows();
+  art.drawArenaShadows(r, t);
   for (const f of fighters) {
     const st = fighterState(f, t);
     if (st.dead || st.deployMs !== undefined) continue;
@@ -268,7 +268,7 @@ function drawArenaScene(t: number): void {
     art.drawUnitShadow(r, f.name, f.team, f.x, f.y, st.action, ang, st.ms);
   }
   fx.draw(r, 'Shadow');
-  r.endShadows([(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, (sh.ShadowA ?? 50) / 100], 2.5);
+  art.endShadowPass(r);
   fx.draw(r, 'Base');
 
   // towers
@@ -295,7 +295,7 @@ function drawArenaScene(t: number): void {
   // decorations on the Object layer
   for (const o of m.arena.objects) {
     if (o.layer !== 'Object') continue;
-    const [px, py] = art.gameToPx(o.x, 32000 - o.y);
+    const [px, py] = art.decoPx(o);
     items.push({ y: py, draw: () => r.draw(art.lib(o.sc), o.export, 0, [1, 0, 0, 1, px, py]) });
   }
   // fighters
@@ -397,8 +397,7 @@ function drawFxMode(_t: number): void {
   fx.draw(r, 'GroundAbility');
   r.beginShadows();
   fx.draw(r, 'Shadow');
-  const sh = m.arena.shadow;
-  r.endShadows([(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, (sh.ShadowA ?? 50) / 100], 2.5);
+  art.endShadowPass(r);
   for (const layer of ['Base', 'Object', 'Above']) fx.draw(r, layer);
 }
 
@@ -524,8 +523,7 @@ function drawAllMode(t: number): void {
   fx.draw(r, 'GroundAbility');
   r.beginShadows();
   fx.draw(r, 'Shadow');
-  const sh = m.arena.shadow;
-  r.endShadows([(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, (sh.ShadowA ?? 50) / 100], 2.5);
+  art.endShadowPass(r);
   for (const layer of ['Base', 'Object', 'Above']) fx.draw(r, layer);
 
   // buffs on a Knight, ruins, deploy timers

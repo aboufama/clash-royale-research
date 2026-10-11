@@ -423,6 +423,18 @@ def export_library(src: ScSource, export_names: set[str] | None, out_dir: Path, 
 # Game data -> what to bake
 # ---------------------------------------------------------------------------------------------
 
+def client_global(name: str, default: int) -> int:
+    """Integer column of csv_client/client_globals.csv (row Name, first numeric value)."""
+    p = RAW / "csv_client" / "client_globals.csv"
+    if p.exists():
+        for row in csv.reader(io.StringIO(p.read_text())):
+            if row and row[0] == name:
+                for v in row[1:]:
+                    if v.strip().lstrip("-").isdigit():
+                        return int(v)
+    return default
+
+
 def load_json(name: str):
     d = json.loads((DATA / f"{name}.json").read_text())
     return d["rows"] if isinstance(d, dict) and "rows" in d and "_columns" in d else d
@@ -959,20 +971,21 @@ class Baker:
             objs.append(ob)
         out = {
             "location": location, "sc": lib, "export": lay["export"], "objects": objs,
-            # Alignment (see tools/art/README.md "Arena alignment"): SC pixel of a game point
-            #   px = originPx[0] + (x - 9000) / 1000 * pxPerTileX
-            #   py = originPx[1] - (y - 16000) / 1000 * pxPerTileY       (blue at the bottom)
-            "pxPerTileX": 29.85, "pxPerTileY": 24.2, "originPx": [-1.6, 383.4], "originGame": [9000, 16000],
-            "zPxPer1000": 17.5,
+            # Projection of the client's battle view (libg 0x857ffc; see tools/art/README.md
+            # "Arena alignment"): unflipped SC px of a game point = (-270 + 0.03 x, 0.024 y - 0.012 z),
+            # the arena export at the layer origin. The blue player's view flips x/y and turns the arena
+            # clip by 180 degrees; sim/viewer/src/sc/battle_art.ts applies that.
+            "pxPerTileX": 30, "pxPerTileY": 24, "originPx": [0, 384], "originGame": [9000, 16000],
+            "zPxPer1000": 12,
             "alignmentNote": (
-                "Fitted to the goblin_bgr art (export-local SC pixels, scale 1): checker-tile edges of both "
-                "field halves (least squares, residuals <1.4 px), river/bridge shapes centred on y=16000 "
-                "(bridge clip ty 383 + 0.4) and the King/Princess pads (centres within 1 px of the fit). "
-                "Units, towers and arena share one pixel scale (King tower art = 4 tiles = 120 px). "
-                "zPxPer1000 assumes an orthographic camera: cos(asin(24.2/29.85)) * 29.85 (approximation)."),
-            "objectsNote": "location objects use x right, y DOWN from the red edge (y_down = 32000 - y_game)",
+                "libg 160402020 FUN_00857ffc: sx = ox + 15 wx, sy = oy + 12 (wy - wz/2) on world = logic * 0.002, "
+                "ox = -(36 >> 1) * 15, oy = 0 (unflipped view, logic y = 0 at the top). The earlier art fit "
+                "(29.85 x 24.2 px per tile, 17.5 px per 1000 height) was within 1 % on the ground but 46 % "
+                "high for heights."),
+            "objectsNote": "location objects are logic (x, y) placed with the unflipped projection for both players",
             "shadow": {k: loc.get(k, 0) for k in ("ShadowR", "ShadowG", "ShadowB", "ShadowA", "ShadowOffsetX",
                                                    "ShadowOffsetY")},
+            "shadowBlurDistance": client_global("SHADOW_BLUR_DISTANCE", 170),
         }
         if loc.get("CloudExportName"):
             cl = self.want(loc.get("CloudFileName", "sc/effects.sc"), loc["CloudExportName"])

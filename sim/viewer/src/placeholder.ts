@@ -38,7 +38,7 @@ export class PlaceholderRenderer implements WorldRenderer {
       }
     }
     c.strokeStyle = 'rgba(0,0,0,.25)';
-    c.strokeRect(cam.sx(0), cam.sy(ARENA_H), ARENA_W * cam.scaleX, ARENA_H * cam.scaleY);
+    c.strokeRect(Math.min(cam.sx(0), cam.sx(ARENA_W)), cam.sy(ARENA_H), ARENA_W * cam.scaleX, ARENA_H * cam.scaleY);
 
     // ground units, then air
     for (const air of [false, true]) {

@@ -114,7 +114,7 @@ export class Overlay {
     const half = ARENA_W / 2;
     const pocketEdge = d.team === 0 ? 25000 : 7000;
     const rect = (x0: number, y0: number, x1: number, y1: number) =>
-      c.fillRect(cam.sx(x0), cam.sy(y1), (x1 - x0) * cam.scaleX, (y1 - y0) * cam.scaleY);
+      c.fillRect(Math.min(cam.sx(x0), cam.sx(x1)), cam.sy(y1), Math.abs(cam.sx(x1) - cam.sx(x0)), (y1 - y0) * cam.scaleY);
     for (const [x0, x1, open] of [[0, half, pocketLeft], [half, ARENA_W, pocketRight]] as const) {
       if (!open) rect(x0, yRiver0, x1, yRiver1);
       else if (d.team === 0) rect(x0, pocketEdge, x1, ARENA_H);
@@ -151,7 +151,7 @@ export class Overlay {
     const secs = Math.max(0, Math.ceil(left / 20));
     const ot = b.tick >= reg;
     const txt = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    const x = cam.sx(ARENA_W) - 8;
+    const x = Math.max(cam.sx(0), cam.sx(ARENA_W)) - 8;
     const y = cam.sy(ARENA_H) + 8;
     c.textAlign = 'right';
     c.font = 'bold 11px system-ui';
@@ -176,7 +176,7 @@ export class Overlay {
     // crowns
     c.textAlign = 'left';
     c.font = 'bold 18px system-ui';
-    const cx = cam.sx(0) + 8;
+    const cx = Math.min(cam.sx(0), cam.sx(ARENA_W)) + 8;
     for (const [team, yy] of [[1, cam.sy(ARENA_H / 2) - 30], [0, cam.sy(ARENA_H / 2) + 46]] as const) {
       const txt2 = `\u{1F451} ${b.players[team].crowns}`;
       c.fillStyle = team === 0 ? '#9cc4ff' : '#ff9c9c';

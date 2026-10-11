@@ -21,6 +21,8 @@ export class Camera {
   dpr = 1;
   /** Vertical foreshortening (1 = square tiles). */
   aspectY = 1;
+  /** Draw logic x right-to-left (the blue player's native view is the red view turned 180 degrees). */
+  mirrorX = false;
   world: WorldRect = { x0: 0, y0: 0, x1: 18000, y1: 32000 };
 
   /** Mean scale (for sizes that are not axis-specific). */
@@ -46,7 +48,11 @@ export class Camera {
   }
 
   sx(x: number): number {
-    return this.ox + x * this.scaleX;
+    return this.ox + this.mx(x) * this.scaleX;
+  }
+
+  private mx(x: number): number {
+    return this.mirrorX ? this.world.x0 + this.world.x1 - x : x;
   }
 
   sy(y: number): number {
@@ -54,7 +60,7 @@ export class Camera {
   }
 
   gx(sx: number): number {
-    return (sx - this.ox) / this.scaleX;
+    return this.mx((sx - this.ox) / this.scaleX);
   }
 
   gy(sy: number): number {

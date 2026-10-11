@@ -71,49 +71,69 @@ export class BattleArt {
   }
 
   // -- coordinates -----------------------------------------------------------------------------
+  //
+  // libg 160402020 battle view projection FUN_00857ffc, fed world = logic * 0.002 (FUN_00851b54,
+  // FUN_00851b84):  sx = ox + 15 * wx,  sy = oy + 12 * (wy - wz / 2),  ox = -(36 >> 1) * 15
+  // (0x8578e4, 36 x 64 = the path grid), oy = 0. For the viewer who is logic player 0 (blue, the
+  // bottom side; 0xbdeec0 -> 0x856c58 sets ctx+0x1b9) x and y are flipped first (wx' = 36 - wx,
+  // wy' = 64 - wy) and the arena clip gets a 180-degree matrix with ty = 768 (0x856c58, 0x8589a4).
+  // Location objects are placed once through the same projection while the flag is still clear
+  // (0x856088 -> 0x8578e4 -> 0x85868c); 0x856c58 later rotates only the arena clip, so decorations
+  // keep their unflipped positions for both players. Per logic unit: 0.03 SC px across, 0.024
+  // along, 0.012 per unit of height. The arena export sits at the battle layer origin.
 
-  get pxPerTileX(): number { return this.manifest.arena.pxPerTileX; }
-  get pxPerTileY(): number { return this.manifest.arena.pxPerTileY; }
+  /** true: the view of logic player 0 (blue at the bottom; the native flipped view). */
+  flip = true;
+
+  get pxPerTileX(): number { return 30; }
+  get pxPerTileY(): number { return 24; }
+  /** SC px per 1000 units of height */
+  get zPxPer1000(): number { return 12; }
   /** on-screen y foreshortening (pxPerTileY / pxPerTileX) */
-  get yScale(): number { return this.manifest.arena.pxPerTileY / this.manifest.arena.pxPerTileX; }
+  get yScale(): number { return 0.8; }
 
-  /** Game point (x, y, z) -> arena SC pixels. */
+  /** Game point (x, y, z) -> battle-layer SC pixels. */
   gameToPx(x: number, y: number, z = 0): [number, number] {
-    const a = this.manifest.arena;
-    return [
-      a.originPx[0] + ((x - a.originGame[0]) / 1000) * a.pxPerTileX,
-      a.originPx[1] - ((y - a.originGame[1]) / 1000) * a.pxPerTileY - (z / 1000) * a.zPxPer1000,
-    ];
+    const wx = this.flip ? 18000 - x : x;
+    const wy = this.flip ? 32000 - y : y;
+    return [-270 + wx * 0.03, wy * 0.024 - z * 0.012];
   }
 
-  /** Arena SC pixels -> game (x, y) on the ground. */
+  /** Battle-layer SC pixels -> game (x, y) on the ground. */
   pxToGame(px: number, py: number): [number, number] {
-    const a = this.manifest.arena;
-    return [
-      a.originGame[0] + ((px - a.originPx[0]) / a.pxPerTileX) * 1000,
-      a.originGame[1] - ((py - a.originPx[1]) / a.pxPerTileY) * 1000,
-    ];
+    const wx = (px + 270) / 0.03, wy = py / 0.024;
+    return this.flip ? [18000 - wx, 32000 - wy] : [wx, wy];
   }
+
+  /** Engine angle -> the screen-up angle convention of the sprite pickers (x right, y up). */
+  viewAngle(a: number): number { return this.flip ? Math.PI - a : -a; }
+
+  /** Engine (dx, dy) -> screen-up (dx, dy). */
+  viewVec(dx: number, dy: number): [number, number] { return this.flip ? [-dx, dy] : [dx, -dy]; }
+
+  /** Location object (locations/*.csv x, y: logic units, placed unflipped) -> battle-layer SC pixels. */
+  decoPx(o: { x: number; y: number }): [number, number] { return [-270 + o.x * 0.03, o.y * 0.024]; }
 
   /** SC-pixel rectangle covering the 18x32-tile battlefield (plus `marginTiles`). */
   fieldRect(marginTiles = 0): [number, number, number, number] {
-    const [x0, y0] = this.gameToPx(-marginTiles * 1000, 32000 + marginTiles * 1000);
-    const [x1, y1] = this.gameToPx(18000 + marginTiles * 1000, -marginTiles * 1000);
-    return [x0, y0, x1 - x0, y1 - y0];
+    const [ax, ay] = this.gameToPx(-marginTiles * 1000, 32000 + marginTiles * 1000);
+    const [bx, by] = this.gameToPx(18000 + marginTiles * 1000, -marginTiles * 1000);
+    const x0 = Math.min(ax, bx), y0 = Math.min(ay, by);
+    return [x0, y0, Math.max(ax, bx) - x0, Math.max(ay, by) - y0];
   }
 
   // -- arena -----------------------------------------------------------------------------------
 
   drawBackground(r: ScRenderer): void {
     const a = this.manifest.arena;
-    r.draw(this.lib(a.sc), a.export, 0);
+    r.draw(this.lib(a.sc), a.export, 0, this.flip ? [-1, 0, 0, -1, 0, 768] : [1, 0, 0, 1, 0, 0]);
   }
 
   /** Decorations of one or more layers ('Base', 'Ground', 'Object'), in data order. */
   drawArenaObjects(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object']): void {
     for (const o of this.manifest.arena.objects) {
       if (!layers.includes(o.layer)) continue;
-      const [px, py] = this.gameToPx(o.x, 32000 - o.y);
+      const [px, py] = this.decoPx(o);
       const frame = o.frames && o.frames > 1 ? Math.floor((timeMs * (o.fps || 30)) / 1000) : 0;
       r.draw(this.lib(o.sc), o.export, frame, [1, 0, 0, 1, px, py]);
     }
@@ -138,6 +158,92 @@ export class BattleArt {
       const frames = lib.frameCount(c.export);
       r.draw(lib, c.export, Math.floor((timeMs * lib.fps(c.export)) / 1000) % frames,
         [scale * flip, 0, 0, scale, x, y], [1, 1, 1, alpha, 0, 0, 0]);
+    }
+  }
+
+  // -- shadows ---------------------------------------------------------------------------------
+  //
+  // libg 160402020: every shadow is a second instance of the object's clip in the shadow layer whose
+  // matrix FUN_00851d7c resets to identity and sets to
+  //   a = ShadowScaleX, d = -ShadowScaleY (|current|), c = ShadowSkew, (tx, ty) = (ShadowX, ShadowY)
+  // (all /100 except the pixel offset). For characters/buildings 0xdde618 loads ShadowScaleY as
+  // ShadowScaleX when it is 0; a missing ShadowScaleX gives a zero-width (invisible) shadow. The
+  // unit's Scale is not applied (the shadow container 0x338 is at scale 1, 0x83ce70). Decorations use
+  // the same setter with their decos.csv values (0x84c1b8). Characters with ShadowCustom draw that
+  // clip instead, scaled CollisionRadius / 1200 (0x83ce70 blob branch).
+
+  /** Shadow-clip matrix (SC px) at ground pixel (px, py). */
+  shadowMatrix(scaleX: number, scaleY: number, skew: number, x: number, y: number, px: number, py: number,
+    mirror = false): Mat {
+    const a = scaleX / 100;
+    return [mirror ? -a : a, 0, skew / 100, -scaleY / 100, px + x, py + y];
+  }
+
+  /** Character/building shadow values with the data loader's ShadowScaleY default. */
+  private charShadow(o: { shadowScaleX?: number; shadowScaleY?: number; shadowSkew?: number; shadowX?: number;
+    shadowY?: number }): [number, number, number, number, number] {
+    const sx = o.shadowScaleX ?? 0;
+    return [sx, o.shadowScaleY || sx, o.shadowSkew ?? 0, o.shadowX ?? 0, o.shadowY ?? 0];
+  }
+
+  /**
+   * Composite the shadow layer (call after drawing silhouettes between r.beginShadows() and here).
+   * shadow_2d_composite as set up by 0x86beb8 / 0x856088: u_c = (R/510, G/510, B/510, A/128) of the
+   * location's Shadow* colour; tap offset 100 / (SHADOW_BLUR_DISTANCE/100 * ShadowOffsetX|Y) texels.
+   */
+  endShadowPass(r: ScRenderer): void {
+    const sh = this.manifest.arena.shadow ?? {};
+    const blur = (this.manifest.arena.shadowBlurDistance ?? 170) / 100;
+    const offX = sh.ShadowOffsetX ?? 0, offY = sh.ShadowOffsetY ?? 0;
+    r.endShadows(
+      [(sh.ShadowR ?? 0) / 510, (sh.ShadowG ?? 0) / 510, (sh.ShadowB ?? 0) / 510, (sh.ShadowA ?? 0) / 128],
+      [offX ? 100 / (blur * offX) : 0, offY ? 100 / (blur * offY) : 0]);
+  }
+
+  /** Decoration shadows (decos.csv Shadow* fields, no ScaleY default). */
+  drawArenaShadows(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object']): void {
+    for (const o of this.manifest.arena.objects) {
+      if (!layers.includes(o.layer) || !o.shadowScaleX) continue;
+      const [px, py] = this.decoPx(o);
+      const frame = o.frames && o.frames > 1 ? Math.floor((timeMs * (o.fps || 30)) / 1000) : 0;
+      r.draw(this.lib(o.sc), o.export, frame,
+        this.shadowMatrix(o.shadowScaleX, o.shadowScaleY ?? 0, o.shadowSkew ?? 0, o.shadowX ?? 0, o.shadowY ?? 0, px, py));
+    }
+  }
+
+  /** Crown tower shadow: the main export (King: KingTower_*, Princess: StarTower_base_*) plus the
+   * tower princess's own shadow (she is a character attached to the tower, at its ground position). */
+  drawTowerShadow(r: ScRenderer, kind: 'king' | 'princessLeft' | 'princessRight', team: Team, timeMs: number,
+    activationMs?: number, angle?: number): void {
+    const king = kind === 'king';
+    const t = king ? this.manifest.towers.king : this.manifest.towers.princess;
+    const [x, y] = this.towerPos(kind, team);
+    const [px, py] = this.gameToPx(x, y);
+    const d = t.shadow ?? {};
+    const sx = d.ScaleX ?? 0;
+    const m = this.shadowMatrix(sx, d.ScaleY || sx, d.Skew ?? 0, d.X ?? 0, d.Y ?? 0, px, py);
+    const lib = this.lib(t.sc);
+    if (king) {
+      const k = this.manifest.towers.king;
+      const exp = team === 0 ? k.blue : k.red;
+      const labels = lib.labels(exp);
+      const start = labels.start ?? 1, stop = labels.stop ?? k.frames - 1;
+      let frame = labels.idle ?? 0;
+      if (activationMs !== undefined) frame = Math.min(stop, start + Math.floor((activationMs * k.fps) / 1000));
+      const named: DrawOptions['named'] = { [k.kingChild]: { hide: true } };
+      named[k.turretChild] = { frame: team === 0 ? 0 : k.turretFrames - 1 };
+      r.draw(lib, exp, frame, m, WHITE, { childFrame: Math.floor((timeMs * k.fps) / 1000), named });
+      return;
+    }
+    const p = this.manifest.towers.princess;
+    r.draw(lib, p.base[team === 0 ? 'blue' : 'red'], 0, m);
+    const pc = this.manifest.characters[p.character];
+    if (pc) {
+      const sp = unitSprite(pc, team, 'idle', this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), timeMs);
+      if (sp) {
+        const [a, b, c, dx, dy] = this.charShadow(pc);
+        r.draw(this.lib(pc.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror));
+      }
     }
   }
 
@@ -169,7 +275,7 @@ export class BattleArt {
     let frame = labels.idle ?? 0;
     if (activationMs !== undefined) frame = Math.min(stop, start + Math.floor((activationMs * t.fps) / 1000));
     const clock = Math.floor((timeMs * t.fps) / 1000);
-    const tf = turretFrame(aim ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2), t.turretFrames);
+    const tf = turretFrame(this.viewAngle(aim ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), t.turretFrames);
     const named: DrawOptions['named'] = {
       [t.kingChild]: { lib: this.lib(t.king.sc), export: team === 0 ? t.king.blue : t.king.red, frame, childFrame: clock },
     };
@@ -207,7 +313,7 @@ export class BattleArt {
     if (pc) {
       // the tower princess is the building's AttachedCharacter, raised by AttachedCharacterHeight
       const [qx, qy] = this.gameToPx(x, y, t.attachedHeight ?? 0);
-      const sp = unitSprite(pc, team, action, angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2), actionMs);
+      const sp = unitSprite(pc, team, action, this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), actionMs);
       if (sp) {
         const s = pc.scale / 100;
         r.draw(this.lib(pc.sc), sp.export, sp.frame, [sp.mirror ? -s : s, 0, 0, s, qx, qy]);
@@ -235,7 +341,7 @@ export class BattleArt {
   drawUnit(r: ScRenderer, name: string, team: Team, x: number, y: number, action: ActionName, angle: number,
     actionMs: number, o: UnitDrawOptions = {}): UnitSprite | null {
     const art = this.character(name);
-    const sp = unitSprite(art, team, action, angle, actionMs, { loop: o.loop, yScale: o.screenAngle ? this.yScale : undefined });
+    const sp = unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop, yScale: o.screenAngle ? this.yScale : undefined });
     if (!sp) {
       if (art.clip) return this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o });
       return null;
@@ -254,31 +360,26 @@ export class BattleArt {
   }
 
   /**
-   * Soft shadow silhouette for a unit (call between r.beginShadows() and r.endShadows()).
-   * Shape from the data's Shadow* fields: scale, skew (percent of height), offset (px).
-   * The exact projection used by the game is not recovered: this is an approximation.
+   * Shadow of a unit (call between r.beginShadows() and endShadowPass()): the current sprite frame
+   * through shadowMatrix at the ground position, or the ShadowCustom clip at CollisionRadius / 1200.
    */
   drawUnitShadow(r: ScRenderer, name: string, team: Team, x: number, y: number, action: ActionName, angle: number,
     actionMs: number, o: UnitDrawOptions = {}): void {
     const art = this.character(name);
+    const [px, py] = this.gameToPx(x, y);
     if (art.shadowCustom) {
-      const [px, py] = this.gameToPx(x, y);
-      const s = art.scale / 100;
+      const s = (art.collisionRadius ?? 0) / 1200;
       r.draw(this.lib(art.shadowCustom.sc), art.shadowCustom.export, 0, [s, 0, 0, s, px, py]);
       return;
     }
-    const sp = unitSprite(art, team, action, angle, actionMs, { loop: o.loop });
+    const sp = unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop });
     if (!sp) {
       if (art.clip) this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o, shadow: true });
       return;
     }
-    const [px, py] = this.gameToPx(x, y);
-    const s = art.scale / 100;
-    const sx = ((art.shadowScaleX ?? 100) / 100) * s * (sp.mirror ? -1 : 1);
-    const sy = ((art.shadowScaleY ?? 100) / 100) * s;
-    const k = (art.shadowSkew ?? 0) / 100;
-    const m: Mat = [sx, 0, -k * sy, sy, px + (art.shadowX ?? 0), py + (art.shadowY ?? 0)];
-    r.draw(this.lib(art.sc), sp.export, sp.frame, m);
+    const [a, b, c, dx, dy] = this.charShadow(art);
+    if (!a) return;
+    r.draw(this.lib(art.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror));
   }
 
   /** Colour transform for a unit from UnitDrawOptions (color, alpha, buff filters, hit flash). */
@@ -331,7 +432,7 @@ export class BattleArt {
     const defAim = team === 0 ? Math.PI / 2 : -Math.PI / 2;
     if (!clip) {
       // direction-based building; without a sprite there is nothing to draw (and no recursion)
-      if (!unitSprite(art, team, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, { loop: o.loop })) return null;
+      if (!unitSprite(art, team, o.action ?? 'idle', this.viewAngle(o.aim ?? defAim), o.actionMs ?? timeMs, { loop: o.loop })) return null;
       if (o.shadow) {
         this.drawUnitShadow(r, name, team, x, y, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, o);
         return null;
@@ -347,7 +448,7 @@ export class BattleArt {
     let done = false;
     const named: DrawOptions['named'] = {};
     if (clip.turretChild) {
-      const tf = turretFrame(o.aim ?? defAim, clip.turretFrames ?? clip.frames);
+      const tf = turretFrame(this.viewAngle(o.aim ?? defAim), clip.turretFrames ?? clip.frames);
       frame = clip.frames === (clip.turretFrames ?? clip.frames) ? tf.frame : 0;
       named[clip.turretChild] = { frame: tf.frame, matrix: tf.mirror ? [-1, 0, 0, 1, 0, 0] : undefined };
     } else if (o.state) {
@@ -369,10 +470,10 @@ export class BattleArt {
     const s = art.scale / 100;
     let m: Mat = [s, 0, 0, s, px, py];
     if (o.shadow) {
-      const sx = ((art.shadowScaleX ?? 100) / 100) * s, sy = ((art.shadowScaleY ?? 100) / 100) * s;
-      const k = (art.shadowSkew ?? 0) / 100;
+      const [a, b, c, dx, dy] = this.charShadow(art);
+      if (!a) return null;
       const [gx, gy] = this.gameToPx(x, y);
-      m = [sx, 0, -k * sy, sy, gx + (art.shadowX ?? 0), gy + (art.shadowY ?? 0)];
+      m = this.shadowMatrix(a, b, c, dx, dy, gx, gy);
     }
     let c = this.unitColor(o);
     if (!o.shadow && o.deployMs !== undefined && art.deployBaseAnimExportName) {
@@ -490,7 +591,8 @@ export class BattleArt {
     if (!p || !p.sc || !p.export) return;
     const lib = this.lib(p.sc);
     const s = (p.scale ?? 100) / 100;
-    const sp = projectileSprite(p, team, vx, vy, vz, this.yScale, this.manifest.arena.zPxPer1000 / this.pxPerTileX);
+    [vx, vy] = this.viewVec(vx, vy);
+    const sp = projectileSprite(p, team, vx, vy, vz, this.yScale, this.zPxPer1000 / this.pxPerTileX);
     if (shadow && p.shadow) {
       const [gx, gy] = this.gameToPx(x, y, 0);
       const rot = p.shadowDisableRotate ? 0 : Math.atan2(-vy * this.yScale, vx);
@@ -543,7 +645,7 @@ export class BattleArt {
     if (!art) return [px, py - 50];
     let lib = art.sc;
     let exp: string | null = null;
-    const sp = unitSprite(art, team, 'idle', team === 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+    const sp = unitSprite(art, team, 'idle', this.viewAngle(team === 0 ? Math.PI / 2 : -Math.PI / 2), 0);
     if (sp) exp = sp.export;
     else {
       const clip = team === 1 ? (art.clip?.red ?? art.clip?.blue) : art.clip?.blue;

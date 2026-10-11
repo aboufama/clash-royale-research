@@ -50,7 +50,8 @@ Last updated 2026-10-11 (native movement, spells and formations ported; 70 cards
 | Art | ✅ `tools/art/` decodes the SC2 sprite format (`.sc` v5: FlatBuffers + zstd) and the `.sctx` ASTC textures, and renders original animation frames to sheets plus JSON (anchor, hit frame). Verified on the Knight's run and attack animations. See [tools/art/README.md](tools/art/README.md) |
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
 | Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays. 41 tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~4,000× real time per core |
-| Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. HUD (clock, crowns, elixir bar) still partly HTML |
+| Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). HUD (clock, crowns, elixir bar) still partly HTML |
+| Demo (GitHub Pages) | ⚠️ `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on pushes to `main` or this branch. The build job passes; deploy needs the owner to enable Pages (Settings → Pages → Source: GitHub Actions) and allow this branch in the `github-pages` environment. The site is public even though the repo is private (owner's explicit choice) |
 | Training bridge | ❌ Not started |
 
 ### Key facts so far
@@ -136,6 +137,11 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    inline the A* visit loop, keep spatial queries allocation-free.
 5. HUD art (clock, crowns, elixir bar), training bridge (M3) and the fidelity
    pass (M5); see [GOAL.md](GOAL.md).
+6. **Viewer fidelity left:** screen framing (how much stadium a phone shows;
+   the battle layer scale/offset set from the stage size), the arena clip field
+   +0x84 used as the 180° turn's ty (768 assumed), how the client picks
+   direction frames under the flip, shadow height fade (0x83c0ac), particle
+   emitter semantics. Decompiles for the view work are in `work/native/decomp_shadow/`.
 
 ## Open questions for the owner
 

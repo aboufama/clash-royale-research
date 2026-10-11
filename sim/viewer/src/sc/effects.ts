@@ -119,7 +119,7 @@ export class EffectPlayer {
   constructor(art: BattleArt, seed = 12345) {
     this.art = art;
     this.seed = seed >>> 0 || 1;
-    this.zScale = art.manifest.arena.zPxPer1000 / art.manifest.arena.pxPerTileX;
+    this.zScale = art.zPxPer1000 / art.pxPerTileX;
   }
 
   private rnd(): number {
@@ -349,7 +349,7 @@ export class EffectPlayer {
     if (!lib) return;
     const minA = em.ParticleMinAngle ?? 0, maxA = em.ParticleMaxAngle ?? 0;
     let deg = em.ParticleRandomAngle || count <= 1 ? this.range(minA, maxA) : minA + ((maxA - minA) * index) / count;
-    if (em.ParticleAngleRelativeToParent) deg += 90 - (e.angle * 180) / Math.PI; // engine angle -> screen-up-based
+    if (em.ParticleAngleRelativeToParent) deg += 90 - (this.art.viewAngle(e.angle) * 180) / Math.PI; // engine angle -> screen-up-based
     const a = (deg * Math.PI) / 180;
     const dx = Math.sin(a), dy = -Math.cos(a); // 0 = up (screen), clockwise
     const rad = this.range(em.ParticleMinRadius, em.ParticleMaxRadius) * sc;
@@ -363,7 +363,8 @@ export class EffectPlayer {
     const speed = this.range(em.ParticleMinSpeed, em.ParticleMaxSpeed) * sc;
     let vx = dx * speed, vy = dy * speed;
     if (em.Inertia && e.opts.velocity) {
-      const [pvx, pvy] = e.opts.velocity();
+      const [evx, evy] = e.opts.velocity();
+      const [pvx, pvy] = this.art.viewVec(evx, evy);
       const k = em.Inertia / 100;
       vx += (pvx / 1000) * this.art.pxPerTileX * k;
       vy -= (pvy / 1000) * this.art.pxPerTileX * k;
