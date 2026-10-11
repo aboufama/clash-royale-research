@@ -562,3 +562,78 @@ the runtime of the APK's original device. Allocation, synthetic thread/TLS
 state, IFUNC feature inputs and other platform adapters remain explicit;
 Android stream startup, full loader behavior and battle equivalence remain
 unvalidated. These are bootstrap improvements, not a completed match.
+
+## Original thread storage, synchronization and resource completion
+
+The next bootstrap executes original Bionic `pthread_once`, thread-key
+creation/deletion and thread-specific get/set routines. Shipped libc++
+`__emutls_get_address` returns stable native storage on repeated access.
+Original resource stack push/pop now reaches the original
+`__cxa_thread_atexit_impl`, which allocates and links its own destructor
+registration. Registration is established; thread exit and destructor execution
+are not.
+
+The platform supplies one explicit synthetic guest thread, its TLS/key storage
+and TID 1. Original routines manage that storage. The sole accepted futex
+operation is the observed once-initialization wake with no waiters, at its
+verified original call site and state. Other operations stop. Actual contended
+mutex, condition wait and unfulfilled C++ future controls are rejected; there
+is no synthetic signaller or forced completion. Late attachment is also
+rejected after modeled keys or synchronization have been used, including
+destroyed objects and prefixed historical import counters.
+
+All 30 original exported mutex/condition routines are routed before guest
+initialization. A fresh run with original thread keys and synchronization
+completes all 763 constructors, reproducing the complete report independently
+at SHA-256 `d1f8d9b92a2d88e69985d6f3d93b9f0a8e65845cc3c7a8a807853d3e98b8b0d1`.
+Native startup calls include 77 lock/unlock pairs, six mutex initializations,
+one condition initialization and 30 broadcasts. The original self-erasing
+constructor changes remain preserved and exactly accounted for.
+
+In a separate bounded resource fixture, original-constructed empty collections
+and an empty resource manager reach the original resource service, shipped
+C++ promise completion, wait and future destructor. The original completion
+byte becomes 1; no readiness field is patched. Independent runs and the public
+helper variants reproduce the entire report at SHA-256
+`ed18f035074eeeae4dd7f8d8efc76476ba1291c6d840814b8770aabcefeffeff`.
+All guest executable regions remain unchanged in this fixture.
+
+The [threading checkpoint](evidence/native-bionic-threading.json) records the
+inputs, exact reports, rejection controls and public helper hashes. Sixteen
+asset-free tests exercise admission and the narrow futex boundary without
+original binaries or optional analysis packages. These are improvements to the
+explicit recovery platform. Full loaded-resource completion, multithreaded
+scheduling, Android thread startup and a complete match remain unverified.
+
+## Reducing complete-interval observation overhead
+
+The optional [compiled observer](../scripts/compiled_import_data_guard.py)
+keeps the same reference data bindings and host-access wrappers, while moving
+the global native memory callback into locally authored C. The observer is
+compiled for the host; all original game code remains inside Unicorn. Native
+accesses are still checked against full intervals, including accesses beginning
+before a protected region. No checks are sampled or removed.
+
+Twenty-two public synthetic tests cover the reference boundary cases, nested
+accesses, callback lifetime, configuration drift and native observer API
+failures. The interval predicate matches unbounded Python integer arithmetic
+in 101,008 boundary/random cases. A violation is retained across nested calls,
+and the first failed stop request cannot be concealed by a later successful
+request. Rejection does not establish rollback; failed engines must be discarded.
+An independent test found that trying to resume an invalid-PC nested emulation
+can crash Unicorn with either observer. That recovery path is unsupported.
+
+Fifty identical original parses of the unchanged 5,082-byte game-tag asset take
+3.065 seconds with the Python observer and 1.411 seconds with the compiled
+observer in the recorded local run, a 2.17 ratio. All 19 mapped guest regions
+(308,756,480 bytes), their permissions, 87 explicit registers and native row
+counts match. Original Bionic executable bytes remain unchanged. These are
+local microbenchmark observations, not full-bootstrap or full-match performance.
+
+The [observer evidence](evidence/compiled-import-observer.json) pins sources,
+the local build and the full private comparison report. The public controls
+compile only the authored observer and use synthetic guest instructions; no
+original native bytes are required. The adapter pins Unicorn 2.1.4 and relies
+on its private Python backend ABI. Opaque emulator state, unenumerated registers
+and host runtime state remain outside the comparison. The exact battle gate
+does not change.

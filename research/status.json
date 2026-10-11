@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 13,
-    "reviewed_at": "2026-10-11T08:32:55Z",
-    "summary": "Independently reproduced all 763 original startup constructors with audited native and authenticated-metadata writes; original Bionic passes 2,016 integer and 2,024 decimal cases. Fixed crossing import-stub access guards and documented the old decimal FPSR gap. All 144 tests pass with optional native dependencies. Full match and battle equivalence remain unvalidated."
+    "sequence": 14,
+    "reviewed_at": "2026-10-11T08:58:05Z",
+    "summary": "Independently reproduced all 763 constructors with original Bionic thread keys and synchronization, plus native empty-resource promise completion and failure controls. Published original-platform adapters and a full-interval C observer whose 50-parse microbenchmark preserves mapped memory and 87 registers. All 182 tests pass with optional native dependencies; full match and battle equivalence remain unvalidated."
   },
   "milestones": [
     {
@@ -49,7 +49,7 @@
       "id": "support_runtime",
       "status": "partial",
       "evidence": [
-        "All 763 original startup constructors return under explicit platform inputs, with every executable-region change accounted for. Pinned AOSP Bionic conversions and full-interval import-data guards are independently reproduced. Complete data finalization and match initialization remain incomplete."
+        "All 763 original constructors return with original Bionic thread keys and synchronization; original empty-resource promise completion is independently reproduced. Full-interval checks have a verified faster host observer. Complete loaded-data finalization and a playable match remain incomplete."
       ]
     },
     {

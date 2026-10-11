@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "claim": "A compiled authored host observer enforces the same complete import-stub access intervals and reduces local native-parser observation overhead.",
+  "scope": "Instrumentation checkpoint only; original game remains isolated in Unicorn. No full-match throughput, complete machine-state coverage, rollback, or Android equivalence is claimed.",
+  "implementation": {
+    "unicorn_version": "2.1.4",
+    "verified_local_host": "macOS ARM64",
+    "reference_guard_source_sha256": "07b44c9da9321563d0d32eee3b1d57b374787cd0072302304a2ca08d151febf4",
+    "frozen_observer_source_sha256": "38c749c97c899e82cf3d0d6dda5ee76e36533cdd35a94d48be0eacd186a406ca",
+    "c_source_sha256": "807b3d1f7b8c55e79645db69367e6a550b45c7865913d81933b0e17ce8fbd403",
+    "local_compiled_library_sha256": "a39facdc4e766830294a773c4627046b1ba1fa9db96b76d4bfb05c8468da4240",
+    "public_adapter_difference": "Same observer implementation with explicit observer_library argument and ordinary sibling import; no workspace-relative dependency discovery.",
+    "public_helpers": {
+      "scripts/compiled_import_data_guard.py": "7bf58bcababbf55a0fb65af210e39c3f784737025ba0be899baa55391a4feb64",
+      "scripts/import_data_observer.c": "807b3d1f7b8c55e79645db69367e6a550b45c7865913d81933b0e17ce8fbd403",
+      "tests/test_compiled_import_data_guard.py": "4c739f0b7a86949c8a792ddac6346d07c1737f1494925f35978406627204fcda"
+    }
+  },
+  "controls": {
+    "frozen_synthetic_controls": 17,
+    "public_synthetic_tests": 22,
+    "interval_differential_cases": 101008,
+    "interval_mismatches": 0,
+    "independent_lifecycle_error_controls": 8,
+    "negative_paths": [
+      "native and adapter reads/writes overlapping either stub interval",
+      "inner emulation violation surfaced to both callers with one retained event",
+      "Python/native range configuration drift rejected before execution",
+      "native register-read and stop API failures remain fatal",
+      "first nonzero stop failure retained across later callbacks"
+    ],
+    "positive_paths": [
+      "allowed native and nested reads",
+      "exactly adjacent nonoverlapping extents",
+      "trusted host inspection outside emulation",
+      "callback, library and user-data lifetime retained after caller garbage collection"
+    ],
+    "public_tests_require_no_original_game_inputs": true
+  },
+  "benchmark": {
+    "scope": "50 native parses of the same 5,082-byte asset; local microbenchmark, no full-match throughput claim.",
+    "asset_sha256": "88e657c9a71b4039467794f6acfc11ccf775dae78c0aeb1412dcb831a6ba02ff",
+    "asset_bytes": 5082,
+    "parse_count": 50,
+    "mapped_guest_regions": 19,
+    "mapped_guest_bytes": 308756480,
+    "explicit_register_count": 87,
+    "all_mapped_guest_regions_and_permissions_identical": true,
+    "all_observed_registers_identical": true,
+    "all_row_counts_identical": true,
+    "reference_seconds": 3.065221917000599,
+    "compiled_seconds": 1.4109158330247737,
+    "reference_over_compiled_time_ratio": 2.1725051525074055,
+    "guard_events": 0,
+    "original_bionic_code_unchanged": true,
+    "full_private_report_sha256": "ddc526b064daa5255bdebea5f616fdb45b88b4a01d11771dda5c87f3d97b40f3"
+  },
+  "limitations": [
+    "Uses Unicorn 2.1.4 private Python backend ABI and an explicitly loaded locally built observer library; not a portable ABI guarantee.",
+    "Rejection does not imply rollback: native stores may have executed before emulation returns. Discard failed engines.",
+    "Nested execution at an invalid PC followed by attempted recovery crashed both the reference and compiled observers inside Unicorn. Failed nested engines must not be resumed.",
+    "The same reference host-wrapper limitation remains: a bound memory method captured before installation can bypass the wrapper. Current adapters use dynamic methods.",
+    "Mapped memory and 87 registers do not cover opaque emulator state, every register, all callback globals, or complete host runtime state.",
+    "This microbenchmark is not representative full-data or full-match throughput."
+  ]
+}

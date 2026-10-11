@@ -30,7 +30,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Java startup and JNI declarations | Partial | JADX processed 9,575 input classes with 200 errors; startup and JNI declarations recovered. |
 | Native entry points | Recovered | libg ELF metadata yields 566 dynamic-symbol entries including createGameMain and JNI_OnLoad. |
 | Loader configuration | Recovered | Decoded configuration identifies /proc/self/maps, the supporting library, and dispatch offset 0x681780. |
-| Supporting native runtime | Partial | All 763 original startup constructors return under explicit platform inputs, with every executable-region change accounted for. Pinned AOSP Bionic conversions and full-interval import-data guards are independently reproduced. Complete data finalization and match initialization remain incomplete. |
+| Supporting native runtime | Partial | All 763 original constructors return with original Bionic thread keys and synchronization; original empty-resource promise completion is independently reproduced. Full-interval checks have a verified faster host observer. Complete loaded-data finalization and a playable match remain incomplete. |
 | Runtime region checksums | Verified | All 160/160 original checksums match across the 184,872-byte protection-runtime tail region; a one-bit negative control leaves 159/160 matches. This checks recovered bytes, not battle equivalence. |
 | Troop movement | Partial | Original movement runs for 60 synthetic world ticks. Separately, original loaders reproduce TrainingCamp geometry (36x64 cells); this map is not yet integrated into a complete match or validated movement corpus. |
 | Target acquisition | Partial | Original world code selects targets without host target assignment in a 400-tick Knight/KingTower fixture; seven original target-setter entries occur. Full arenas, activation rules and all targeting states remain unvalidated. |
@@ -39,7 +39,7 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
 | Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **13** · **2026-10-11T08:32:55Z** · Independently reproduced all 763 original startup constructors with audited native and authenticated-metadata writes; original Bionic passes 2,016 integer and 2,024 decimal cases. Fixed crossing import-stub access guards and documented the old decimal FPSR gap. All 144 tests pass with optional native dependencies. Full match and battle equivalence remain unvalidated.
+Review **14** · **2026-10-11T08:58:05Z** · Independently reproduced all 763 constructors with original Bionic thread keys and synchronization, plus native empty-resource promise completion and failure controls. Published original-platform adapters and a full-interval C observer whose 50-parse microbenchmark preserves mapped memory and 87 registers. All 182 tests pass with optional native dependencies; full match and battle equivalence remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -50,6 +50,20 @@ Every push must review and update it, including pushes with no decompilation
 advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
 
 ## Current evidence
+
+- A separate startup follow-up replaces modeled thread keys and locks with
+  original pinned Bionic routines. All 763 constructors still return, and
+  original resource code completes an **empty-resource** promise and wait.
+  Actual incomplete waits fail instead of receiving fabricated completion.
+  Full loaded-data finalization and a playable match remain pending. See
+  [threading and resource evidence](research/evidence/native-bionic-threading.json).
+- A locally compiled, authored memory observer preserves full-interval import
+  checks. In a 50-parse native CSV microbenchmark, it takes 1.41 seconds versus
+  3.07 seconds for the Python observer, with identical hashes of all mapped
+  guest memory and values of 87 observed registers. This is a local
+  instrumentation measurement, not full-match throughput or complete-state
+  equivalence. [Source, controls and limits](research/evidence/compiled-import-observer.json)
+  are public; the observer never executes original guest code on the host.
 
 - Independently reproduced **all 763 original startup constructors**, in their
   original table order under explicit platform inputs. The game's own writes

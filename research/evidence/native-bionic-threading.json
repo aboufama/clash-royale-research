@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "classification": "original_platform_routines_and_empty_resource_completion",
+  "binary_identity": {
+    "game_recovered_image_sha256": "32403dbc667e587a0327d76a92c0f5d562050f185dc42d7b8543103b6cf9882e",
+    "game_library_sha256": "347afc57c8d168bb67d0defa488a89f76297025cac1e8544b5182bb7e70ff433",
+    "shipped_libcxx_sha256": "4397241b4bd20a8e579bfb41d21107857e12985f6a01ca0c2a5f83380d1270b4",
+    "official_aosp_bionic_sha256": "9f1f93bbd186af5c40a93f6ca4425bfdce82b7f3b9c730e59bb5c7fa598593cf"
+  },
+  "independently_reproduced_reports": {
+    "original_tls_destructor_registration": {
+      "sha256": "0b070facafabeac8f5dbeb55acb268a589f71b1df7a336157b78266eab95a3b4",
+      "push_and_pop_returned": true,
+      "original_destructor_registered": true,
+      "destructor_executed": false
+    },
+    "original_empty_resource_completion": {
+      "sha256": "ed18f035074eeeae4dd7f8d8efc76476ba1291c6d840814b8770aabcefeffeff",
+      "original_set_value_entries": 1,
+      "original_wait_entries": 1,
+      "resource_count": 0,
+      "native_complete_byte": 1,
+      "guest_texts_unchanged": true,
+      "guard_events": 0
+    },
+    "synchronization_controls": {
+      "sha256": "224ad17de98e54b6c6c51ec3bc569a77d53f05726e519aa3bafa13f97fb888f3",
+      "cases": 18,
+      "native_contended_mutex_rejected": true,
+      "native_condition_wait_rejected": true,
+      "native_unfulfilled_cpp_future_wait_rejected": true
+    },
+    "pthread_namespace_controls": {
+      "sha256": "ef3c75adf9ea05978406d9fda9fceb98d52ca8d4a0950cb1fdf98ad0a460cca4",
+      "cases": 8
+    }
+  },
+  "operational_limits": [
+    "Attach before guest initializers and before any modeled pthread/mutex/condition operation; historical model state is rejected.",
+    "All 30 original Bionic mutex/condition exports are routed ahead of fallback import handlers.",
+    "One synthetic guest thread, TID 1; no scheduler, contention progress, timeout, signaller, destructor execution, module unloading, or Android thread-startup model.",
+    "Only existing verified once FUTEX_WAKE_PRIVATE with no waiters is accepted; actual incomplete waits stop. Failed engines are discarded, without a rollback claim.",
+    "Original AOSP libc is pinned but is not identified as the actual APK-device libc.",
+    "The resource fixture uses original-constructed empty data collections and manager plus explicit empty callback; full loaded-resource completion and game bootstrap remain unclaimed.",
+    "No original code or readiness state patched. No ordinary-match, Android parity, complete battle environment, or training completion claim."
+  ],
+  "complete_constructor_follow_up": {
+    "separate_process_full_report_identical": true,
+    "report_sha256": "d1f8d9b92a2d88e69985d6f3d93b9f0a8e65845cc3c7a8a807853d3e98b8b0d1",
+    "entry_count": 763,
+    "full_array_returned": true,
+    "post_constructor_text_sha256": "8e97f87eec24190d2a7af446cc1d2b959263bc84a4a2baa3bd4cec993f26d473",
+    "native_synchronization": {
+      "original_function_entries": {
+        "pthread_mutexattr_init": 4,
+        "pthread_mutexattr_settype": 4,
+        "pthread_mutex_init": 6,
+        "pthread_mutexattr_destroy": 4,
+        "pthread_mutex_lock": 77,
+        "pthread_mutex_unlock": 77,
+        "pthread_cond_broadcast": 30,
+        "pthread_condattr_init": 1,
+        "pthread_condattr_setclock": 1,
+        "pthread_cond_init": 1,
+        "pthread_condattr_destroy": 1
+      },
+      "routed_original_exports": [
+        "pthread_cond_broadcast",
+        "pthread_cond_clockwait",
+        "pthread_cond_destroy",
+        "pthread_cond_init",
+        "pthread_cond_signal",
+        "pthread_cond_timedwait",
+        "pthread_cond_timedwait_monotonic_np",
+        "pthread_cond_wait",
+        "pthread_condattr_destroy",
+        "pthread_condattr_getclock",
+        "pthread_condattr_getpshared",
+        "pthread_condattr_init",
+        "pthread_condattr_setclock",
+        "pthread_condattr_setpshared",
+        "pthread_mutex_clocklock",
+        "pthread_mutex_destroy",
+        "pthread_mutex_init",
+        "pthread_mutex_lock",
+        "pthread_mutex_timedlock",
+        "pthread_mutex_timedlock_monotonic_np",
+        "pthread_mutex_trylock",
+        "pthread_mutex_unlock",
+        "pthread_mutexattr_destroy",
+        "pthread_mutexattr_getprotocol",
+        "pthread_mutexattr_getpshared",
+        "pthread_mutexattr_gettype",
+        "pthread_mutexattr_init",
+        "pthread_mutexattr_setprotocol",
+        "pthread_mutexattr_setpshared",
+        "pthread_mutexattr_settype"
+      ],
+      "synthetic_thread_id": 1,
+      "thread_id_address": "0x80100010",
+      "scope": "Original pinned AOSP Bionic mutex/condition routines; one synthetic guest thread, TID1. No host synchronization algorithm, scheduler, waiter, timeout, or new futex model. Unsupported kernel paths fail through the existing boundary."
+    },
+    "native_pthreads": {
+      "original_function_entries": {
+        "pthread_key_create": 3
+      },
+      "kernel_events": [],
+      "native_thread_destructor_head": "0x0",
+      "pending_once_controls": [],
+      "synthetic_thread_key_storage": {
+        "tls_slot": "0x7ffffff8",
+        "storage": "0x80100420",
+        "keys": 130,
+        "record_bytes": 16
+      },
+      "scope": "Original Bionic once/key/destructor-registration algorithms; explicit single-thread TLS storage and zero-waiter futex wake boundary. No destructor execution, thread creation, contention, or Android thread startup modeled."
+    },
+    "source_adapters": {
+      "pthread_adapter": {
+        "name": "OriginalBionicPthreads",
+        "module": "explicit_original_bionic_pthreads_v3",
+        "source_sha256": "d063d95ef19be27e1455a1c50a61bfdc0c0e55ab1c9257ef25058faafe35e712"
+      },
+      "synchronization_adapter": {
+        "name": "OriginalBionicSynchronization",
+        "module": "explicit_original_bionic_synchronization_v2",
+        "source_sha256": "3a772d91616f5f123ed57d6bb12884da96decffe60cad366f4e20c4d417f689f"
+      },
+      "import_guard_adapter": {
+        "name": "CompiledImportDataGuard",
+        "module": "explicit_compiled_guard",
+        "source_sha256": "38c749c97c899e82cf3d0d6dda5ee76e36533cdd35a94d48be0eacd186a406ca"
+      }
+    },
+    "guard_events": [],
+    "executable_write_replay_matches": true,
+    "remaining_platform_models": [
+      "existing allocator/memory/string boundaries",
+      "virtual loaded-module metadata",
+      "synthetic original-Bionic TLS/thread storage with TID1",
+      "single-thread no-waiter futex wake-private boundary"
+    ],
+    "scope": "All original libg constructors executed; explicit isolated platform and authenticated support metadata adapter. Android/JNI/runtime and battle parity unverified.",
+    "frozen_harness_source_sha256": {
+      "outputs/clash-royale-research/scripts/native_decimal.py": "575a7e5ebee655324ea62dd57a45c91ec92ccaff674b3747ed7b528051a95a8a",
+      "outputs/clash-royale-research/scripts/native_import_data_guard.py": "07b44c9da9321563d0d32eee3b1d57b374787cd0072302304a2ca08d151febf4",
+      "work/platform-agent/data-loader/bounded_c_locale.py": "9cc294df604924f7787681d5f7d16ddf84b1afd2c9ea0ecf8c28d7f0cfd09c27",
+      "work/platform-agent/data-loader/bounded_format.py": "e0f22a400f31bc2872f5a66c249c2f59057e1dac6b23578bc45afacffb624aa0",
+      "work/platform-agent/data-loader/native_all_data.py": "c3969baf86f2bdbbe54f687abced8be9bb8ba51856dd865eb9ec0e48a76c921e",
+      "work/platform-agent/data-loader/native_csv_tags.py": "450f33d31f53ec24c0f2b465ef681c1e64900c76e5aea0df61ca628ae90a86ae",
+      "work/platform-agent/data-loader/native_data.py": "7e0a1827cb044bf9b1f6db4ef131838a04b63ece90c92682160a043c484ffe86",
+      "work/platform-agent/data-loader/native_manifest.py": "6ea2faaf84ddf5fcc003e13f672c87e2d15c24abd184bbf5f294d7fa873d066a",
+      "work/platform-agent/data-loader/original_bionic_pthreads.py": "1007427737ede7959dfd411a6b764ab07d56814ffd1c80ec418b7604658e5387",
+      "work/platform-agent/data-loader/probe_csv.py": "c376dbcb492c91a1e4ebe22bc2bf93f7e07dbc9f9b8ecb4e6c1c6e34b46a73af",
+      "work/platform-agent/data-loader/probe_json.py": "22e03f8691ecd63199b88162ca47b8d31d8476c9132e6bb16531b6f34a5ba2ef",
+      "work/platform-agent/public-tools/probe_original_pathfinding.py": "51c587cf8d8d1aeded645abb3acd07861dfc037b0275822eb582372294aefb34",
+      "work/platform-agent/public-tools/sc_lzma.py": "96e9b3d5c80cecc4085bb3a2c20f9f59ab529afe9d63429cdfbab36d7dcf20d4",
+      "work/root-verification/native-guard-fast-v1/compiled_guard.py": "38c749c97c899e82cf3d0d6dda5ee76e36533cdd35a94d48be0eacd186a406ca",
+      "work/root-verification/native-guard-fast-v1/interval_guard.c": "807b3d1f7b8c55e79645db69367e6a550b45c7865913d81933b0e17ce8fbd403",
+      "work/root-verification/native-guard-fast-v1/interval_guard.dylib": "a39facdc4e766830294a773c4627046b1ba1fa9db96b76d4bfb05c8468da4240",
+      "work/root-verification/native-toml/decimal_model.py": "b773f1d7fea1ffe40a830ce2539d80bf8c5464b0df6ad91e95afbb5e0e56579d",
+      "work/runtime-agent/freeze_complete_bootstrap_v4.py": "f25f5d39c34f3c6b4a749957b5a94e07389aa834a9738b75d9011fb17c11332d",
+      "work/runtime-agent/native_complete_bootstrap_v4.py": "2b6798e54a6e06028e13b97db032df730fbf1de2032a703f3585f18e7afdbe81",
+      "work/runtime-agent/native_full_match.py": "48649e38c9b14eea8568f2ca3cf2e547339fe6f70a43bbfcf70264379f22c694",
+      "work/runtime-agent/native_import_data_guard_v2.py": "9eb5e0227cdd8d3609687a8e1e82e195a2a2b4bd17b91e47458726bc04844119",
+      "work/runtime-agent/native_location_map.py": "98bdad4975d92aee0322ea2b2e4581dd5f61b50d39bab278069f3d97e5eb9eed",
+      "work/runtime-agent/native_match_engine.py": "542c1dca9615cebc555129622dca913a3f79e3fa596efca1c7297aea9cf20bc1",
+      "work/runtime-agent/native_match_setup.py": "a1fb0f34535fe632a2de14a36bc06586556f4e0e5134d6a9d272a517209a9879",
+      "work/runtime-agent/native_rarity_records.py": "10d65e42b4a9e2195970c0063d70f5e957153f5a15ece86453c9dfff02cd44e1",
+      "work/runtime-agent/native_setup_engine.py": "2a6ada53bc7cfbf34ef0fdab24758346de474e77a13bceb4d5b73e90b00ba1ab",
+      "work/runtime-agent/native_test_runner.py": "957a23c65accdf9d06abbdd71f62d5b27733e7e942afba90393ac966d43eaed6",
+      "work/runtime-agent/original_bionic_locale_v4.py": "4ce406ae156c0f5b3bbd298d75cbddd6803247372c664808b4eebe99492135cb",
+      "work/runtime-agent/probe_complete_bootstrap_v4.py": "d075ec665287eda1888e2bf9b4370dac6b0c86184905d88fd913a8ee32502f09",
+      "work/runtime-agent/probe_native_init_array763_pthreads_frozen.py": "a7d7edc139ed862cdb1ca1160723e3ceda98a92a4efddb309e0b5e563bd51468",
+      "work/static-agent/bionic-locale/original_bionic_pthreads_v3.py": "d063d95ef19be27e1455a1c50a61bfdc0c0e55ab1c9257ef25058faafe35e712",
+      "work/static-agent/bionic-locale/original_bionic_synchronization_v2.py": "3a772d91616f5f123ed57d6bb12884da96decffe60cad366f4e20c4d417f689f"
+    },
+    "external_versions": {
+      "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 17.0.0 (clang-1700.6.4.2)]",
+      "platform": "darwin",
+      "distributions": {
+        "unicorn": "2.1.4",
+        "pyelftools": "0.33",
+        "capstone": "5.0.9"
+      }
+    },
+    "frozen_manifest_sha256": "cbf6a419b7bcbb7f13bdba9efebbbd23a04344dc6773c5a0207a64a8d1d1ab1e"
+  },
+  "public_validation": {
+    "asset_free_tests": 16,
+    "public_modules_empty_resource_report_sha256": "ed18f035074eeeae4dd7f8d8efc76476ba1291c6d840814b8770aabcefeffeff",
+    "matches_independent_private_report": true,
+    "authored_sources": {
+      "original_bionic_pthreads.py": "b9bb04de8500eeecbcd6bdca0b4584a97c1179860e93a33f577ec3a32843d4ba",
+      "original_bionic_synchronization.py": "2a24a4149ad0709f2be8bef42b140785b05237c96ef77c5ae8f72a5b51b36f31",
+      "test_original_bionic_platform.py": "8396bc1ea9384dfbb71fa20f599384feb806c87212b1d9023c2dcc4e535ce872"
+    },
+    "source_ast_preserved_except_lazy_optional_import": true,
+    "published_helpers_independently_executed": true
+  }
+}
