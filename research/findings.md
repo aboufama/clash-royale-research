@@ -455,3 +455,39 @@ Separate executions reproduce the entire construction report with unchanged
 original libg text and shipped libc++ text. No world tick runs here, and no
 players, decks or playable mode/map configuration is installed on the constructed
 match. See [construction inputs, hashes and limitations](evidence/native-match-construction.json).
+
+
+## Per-tick mapped-memory repeatability
+
+The frozen 400-tick automatic-combat fixture now has a read-only receipt at
+each native call boundary. Each receipt hashes all 16 mapped guest regions,
+including their final bytes, extents and permissions: 51,613,696 bytes per tick.
+It also records 87 explicitly named ARM64 register values and a typed graph of
+serializable adapter attributes, including allocator bookkeeping and mutex
+ownership. All earlier selected gameplay fields, native entry/import counts
+and executable hashes remain exactly unchanged by this added observation.
+
+Two separate processes produce byte-identical complete reports at SHA-256
+`ac7a41daa5bbfc8b6e9fe1ac8ae3f63b28114f823b4278ff4e08ad48a4925316`.
+The public [receipt helper](../scripts/native_state_receipt.py) has the same
+Python AST as the verified frozen helper. The [evidence](evidence/native-memory-repeatability.json)
+pins the harness sources, native emulator library and capture configuration,
+and provides all per-region hashes for every tick. Protected memory contents
+remain local.
+
+An independent audit caught weaknesses in the first serializer: dictionary
+order and some concrete Python container types were merged, mutable aliases
+were absent, and only 70 registers were observed. The verified second version
+preserves concrete allowed types, insertion/observed iteration order, float bit
+patterns, cycles and cross-attribute container aliases. Unknown types fail.
+Twenty-one synthetic controls detect changes to memory boundaries, permissions,
+mappings, register high bits, allocator state, runtime configuration and typed
+container relationships. These controls do not modify any original game bytes.
+
+This is stronger repeatability evidence, not complete state capture or Android
+parity. Opaque Unicorn state, exclusive monitors, unenumerated system registers,
+hook order, callback/module globals and Python process/container internals remain
+outside the receipt. It is not a validated reset/restore mechanism. The original
+fixture's synthetic arena/player/context and platform-model limitations still
+apply, and it still lacks the original outer match loop and a full live-game
+reference. The exactness gate remains unvalidated.

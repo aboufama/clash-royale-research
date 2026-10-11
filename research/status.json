@@ -5,9 +5,9 @@
     "version": "160402020"
   },
   "review": {
-    "sequence": 10,
-    "reviewed_at": "2026-10-11T07:47:29Z",
-    "summary": "Separate runs reproduce 400 native world ticks with automatic target selection, projectile damage and lethal troop removal. Additional original calls reproduce TrainingCamp geometry and native match-object construction. All remain scoped fixtures; complete match and byte-identical state validation are not established."
+    "sequence": 12,
+    "reviewed_at": "2026-10-11T08:09:48Z",
+    "summary": "Read-only receipts reproduce all mapped guest-region hashes over 400 ticks, 87 explicit ARM64 registers and typed adapter observations in two separate runs; previous combat fields remain unchanged. All 21 synthetic controls pass. Full VM coverage, normal-match setup and Android equivalence remain unvalidated."
   },
   "milestones": [
     {
@@ -98,7 +98,7 @@
       "id": "equivalence",
       "status": "not_validated",
       "evidence": [
-        "No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training."
+        "Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated."
       ]
     }
   ]

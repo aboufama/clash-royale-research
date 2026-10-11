@@ -37,9 +37,9 @@ Android build **160402020**. Recovery is not proof of byte-identical battle beha
 | Collision and avoidance | Partial | Original arena collision and neighbor search execute during 60 synthetic movement ticks. Complete troop overlap, pushing and avoidance behavior remains unvalidated. |
 | Combat interactions | Partial | Original-loaded Knight/KingTower records drive 400 world ticks, 62 damage applications, projectile processing and lethal Knight removal; complete selected reports match separate runs with executable regions unchanged. Synthetic arena/context/player setup remains. |
 | Tower interactions | Partial | Original KingTower records, spawn and starting-action enqueue run alongside projectile combat in a 400-tick fixture. Normal inactive/activation behavior and complete match-level tower semantics remain unvalidated. |
-| Byte-identical battle equivalence | Not validated | No complete per-tick state/event comparison against the original pinned battle runtime has been run. Byte-identical interactions remain a hard gate before policy training. |
+| Byte-identical battle equivalence | Not validated | Two synthetic 400-tick runs match all 51,613,696 mapped guest bytes by per-region hashes, 87 listed registers and typed adapter observations per tick. Complete VM/state coverage and an independent Android battle comparison remain absent; exactness is not validated. |
 
-Review **10** · **2026-10-11T07:47:29Z** · Separate runs reproduce 400 native world ticks with automatic target selection, projectile damage and lethal troop removal. Additional original calls reproduce TrainingCamp geometry and native match-object construction. All remain scoped fixtures; complete match and byte-identical state validation are not established.
+Review **12** · **2026-10-11T08:09:48Z** · Read-only receipts reproduce all mapped guest-region hashes over 400 ticks, 87 explicit ARM64 registers and typed adapter observations in two separate runs; previous combat fields remain unchanged. All 21 synthetic controls pass. Full VM coverage, normal-match setup and Android equivalence remain unvalidated.
 
 No overall completion percentage is claimed. Status labels describe the evidence available for this build.
 
@@ -124,6 +124,14 @@ advance. See [AGENTS.md](AGENTS.md) for the mandatory rule.
   exactly. Explicit zero clock inputs and incomplete data references limit the
   result; no playable match is configured. See
   [construction evidence](research/evidence/native-match-construction.json).
+- Repeated that 400-tick fixture while hashing **every mapped guest-memory
+  region at every tick**: 16 regions totaling 51,613,696 bytes, plus 87 named
+  ARM64 registers and typed adapter observations. Both reports match exactly,
+  and all previous gameplay fields remain unchanged by the read-only capture.
+  The [receipt utility](scripts/native_state_receipt.py) and 21 synthetic
+  controls are public. Hidden emulator state and callback/runtime
+  dependencies remain outside this observation; see
+  [the exact capture scope](research/evidence/native-memory-repeatability.json).
 - Complete dependency loading, player/deck setup, deployment, ordinary tower
   activation, complete match rules and complete per-tick equivalence remain
   unvalidated. The real map and native match constructor are not yet integrated
