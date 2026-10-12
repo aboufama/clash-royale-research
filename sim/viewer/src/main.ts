@@ -3,7 +3,7 @@
 // battle_ui.ts / hud.ts): drag a card from the hand, or tap a card and then the arena. The
 // simulator's own controls (pause/step/speed/restart, sandbox palette, the red player's hand for
 // local two-player testing) are shown unless the URL has `?clean`.
-import { Battle, type CardDef, type GameData, type ProjectileDef, supportedCards, type UnitDef } from '../../core/src/index.ts';
+import { Battle, Bot, type CardDef, type GameData, type ProjectileDef, supportedCards, type UnitDef } from '../../core/src/index.ts';
 import gameDataJson from '../../data/gamedata.json';
 import type { BattleUi, PreviewInput } from './battle_ui.ts';
 import { Camera } from './camera.ts';
@@ -105,6 +105,10 @@ class App {
   /** a canvas-hand card released before it was affordable, still dragged while it waits (0x8e2c04) */
   private held: Drag | null = null;
   private tickTimes: number[] = [];
+  /** scripted AI per team (sim/core bot.ts, not a client feature); null = played by hand */
+  private bots: [Bot | null, Bot | null] = [null, null];
+  /** AI level per team: 0 off, 1..3 easy..hard */
+  aiLevel: [number, number] = [0, 0];
 
   constructor() {
     this.overlay = new Overlay($('overlay'));
@@ -160,7 +164,13 @@ class App {
     this.drag = null;
     this.held = null;
     this.ui?.reset();
+    this.makeBots();
     if (DEV) this.buildRedHand();
+  }
+
+  /** One Bot per AI side, seeded from the battle seed so a restart replays the same match. */
+  private makeBots(): void {
+    this.bots = [0, 1].map((t) => this.aiLevel[t] > 0 ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null) as [Bot | null, Bot | null];
   }
 
   resize(): void {
@@ -196,6 +206,11 @@ class App {
 
   stepOnce(): void {
     this.frame.snapshot(this.battle);
+    // AI sides decide on the state before the tick, blue then red; their plays take the hand path
+    for (const bot of this.bots) {
+      const d = bot?.decide(this.battle);
+      if (bot && d) this.playCard(bot.team, d.slot, d.x, d.y);
+    }
     const t0 = performance.now();
     this.battle.step();
     this.tickTimes.push(performance.now() - t0);
@@ -575,6 +590,18 @@ class App {
       this.battle.infiniteElixir = this.infinite;
       inf.classList.toggle('on', this.infinite);
     };
+    // AI toggles cycle off -> easy -> medium -> hard; a change applies from the next tick
+    const aiNames = ['off', 'easy', 'medium', 'hard'];
+    for (const [id, t] of [['aiBlue', 0], ['aiRed', 1]] as const) {
+      const btn = $<HTMLButtonElement>(id);
+      const label = () => { btn.textContent = `${t === 0 ? 'Blue' : 'Red'} AI: ${aiNames[this.aiLevel[t]]}`; btn.classList.toggle('on', this.aiLevel[t] > 0); };
+      label();
+      btn.onclick = () => {
+        this.aiLevel[t] = (this.aiLevel[t] + 1) % 4;
+        this.bots[t] = this.aiLevel[t] > 0 ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null;
+        label();
+      };
+    }
     const pb = $<HTMLButtonElement>('palBlue');
     const pr = $<HTMLButtonElement>('palRed');
     pb.onclick = () => { this.paletteTeam = 0; pb.classList.add('on'); pr.classList.remove('on'); };
