@@ -16,9 +16,11 @@ import type { ScRenderer } from './sc/renderer.ts';
 import { ClipPlayer } from './sc/anim.ts';
 import { Announcements } from './sc/announce.ts';
 import { Floaters, floaterParts, measureFieldText, NOT_ENOUGH_MANA_COLOR, NotEnoughManaGate } from './sc/floater.ts';
+import { BattleScreens } from './sc/result.ts';
+import { AreaRings } from './sc/area_rings.ts';
 import {
   type AreaActor, CLIENT_GLOBALS, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
-  indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
+  elixirGainExport, elixirGainText, indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
 } from './sc/ui_port.ts';
 
 type Team = 0 | 1;
@@ -94,9 +96,15 @@ export class BattleUi {
   readonly grid = new DeployAreaGrid(36, 64);
   areaAlpha = 0;
   preview: PreviewInput | null = null;
-  private timers: { t: DeployTimer; x: number; y: number; team: Team }[] = [];
-  /** elixir cost texts of the own summons (0x85ada8 -> 0xbe5898, list +0x400 of the battle screen) */
-  private floats: { x: number; y: number; text: string; clip: ClipPlayer }[] = [];
+  private timers: { t: DeployTimer; x: number; y: number; team: Team; seq: number }[] = [];
+  /**
+   * elixir texts, list +0x400 of the battle screen: the own plays' cost (0x85ada8 -> 0xbe5898,
+   * elixir_float_txt "-<cost>") and elixir gains (vt+0x398 0xbe4a8c); `seq` = HUD child order with the timers
+   */
+  private floats: { x: number; y: number; exp: string; text: string; clip: ClipPlayer; seq: number }[] = [];
+  private hudSeq = 0;
+  /** device px per CSS px of the last drawn frame (the text layout's stage scale is layout.k times it) */
+  private lastDpr = 1;
   private range: ImageBitmap | null = null;
   /** a released card waiting for its elixir (0x8e2c04): its preview keeps updating at the release point */
   held: PreviewInput | null = null;
@@ -107,10 +115,21 @@ export class BattleUi {
   /** the popup manager's floater texts and the not-enough-mana failure count (sc/floater.ts) */
   private floaters: Floaters | null = null;
   private manaGate = new NotEnoughManaGate();
+  /** battle intro banner (game layer +0x168) and end-of-battle result screen (+0x170): sc/intro.ts, sc/result.ts */
+  readonly screens = new BattleScreens();
+  /** area-damage indicator rings (battle screen list +0x2d0, sc/area_rings.ts) */
+  readonly rings = new AreaRings();
 
   constructor(art: BattleArt) {
     this.art = art;
     this.hud = new Hud(art);
+    // rings are children of the same HUD object as the deploy timers and elixir texts (0x1252994 appends)
+    this.rings.nextSeq = () => this.hudSeq++;
+    // logic -> stage px, truncated (0x8583bc): crown flight starts and the crown counter's river line
+    this.hud.project = (x, y) => {
+      const [sx, sy] = this.toStage(...this.art.gameToPx(x, y));
+      return [Math.trunc(sx), Math.trunc(sy)];
+    };
   }
 
   /** Announcements of the HUD time update 0x8d38c4 (countdown, 60/30 s, elixir speed, extra time,
@@ -134,7 +153,6 @@ export class BattleUi {
   reset(): void {
     this.timers = [];
     this.floats = [];
-    this.handPlays = [];
     this.announce = null;
     this.pending = [];
     this.preview = null;
@@ -142,6 +160,8 @@ export class BattleUi {
     this.views = [null, null];
     this.floaters = null;
     this.manaGate = new NotEnoughManaGate();
+    this.rings.reset();
+    this.screens.reset();
     this.areaAlpha = 0;
     this.grid.blocked.fill(0);
     this.grid.timer.fill(0);
@@ -225,6 +245,8 @@ export class BattleUi {
   /** Engine events of the last tick: card commits start deploy timers (0xbe5b4c -> 0x8d5d24). */
   onEvents(b: Battle): void {
     this.battleRef = b;
+    this.rings.onEvents(b.events); // listener vt+0x3a8 / vt+0x3b0
+    this.screens.onEvents(b.events);
     const ui = this.ui;
     if (!ui) return;
     for (const e of b.events) {
@@ -238,28 +260,25 @@ export class BattleUi {
         }
         continue;
       }
+      if (e.type === 'collect') {
+        // an Elixir Collector's collection (0xf800bc -> battle screen vt+0x398 0xbe4a8c with
+        // ManaCollectAmount * 10000 and side -1): elixir_float_txt at the collector, for either team
+        const u = b.units.find((q) => q.id === e.id);
+        if (u && u.def.manaCollect > 0) this.gainFloat(e.x, e.y, u.def.manaCollect, -1);
+        continue;
+      }
       if (e.type !== 'cast') continue;
       const card = b.defs.card(e.name, b.levels[e.team]);
       const d = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
       const n = card.spec.main ? card.spec.number : card.spec.second ? card.spec.secondCount : card.spec.list.length;
       const own = e.team === this.hud.team;
       if (own) this.castArrived(card, e.x, e.y);
-      // the own summon's elixir cost floats up from the deploy point when its characters appear: the
-      // unit view's card-deploy handler 0x85ada8 -> 0xbe5898 (elixir_float_txt, icon/txt = "-<cost>",
-      // played once, then removed); spells have no character view and show none
-      const hp = own ? this.handPlays.findIndex((q) => q.team === e.team && q.card === e.name) : -1;
-      if (hp >= 0) this.handPlays.splice(hp, 1);
-      if (hp >= 0 && d && n > 0 && card.cost >= 1 && ui.has('elixir_float_txt')) {
-        const clip = new ClipPlayer(ui.frameCount('elixir_float_txt'), ui.fps('elixir_float_txt') || 30);
-        clip.playRange(0, clip.frames - 1, false);
-        this.floats.push({ x: e.x, y: e.y, text: `-${card.cost}`, clip });
-      }
       if (!d || n <= 0 || d.spawnPathfindSpeed !== 0) continue;
       const exp = own ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
       if (!ui.has(exp)) continue;
       const end = ui.labels(exp).end ?? ui.frameCount(exp) - 1;
       this.timers.push({ t: new DeployTimer(d.deployTime / 1000, 0, end, ui.frameCount(exp), ui.fps(exp)), x: e.x, y: e.y,
-        team: e.team as Team });
+        team: e.team as Team, seq: this.hudSeq++ });
     }
   }
 
@@ -343,7 +362,7 @@ export class BattleUi {
     }
     const [sx, sy] = this.toStage(...this.art.gameToPx(x, y));
     this.floaters.show(0, [Math.trunc(sx), Math.trunc(sy)], text, NOT_ENOUGH_MANA_COLOR,
-      measureFieldText(this.floaters.parts.text, text), this.layout.stageW);
+      measureFieldText(this.floaters.parts.text, text, this.layout.k * this.lastDpr), this.layout.stageW);
   }
 
   /** The card held by the pointer was released before it was affordable: its preview goes on waiting. */
@@ -372,12 +391,39 @@ export class BattleUi {
    * "release_end", "remove" or "remove_end" label strings, so those ranges of the clip are never played.
    */
   markPending(team: number, card: string, x: number, y: number, tick: number): void {
-    void x; void y; void tick;
-    // remembered so the commit's cost float is shown for hand plays only (not sandbox spawns)
-    this.handPlays.push({ team, card });
+    void tick;
+    // The play command's pending run (0xd77504 with flag bit 1 clear -> 0xfa35c4) reserves the elixir and
+    // calls the King view's card-deploy handler (vt+0xe0 0x85ada8) with the snapped position and the
+    // cost; for the HUD player's King (0x84ddcc) it has the elixir bar drop `cost` clips (0x8d144c ->
+    // 0x8dcbf4) and floats "-<cost>" from the drop point (0xbe5898, cost > 0), spells included.
+    const b = this.battleRef;
+    const ui = this.ui;
+    if (!b || !ui || team !== this.hud.team) return;
+    const cost = b.defs.card(card, b.levels[team]).cost;
+    this.hud.spendDrops(cost);
+    if (cost >= 1 && ui.has('elixir_float_txt')) this.pushFloat(x, y, 'elixir_float_txt', `-${cost}`);
   }
 
-  private handPlays: { team: number; card: string }[] = [];
+  private pushFloat(x: number, y: number, exp: string, text: string): void {
+    const ui = this.ui;
+    if (!ui || !ui.has(exp)) return;
+    const clip = new ClipPlayer(ui.frameCount(exp), ui.fps(exp) || 30);
+    clip.playRange(0, clip.frames - 1, false);
+    this.floats.push({ x, y, exp, text, clip, seq: this.hudSeq++ });
+  }
+
+  /**
+   * Elixir gain float (battle screen listener vt+0x398 0xbe4a8c): `amount` in 1/10000 elixir at logic
+   * (x, y); `side` -1 (the collector) shows elixir_float_txt, else blue for the HUD player's side and red
+   * for the other, and the receiving side's HUD_player flashes (0x8dce48). Of its sources only the Elixir
+   * Collector's collection has an engine event (`collect`); the death gains of 0xfca5ec (ManaOnDeath /
+   * ManaOnDeathForOpponent) have none yet. The sound is not played.
+   */
+  gainFloat(x: number, y: number, amount: number, side: number): void {
+    this.pushFloat(x, y, elixirGainExport(side, this.hud.team), elixirGainText(amount));
+    // 0xbe4a8c -> 0x8dce48 on the panels (0x8d1580) of the receiving side's player
+    if (side >= 0 && side === this.hud.team) this.hud.flash.start();
+  }
 
   /** Footprint clip of a card (0x8e4eb4: TileSize of a building, capped at 4; 1x1 otherwise; none without ghosts). */
   private footprintExport(cardName: string): string | null {
@@ -474,6 +520,11 @@ export class BattleUi {
     this.announcer()?.update(dt, b, team);
     // popup manager floaters (0x88bce4 -> 0x88c7fc), UI time
     this.floaters?.update(dt);
+    // area rings: battle screen update 0xbe1d3c, on simulation time like the other battle-screen lists
+    this.rings.update(simDt);
+    // battle intro (0x8ca764, HUD gate +0x468) and the end screen after EndScreenDelay (0xd3581c -> 0xbe0100)
+    this.screens.update(this.art, dt, f.simMs, b, team, this.hud.opponentName);
+    this.hud.handHidden = this.screens.result !== null;
     // released plays' leftovers (battle screen update 0xbe1d3c, last to first): 0x8dd4cc deletes one
     // removed on an earlier frame, else adds the frame dt and removes it at 3 s; a spawn-pathfind
     // summon's goes when its character stops tunnelling (0xbe5b0c). Simulation time, like the cast.
@@ -649,26 +700,50 @@ export class BattleUi {
 
   /** HUD layer: HUD elements, deploy timers and the drag name text, in stage px (view set here). */
   drawStage(r: ScRenderer, dpr: number): void {
+    this.lastDpr = dpr;
     const ui = this.ui;
     const b = this.battleRef;
     if (!ui || !b) return;
     const [centreX, riverY] = this.toStage(...this.art.gameToPx(9000, 16000));
+    const texts = this.art.manifest.hud.texts ?? {};
+    // the intro hides the HUD (+0x300 and its children) until its actionFrame (0xbe1d3c +0x468)
+    if (!this.screens.hudShown) { this.screens.draw(r, this.layout, dpr, riverY, texts); this.floaters?.draw(r, ui); return; }
     this.hud.draw(r, b, dpr, riverY);
-    // deploy timers: logic -> stage, truncated to whole stage px (0x8583bc), scale 1
+    const centre: [number, number] = [Math.trunc(centreX), Math.trunc(riverY)];
+    // HUD children in the order they were added: the crown-score prints (HUD init 0x8cd4ec), the crown
+    // flights (0x8d0dd8 at the battle screen setup), then the deploy timers and elixir texts as created
+    this.announce?.draw(r, centre, 'prints');
+    this.hud.drawFlies(r);
+    // deploy timers and elixir texts: logic -> stage, truncated to whole stage px (0x8583bc), scale 1
+    const kids: { seq: number; draw: () => void }[] = [];
     for (const tm of this.timers) {
       if (!tm.t.visible) continue;
-      const [sx, sy] = this.toStage(...this.art.gameToPx(tm.x, tm.y));
-      const exp = tm.team === this.hud.team ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
-      r.draw(ui, exp, tm.t.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE, { childFrame: tm.t.frame });
+      kids.push({ seq: tm.seq, draw: () => {
+        const [sx, sy] = this.toStage(...this.art.gameToPx(tm.x, tm.y));
+        const exp = tm.team === this.hud.team ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
+        r.draw(ui, exp, tm.t.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE, { childFrame: tm.t.frame });
+      } });
     }
-    // own plays' elixir cost texts, in the same container as the timers (+0x300), added after them
     for (const fl of this.floats) {
-      const [sx, sy] = this.toStage(...this.art.gameToPx(fl.x, fl.y));
-      r.draw(ui, 'elixir_float_txt', fl.clip.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE,
-        { childFrame: fl.clip.frame, text: { txt: fl.text } });
+      kids.push({ seq: fl.seq, draw: () => {
+        const [sx, sy] = this.toStage(...this.art.gameToPx(fl.x, fl.y));
+        r.draw(ui, fl.exp, fl.clip.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE,
+          { childFrame: fl.clip.frame, text: { txt: fl.text } });
+      } });
     }
+    // area-damage rings: children appended to the same HUD object (0xbe76e8 / 0xbe7980)
+    const range = this.range;
+    if (range) {
+      const toStage = (x: number, y: number) => this.toStage(...this.art.gameToPx(x, y));
+      for (const g of this.rings.list) {
+        kids.push({ seq: g.seq, draw: () => this.rings.drawOne(g, toStage, this.layout.battleScale, range.height,
+          (v, m, c) => r.drawImageStrip(range, v, m, c)) });
+      }
+    }
+    kids.sort((p, q) => p.seq - q.seq);
+    for (const kd of kids) kd.draw();
     // timed announcements, children the HUD adds at the arena centre (_DAT_01a57004/8)
-    this.announce?.draw(r, [Math.trunc(centreX), Math.trunc(riverY)]);
+    this.announce?.draw(r, centre, 'timed');
     // drag name texts (spell_placement_text): projected drop point, y + SPELL_DRAG_NAME_Y_POS / layer scale.
     // 0x8e4994 adds each new one at index 0 of the UI layer, so newer ones lie under older ones: the
     // previews first, then the leftovers from newest to oldest; a leftover's text and mana child are
@@ -684,6 +759,8 @@ export class BattleUi {
         if (!g.removed) this.drawName(r, ui, g.px, g.py, g.name);
       }
     }
+    // intro (layer +0x168) and result screen (layer +0x170 at index 0, under the popup manager)
+    this.screens.draw(r, this.layout, dpr, riverY, texts);
     // floaters: the popup manager sits in the game layer +0x170, above the HUD's layers (sc/floater.ts)
     this.floaters?.draw(r, ui);
   }

@@ -6,7 +6,8 @@
 // are textured triangle strips. Unlike render.py it also implements
 //   - masks (modifiers 38/39/40) with the stencil buffer (render.py ignores them),
 //   - blend modes 3 multiply / 4 screen / 8 add as real GL blends (render.py: all "additive"),
-//   - text fields (Canvas2D-rasterised, cached),
+//   - text fields: the client's text path (text.ts / freetype.ts: FreeType glyphs, outline channel,
+//     layout; 0x126ab4c's two passes of glyph quads), glyph images cached in one atlas,
 //   - named-child overrides (Supercell code swaps placeholder children such as the King tower's
 //     `king_dummy`/`turret`, health-bar `bar` frames and text instances at runtime),
 //   - the shadow pass of the game's 2D renderer: silhouettes (sprite alpha x vertex alpha,
@@ -26,8 +27,10 @@
 // Textures are premultiplied (the .sc atlases are stored that way; other images are premultiplied at load) and mip-mapped.
 
 import type { Col, Mat } from './math.ts';
-import { colMul, IDENTITY, matScaleFactor, WHITE } from './math.ts';
+import { colMul, IDENTITY, WHITE } from './math.ts';
 import type { ScLibrary, ShapeCmd, TextFieldDef, TextureSource } from './library.ts';
+import type { GlyphImage as GlyphImageT, TfLayout } from './text.ts';
+import { fontGeneration, fontsLoaded, layoutTextField, loadGameFonts, textPlacement, tfOutlineColor } from './text.ts';
 
 export interface NamedOverride {
   /** skip this child */
@@ -65,7 +68,7 @@ export interface RenderStats {
   triangles: number;
 }
 
-/** string atlas size (px) */
+/** glyph atlas size (px) */
 const TEXT_ATLAS = 2048;
 const MAX_SLOTS = 8;
 const FLOATS = 12; // x y u v mulR mulG mulB mulA addR addG addB slot
@@ -188,11 +191,22 @@ export class ScRenderer {
   private readonly colStack: Col[] = [];
   private maskDepth = 0;
   private inMaskWrite = false;
-  /** rasterised strings, packed into one atlas texture (shelf packer; reset when full) */
-  private textCache = new Map<string, { x: number; y: number; w: number; h: number }>();
+  /** glyph images (fill + outline coverage), packed into one atlas texture (shelf packer; reset when full) */
+  private textCache = new Map<string, { x: number; y: number }>();
   private textAtlas: WebGLTexture | null = null;
   private textShelves: { y: number; h: number; x: number }[] = [];
-  private textScratch: HTMLCanvasElement | OffscreenCanvas | null = null;
+  /** bumps when the glyph atlas is reset (cached atlas positions are void) */
+  private textAtlasGen = 0;
+  /** TextField layouts by definition, then by text / stage scale / font generation */
+  private textLayouts = new WeakMap<TextFieldDef, Map<string, TfLayout | null>>();
+  /**
+   * Stage scale the client rasterises text at (device px per stage px, its stage +0x188). Null = the
+   * current view's scale, which is the stage scale for the HUD; a layer drawn through a scaled view
+   * (the battle) should set this to the HUD's scale so its text is scaled as a bitmap like the client's.
+   */
+  textStageScale: number | null = null;
+  /** where the game fonts are fetched from (`<fontBase>/fonts/<file>`) */
+  fontBase = 'assets';
   private frameNo = 0;
   /** TID key -> localised string, for text instances named with a TID (set by the owner) */
   textTable: Record<string, string> | null = null;
@@ -731,78 +745,120 @@ export class ScRenderer {
 
   // -- text fields ------------------------------------------------------------------------------
 
+  /**
+   * A TextField's text, drawn like 0x126ab4c: the layout (text.ts) in device px, its origin at
+   * ceil(M (left + inset, top + inset)) (0x88 pixel snap; M = view x world matrix) and the matrix's
+   * scale entries snapped to the stage scale S when within 0.01, glyph corners at origin + M2x2 g / S.
+   * With an outline colour the glyph quads go out twice (DAT_019874e8 = 1, stored at startup by 0x770bec): all
+   * the outline quads first (G coverage x outline colour), then all fill quads (R coverage x fill colour); the
+   * colours follow builtin_stage_text(_with_outline): clamp(colour x mul + add) x alpha, premultiplied.
+   */
   private drawText(tf: TextFieldDef, text: string, m: Readonly<Mat>, c: Readonly<Col>, blend: number): void {
     if (!text) return;
     if (text.startsWith('TID_')) return; // localisation keys are not resolved here
-    const vm = this.view;
-    const scale = Math.max(0.25, Math.min(8, matScaleFactor(m) * matScaleFactor(vm)));
-    const q = Math.pow(2, Math.round(Math.log2(scale) * 4) / 4); // quantise raster scale
-    const [l, t, r, b] = tf.rect;
-    const w = Math.max(1, r - l), h = Math.max(1, b - t);
-    const key = `${tf.font}|${tf.bytes.join(',')}|${tf.color}|${tf.outline}|${w}x${h}|${q}|${text}`;
-    let e = this.textCache.get(key);
-    if (!e) {
-      const pw = Math.min(TEXT_ATLAS, Math.ceil(w * q) + 8), ph = Math.min(TEXT_ATLAS, Math.ceil(h * q) + 8);
-      if (!this.textScratch) {
-        this.textScratch = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(pw, ph) : Object.assign(document.createElement('canvas'), { width: pw, height: ph });
-      }
-      const cv = this.textScratch;
-      cv.width = pw; cv.height = ph; // also clears it
-      const g = cv.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-      const size = (tf.bytes[2] || 16) * q;
-      const align = tf.bytes[1] & 3;
-      g.font = `${size}px "${tf.font}", "Supercell-Magic", sans-serif`;
-      g.textBaseline = 'middle';
-      g.textAlign = align === 2 ? 'center' : align === 1 ? 'right' : 'left';
-      const x = align === 2 ? pw / 2 : align === 1 ? pw - 4 : 4;
-      const y = ph / 2;
-      const argb = (v: number) => `rgba(${(v >>> 16) & 255},${(v >>> 8) & 255},${v & 255},${((v >>> 24) & 255) / 255})`;
-      if ((tf.outline >>> 24) & 255) {
-        g.lineJoin = 'round';
-        g.lineWidth = Math.max(1, size * 0.16);
-        g.strokeStyle = argb(tf.outline);
-        g.strokeText(text, x, y);
-        // drop shadow below the outline (Supercell-Magic HUD style)
-        g.save();
-        g.translate(0, size * 0.06);
-        g.strokeText(text, x, y);
-        g.restore();
-      }
-      g.fillStyle = argb(tf.color | 0xff000000);
-      g.fillText(text, x, y);
-      const [ax, ay] = this.textAlloc(pw, ph);
-      const gl = this.gl;
-      gl.bindTexture(gl.TEXTURE_2D, this.textAtlas);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, ax, ay, gl.RGBA, gl.UNSIGNED_BYTE, cv as TexImageSource);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      e = { x: ax, y: ay, w: pw, h: ph };
-      this.textCache.set(key, e);
+    if (!fontsLoaded()) { void loadGameFonts(this.fontBase); return; }
+    const V = this.view;
+    const S = this.textStageScale ?? Math.sqrt(Math.abs(V[0] * V[3] - V[1] * V[2]));
+    if (!(S > 0)) return;
+    let byText = this.textLayouts.get(tf);
+    if (!byText) { byText = new Map(); this.textLayouts.set(tf, byText); }
+    const lkey = `${S}|${fontGeneration()}|${text}`;
+    let lay = byText.get(lkey);
+    if (lay === undefined) {
+      if (byText.size > 64) byText.clear();
+      lay = layoutTextField(tf, text, S);
+      byText.set(lkey, lay);
     }
+    if (!lay || !lay.glyphs.length) return;
+    const fill = tf.color >>> 0, outline = tfOutlineColor(tf, lay.font);
+    // colours: the field's ARGB through the colour transform (greyed first under DisplayObject flag 4)
+    const vcol = (argb: number): [number, number, number, number] => {
+      let r = (argb >>> 16) & 255, g = (argb >>> 8) & 255, b = argb & 255;
+      if (this.gray) r = g = b = ((r * 30 + g * 59 + b * 11) * 0x147b) >>> 19;
+      return [c[0] * r / 255, c[1] * g / 255, c[2] * b / 255, c[3] * ((argb >>> 24) & 255) / 255];
+    };
+    const fc = vcol(fill), oc = vcol(outline);
+    const twoPass = ((outline >>> 24) & 255) !== 0 && oc[3] > 0;
+    // atlas entries for every glyph (an atlas reset part-way restarts the pass)
+    const at: ({ x: number; y: number } | null)[] = new Array(lay.glyphs.length);
+    for (let tries = 0; tries < 2; tries++) {
+      const gen = this.textAtlasGen;
+      for (let i = 0; i < lay.glyphs.length; i++) at[i] = lay.glyphs[i].img.empty ? null : this.glyphEntry(lay.glyphs[i].img);
+      if (gen === this.textAtlasGen) break;
+    }
+    // device matrix (view x world), the snapped origin and scale
+    const M = [V[0] * m[0] + V[2] * m[1], V[1] * m[0] + V[3] * m[1], V[0] * m[2] + V[2] * m[3],
+      V[1] * m[2] + V[3] * m[3], V[0] * m[4] + V[2] * m[5] + V[4], V[1] * m[4] + V[3] * m[5] + V[5]];
+    const pl = textPlacement(M, tf.rect[0], tf.rect[1], lay.inset, S);
+    const Ox = pl.ox, Oy = pl.oy, A = pl.a, B = pl.b, C = pl.c, D = pl.d;
+    // device -> SC px (the vertex shader applies the view again)
+    const det = V[0] * V[3] - V[1] * V[2];
+    const i0 = V[3] / det, i1 = -V[1] / det, i2 = -V[2] / det, i3 = V[0] / det;
     this.setBlend(blend);
-    if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.submit();
-    const slot = this.slotFor(this.textAtlas!);
-    const x0 = l - 4 / q, y0 = t - 4 / q, x1 = x0 + e.w / q, y1 = y0 + e.h / q;
-    const u0 = e.x / TEXT_ATLAS, v0 = e.y / TEXT_ATLAS, u1 = (e.x + e.w) / TEXT_ATLAS, v1 = (e.y + e.h) / TEXT_ATLAS;
-    const base = this.nv;
-    const corners: [number, number, number, number][] = [[x0, y0, u0, v0], [x1, y0, u1, v0], [x0, y1, u0, v1], [x1, y1, u1, v1]];
-    for (const [px, py, u, v] of corners) {
-      this.pushVert(m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5], u, v,
-        c[0], c[1], c[2], c[3], c[4] / 255, c[5] / 255, c[6] / 255, slot);
+    const wasGray = this.gray;
+    this.gray = false;
+    for (let pass = twoPass ? 0 : 1; pass < 2; pass++) {
+      const col = pass === 0 ? oc : fc;
+      for (let i = 0; i < lay.glyphs.length; i++) {
+        const e = at[i];
+        if (!e) continue;
+        const gl = lay.glyphs[i], img = gl.img;
+        if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.submit();
+        const slot = this.slotFor(this.textAtlas!);
+        const ux = (e.x + 1 + (pass === 0 ? img.w + 1 : 0)) / TEXT_ATLAS, uy = (e.y + 1) / TEXT_ATLAS;
+        const uw = img.w / TEXT_ATLAS, uh = img.h / TEXT_ATLAS;
+        const base = this.nv;
+        for (let k = 0; k < 4; k++) {
+          const gx = gl.x + (k & 1 ? img.w : 0), gy = gl.y + (k & 2 ? img.h : 0);
+          const dx = Ox + A * gx + C * gy - V[4], dy = Oy + B * gx + D * gy - V[5];
+          this.pushVert(i0 * dx + i2 * dy, i1 * dx + i3 * dy, ux + (k & 1 ? uw : 0), uy + (k & 2 ? uh : 0),
+            col[0], col[1], col[2], col[3], c[4] / 255, c[5] / 255, c[6] / 255, slot);
+        }
+        this.pushIdx(base, base + 1, base + 2);
+        this.pushIdx(base + 1, base + 3, base + 2);
+        this.stats.triangles += 2;
+      }
     }
-    this.pushIdx(base, base + 1, base + 2);
-    this.pushIdx(base + 1, base + 3, base + 2);
-  }
-
-  /** Drop cached text rasters (call after web fonts finish loading). */
-  clearTextCache(): void {
-    this.textCache.clear();
-    this.textShelves = [];
+    this.gray = wasGray;
   }
 
   /**
-   * A w × h region of the string atlas (shelves of similar heights, 2 px gaps). When it is full, pending
-   * vertices are flushed and every string is rasterised again on demand.
+   * A glyph image's atlas region: (2w + 3) x (h + 2) texels, the fill coverage at (1, 1), the outline
+   * coverage at (w + 2, 1), zero texels around both so bilinear taps past an edge read nothing (as the
+   * client's slot margins). Uploaded as premultiplied white (v, v, v, v).
+   */
+  private glyphEntry(img: GlyphImageT): { x: number; y: number } {
+    let e = this.textCache.get(img.key);
+    if (e) return e;
+    const W = 2 * img.w + 3, H = img.h + 2;
+    const [ax, ay] = this.textAlloc(W, H);
+    const px = new Uint8Array(W * H * 4);
+    for (let y = 0; y < img.h; y++) {
+      for (let x = 0; x < img.w; x++) {
+        const r = img.r[y * img.w + x], g = img.g[y * img.w + x];
+        const o1 = ((y + 1) * W + x + 1) * 4, o2 = ((y + 1) * W + x + img.w + 2) * 4;
+        px[o1] = px[o1 + 1] = px[o1 + 2] = px[o1 + 3] = r;
+        px[o2] = px[o2 + 1] = px[o2 + 2] = px[o2 + 3] = g;
+      }
+    }
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.textAtlas);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, ax, ay, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    e = { x: ax, y: ay };
+    this.textCache.set(img.key, e);
+    return e;
+  }
+
+  /** Drop cached glyph regions (they are uploaded again on demand). */
+  clearTextCache(): void {
+    this.textCache.clear();
+    this.textShelves = [];
+    this.textAtlasGen++;
+  }
+
+  /**
+   * A w × h region of the glyph atlas (shelves of similar heights, 2 px gaps). When it is full, pending
+   * vertices are flushed and every glyph is uploaded again on demand.
    */
   private textAlloc(w: number, h: number): [number, number] {
     const gl = this.gl;

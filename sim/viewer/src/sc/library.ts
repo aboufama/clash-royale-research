@@ -35,6 +35,15 @@ export interface Bank {
   c: Float32Array; // 7 per color
 }
 
+/**
+ * An SC2 TextField as the client's loader 0x126c030 reads it (40-byte struct): font name, bounds
+ * (left, top, right, bottom; stage px), colour and outline colour (ARGB), default text, and
+ * `bytes` = struct bytes 0x20..0x23: [0] flags (def +0x79: 1 device font, 2 outlined, 4 bold,
+ * 8 italic, 16 multi-line, 32 padded, 64 autofit), [1] align (low nibble 1 right / 2 centre /
+ * 4 justify, high nibble 0x10 v-centre / 0x20 bottom), [2] font size, [3] unused. The trailing int
+ * (def +0x7c) holds the leading (low int16, TextField 0xb2) and the bend angle (high int16, 0x9a);
+ * the bake writes them only when non-zero.
+ */
 export interface TextFieldDef {
   font: string;
   text: string;
@@ -42,6 +51,10 @@ export interface TextFieldDef {
   color: number; // ARGB
   outline: number; // ARGB
   bytes: [number, number, number, number];
+  /** extra line spacing in stage px (struct +0x24 low int16); absent = 0 */
+  lead?: number;
+  /** curved-text angle (struct +0x24 high int16); absent = 0 */
+  bend?: number;
 }
 
 interface LibJson {

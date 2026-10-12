@@ -11,6 +11,8 @@ import {
   type Battle, KING_ACTIVATING, KING_INACTIVE, type Projectile, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS,
   type Unit,
 } from '../../core/src/index.ts';
+import type { SummonSpec } from '../../core/src/data.ts';
+import { formationOffset } from '../../core/src/formation.ts';
 import { idiv, isqrt } from '../../core/src/math.ts';
 import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
@@ -20,8 +22,12 @@ import {
   type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer,
 } from './sc/index.ts';
 import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
+import { condMask, deployElapsed, healthBarState, newBarChoose, newBarFrame, newBarView, SUMMON_WAIT_ALPHA,
+  summonViewDelay } from './sc/unit_view.ts';
+import type { BarPartRef, HealthBarFlags, NewBarView } from './sc/unit_view.ts';
 import { BattleUi } from './battle_ui.ts';
 import { Clouds } from './sc/clouds.ts';
+import { UnitFx } from './sc/unit_fx.ts';
 import { applyPanelSkin } from './panel_skin.ts';
 import type { ProjectileViewFrame, ProjectileViewState } from './sc/projectile_view.ts';
 
@@ -50,6 +56,48 @@ interface ProjView {
   trail: number;
   seen: boolean;
 }
+
+/**
+ * Character view state this port keeps beside sc/anim.ts (sc/unit_view.ts): the health bar container's
+ * clip (+0x618 on +0x460 or +0x468), the summon reveal (+0xa28 delay, container alpha, 0x846b2c /
+ * 0x840d44) and the deploy filter slot's start (+0x4c0 / +0x4c8).
+ */
+interface UnitView {
+  barSwapped: boolean;
+  /** made by a cast's Deploy_summon 0xd423bc (index i = actor +0x194, the member's DeployTime ms) */
+  summon: boolean;
+  index: number;
+  deployTime: number;
+  /** vt+0x138 delay and whether the container waits at SUMMON_WAIT_ALPHA for it */
+  delay: number;
+  waiting: boolean;
+  /** in state 11 (summon delay) last frame */
+  wasWaiting: boolean;
+  /** sim ms the deploy filter started (null: none) */
+  filterStart: number | null;
+  /** client-action health bar state (view +0x610 / +0x614 and the component, sc/unit_view.ts) */
+  nb: NewBarView | null;
+  /** its root sprite x and each badge clip's frame (stopped, or playing its intro from `playFrom` sim ms) */
+  nbRootX: number;
+  nbBadges: Map<number, { frame: number; playFrom: number | null }>;
+}
+
+/** A character's client-action health bar parts (OnStartingClientActions -> ClientActionAddHealthBarPart). */
+interface NewBarPartSpec extends BarPartRef {
+  blue: string;
+  red: string;
+  offset: [number, number];
+  intro: boolean;
+}
+interface NewBarSpec {
+  /** NewHealthBarOffsetX + NewHealthBarOffsetXBlue / Red (0xde1668: own / enemy) */
+  base: [number, number];
+  badges: NewBarPartSpec[];
+  bars: NewBarPartSpec[];
+}
+
+/** The cast whose Deploy_summon 0xd423bc spawns follow in this step's events. */
+interface CastCtx { tick: number; team: number; card: string; x: number; y: number; next: number }
 
 export function createArt(_manifest: unknown): ArtHooks {
   const thumbs = new Map<string, string>();
@@ -112,6 +160,8 @@ export class ArtWorld implements WorldRenderer {
   private aeoFx = new Map<number, { stop(): void }>();
   /** Client view state per unit (sc/anim.ts) and this frame's chosen sprite. */
   private anims = new Map<number, AnimState>();
+  /** footstep effects of the character view update (sc/unit_fx.ts) */
+  private unitFx = new UnitFx();
   private sprites = new Map<number, AnimFrame | null>();
   /** Single-clip buildings (sc/anim.ts animateBuilding): clip player per unit, this frame's frame,
    * and collections seen since the last frame. */
@@ -130,6 +180,15 @@ export class ArtWorld implements WorldRenderer {
   /** Client projectile views by engine projectile id. */
   private projViews = new Map<number, ProjView>();
   private lastFxSim = -1;
+  /** Character view state per unit (health bar clip, summon reveal, deploy filter). */
+  private views = new Map<number, UnitView>();
+  private cast: CastCtx | null = null;
+  /** Projectiles whose shooter effect has played (0xfc619c -> 0xf85244, once per projectile). */
+  private muzzled = new Set<number>();
+  /** This step's damage direction per victim (the Damage_enqueue vector: health +0x18 on the lethal entry). */
+  private stepVec = new Map<number, [number, number]>();
+  /** Actors by id as of the last onEvents (plus this step's), so a death can read the dead actor. */
+  private byId = new Map<number, Unit>();
   /** location cloud shadows (battle layer 11), built for each battle */
   private clouds: Clouds | null = null;
   private cloudsFor: unknown = null;
@@ -172,12 +231,14 @@ export class ArtWorld implements WorldRenderer {
   onEvents(f: Frame): void {
     const b = f.battle;
     const m = this.art.manifest;
+    this.stepVec.clear();
+    this.battleState(b);
+    // actors of the last step and this one: one that died this step has left b.units but keeps its state
+    for (const u of b.units) this.byId.set(u.id, u);
     for (const e of b.events) {
       const team = e.team as Team;
       if (e.type === 'spawn') {
-        const ca = m.characters[e.name];
-        const eff = ca?.effects?.spawnEffect;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        this.onSpawn(b, e.id, e.name, team, e.x, e.y, e.tick);
       } else if (e.type === 'hit' || e.type === 'impact') {
         // hit vector for the damage filter: melee = victim - attacker, projectile = travel direction
         // into the impact point (or impact -> victim for splash)
@@ -201,11 +262,15 @@ export class ArtWorld implements WorldRenderer {
         const ca = u ? m.characters[u.def.name] : null;
         const eff = ca?.effects?.damageEffect;
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        // single-target melee (0xfc7080): the damage carries (target snapshot − attacker); a melee splash
+        // goes through World_areaDamage 0xf97be8, which passes none
+        if (u && u.def.areaDamageRadius <= 0) {
+          const v = u.target && u.target.lastHurtTick === b.tick ? u.target
+            : [...this.byId.values()].find((q) => q.lastHurtTick === b.tick && q.team !== u.team && q.x === e.x && q.y === e.y);
+          if (v) this.stepVec.set(v.id, [u.tsx - u.x, u.tsy - u.y]);
+        }
       } else if (e.type === 'shoot') {
-        const u = b.units.find((q) => q.id === e.id);
-        const ca = u ? m.characters[u.def.name] : null;
-        const eff = (ca?.effects?.projectileEffect ?? ca?.effects?.attackStartEffect) as string | undefined;
-        if (u && eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team });
+        this.shooterEffects(b, e.id);
       }
       if (e.type === 'impact') {
         // HitEffect at the aim point, z = the projectile's height on arrival (0 unless ConstantHeight),
@@ -216,12 +281,15 @@ export class ArtWorld implements WorldRenderer {
         const eff = p?.hitEffect;
         const ang = pv && (e.x !== pv.startX || e.y !== pv.startY) ? nativeAngle(e.x - pv.startX, e.y - pv.startY) : 0;
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, angle: ang });
+        // a single-target hit (0xf9188c -> 0xf8f618) carries (aim − start); a splash (0xf8f03c ->
+        // World_areaDamage) passes none
+        if (pv && !((p?.radius as number | undefined) ?? 0)) {
+          for (const v of this.byId.values()) {
+            if (v.lastHurtTick === b.tick && v.team !== e.team && v.x === e.x && v.y === e.y) this.stepVec.set(v.id, [e.x - pv.startX, e.y - pv.startY]);
+          }
+        }
       } else if (e.type === 'death' || e.type === 'tower') {
-        const ca = m.characters[e.name];
-        let eff = ca?.effects?.deathEffect as string | undefined;
-        if (e.type === 'tower') eff = (e.name === 'KingTower' ? m.towers.king.effects?.deathEffect : m.towers.princess.effects?.deathEffect) as string | undefined;
-        // tower rubble is drawn by drawTowerRuin, so skip the effect's permanent particles
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, skipPersistent: e.type === 'tower' });
+        this.deathEffect(b, e.id, e.name, e.type === 'tower', team, e.x, e.y);
       } else if (e.type === 'aoe') {
         const a = b.areaEffects.find((q) => q.id === e.id);
         const h = this.art.playAreaEffect(this.fx, e.name, e.x, e.y, {
@@ -231,7 +299,13 @@ export class ArtWorld implements WorldRenderer {
       } else if (e.type === 'appear' || e.type === 'hide') {
         // view vt+0x80 with AppearEffect (0xf8247c) / HideEffect (0xf81b3c)
         const eff = m.characters[e.name]?.effects?.[e.type === 'appear' ? 'appearEffect' : 'hideEffect'] as string | undefined;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        const u = this.byId.get(e.id);
+        if (u) this.playOnView(u, eff);
+        else if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+      } else if (e.type === 'landing') {
+        // Actor_setState 0xf7f2c8 leaving the jump state: view vt+0x80 with LandingEffect (CharacterData +0x100)
+        const u = this.byId.get(e.id);
+        if (u) this.playOnView(u, m.characters[e.name]?.effects?.landingEffect as string | undefined);
       } else if (e.type === 'collect') {
         this.collected.add(e.id);
       } else if (e.type === 'path') {
@@ -240,9 +314,174 @@ export class ArtWorld implements WorldRenderer {
         const sp = m.spells[e.name];
         const eff = sp?.effect;
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        this.cast = { tick: e.tick, team: e.team, card: e.name, x: e.x, y: e.y, next: 0 };
       }
     }
     this.ui.onEvents(b);
+    this.byId.clear();
+    for (const u of b.units) this.byId.set(u.id, u);
+    // the client's view update runs at least once per tick; several engine steps per rendered frame
+    // (speed > 1) must not skip a reveal: run it here too, at the time this tick starts showing
+    this.updateViews(b, b.tick * 50, 0);
+  }
+
+  /**
+   * A new actor. Members of a cast's summon (Deploy_summon 0xd423bc: created after the cast event, in
+   * index order) get the view delay of vt+0x138 (0x846b2c, sc/unit_view.ts summonViewDelay) when they
+   * start in state 4: a UseAnimator view waits at SUMMON_WAIT_ALPHA for it (revealed by updateViews), any
+   * other plays its SpawnEffect now (vt+0xc0 0x84f11c: the actor's x, y, z). A member waiting out
+   * SummonDeployDelay (state 11) gets vt+0x138(0) when it leaves that state. Other spawns (spawners,
+   * death spawns, projectile spawns) come through 0xd35ab4 with param 7 clear: the world listener vt+0x48
+   * plays the SpawnEffect at (x, y, FlyingHeight), angle 0, not attached.
+   */
+  private onSpawn(b: Battle, id: number, name: string, team: Team, x: number, y: number, tick: number): void {
+    const m = this.art.manifest;
+    const u = b.units.find((q) => q.id === id);
+    const c = this.cast;
+    if (u && c && c.tick === tick && c.team === u.team && u.card === c.card) {
+      const v = this.newView(u);
+      const index = c.next++;
+      const card = b.defs.card(c.card, b.levels[u.team]);
+      const sp = card.spec;
+      // SpawnPathfindSpeed: 0xd423bc calls vt+0x168 (the tunnel view, not ported) instead of vt+0x138, and
+      // 0xd35ab4 plays no SpawnEffect (param 7 set); the view keeps the filter from its deploy start (A)
+      if (u.def.spawnPathfindSpeed !== 0) return;
+      v.summon = true;
+      v.index = index;
+      const entry = card.summon.find((s) => s.unit === u.def) ?? null;
+      v.deployTime = Math.round((entry && entry.deployTime >= 0 ? entry.deployTime : u.def.deployTime) / 50) * 50;
+      if (u.waitTicks <= 0) this.summonDelay(u, v, b, c, sp, v.index);
+      return;
+    }
+    this.newView(u);
+    const eff = m.characters[name]?.effects?.spawnEffect;
+    const ch = u ? u.def.flyingHeight : 0;
+    if (eff && this.fx.has(eff)) this.fx.play(eff, x, y, { team, z: ch });
+  }
+
+  private stateFor: unknown = null;
+
+  /** A new battle: actor ids restart, so drop the per-actor view state. */
+  private battleState(b: Battle): void {
+    if (this.stateFor === b) return;
+    this.stateFor = b;
+    this.views.clear();
+    this.byId.clear();
+    this.muzzled.clear();
+    this.cast = null;
+  }
+
+  private newView(u: Unit | undefined): UnitView {
+    const v: UnitView = { barSwapped: false, summon: false, index: 0, deployTime: 0, delay: 0, waiting: false, wasWaiting: false,
+      filterStart: null, nb: null, nbRootX: 0, nbBadges: new Map() };
+    if (u) {
+      v.wasWaiting = u.waitTicks > 0;
+      this.views.set(u.id, v);
+    }
+    return v;
+  }
+
+  /** Deploy_summon 0xd423bc's vt+0x138 call for summon member `i` and its view's answer (0x846b2c). */
+  private summonDelay(u: Unit, v: UnitView, b: Battle, c: CastCtx, sp: SummonSpec, i: number): void {
+    const n1 = sp.main ? sp.number : 0;
+    const nCircle = n1 + (sp.second ? sp.secondCount : 0);
+    const d0 = (nCircle > 0 ? sp.main ?? sp.second : sp.list[0]) ?? u.def;
+    let off: [number, number];
+    if (i < nCircle) {
+      const r = sp.radius !== 0 ? sp.radius : d0.spawnRadius !== 0 ? d0.spawnRadius : d0.collisionRadius;
+      off = formationOffset(i, sp.number, r, sp.width, c.team === 0, b.laneOf(c.x, c.y), d0.spawnAngleShift, sp.secondCount, b.laneSeqDeploy);
+    } else {
+      const k = i - nCircle;
+      const sx = sp.offsetsX[k] ?? 0, sy = sp.offsetsY[k] ?? 0;
+      off = c.team === 0 ? [-sx, -sy] : [sx, sy];
+    }
+    const delay = summonViewDelay({
+      index: i, number: sp.number, hasSecond: !!sp.second, spellDeployDelay: sp.deployDelay, deployDelay0: d0.deployDelay,
+      deployTime0: d0.deployTime, spawnPathfind0: d0.spawnPathfindSpeed, offset: off, team: c.team,
+    });
+    if (delay !== null) this.viewDelay(u, v, delay);
+  }
+
+  /** View vt+0x138 (0x846b2c): only in state 4; UseAnimator waits for the delay at half alpha, others spawn now. */
+  private viewDelay(u: Unit, v: UnitView, delay: number): void {
+    if (u.state !== ST_DEPLOYING || u.waitTicks > 0) return;
+    const ca = this.art.manifest.characters[u.def.name];
+    if (ca?.useAnimator) {
+      v.delay = delay;
+      v.waiting = true;
+      return;
+    }
+    this.playOnActor(u, ca?.effects?.spawnEffect);
+  }
+
+  /**
+   * View vt+0x80 (0x84e784 -> 0x82dcb0 with the actor as parent and attach flag set): the effect starts at
+   * the actor's sprite (0x82b7ac: the view's sprite x, y ∓ 0.01 world so it sorts in front, z) and keeps
+   * following it only with the effect's FollowParent (+0xac, 0xe2202c); a followed looping effect stops
+   * when the actor goes (0x82d300). The sprite's position is taken as the actor's logic position (A: the
+   * client reads the last drawn, interpolated one).
+   */
+  private playOnView(u: Unit, eff: string | undefined): void {
+    const fx = this.art.manifest.effects;
+    if (!eff || !fx[eff]) return;
+    const front = this.art.flip ? -5 : 5; // 0.01 world = 5 logic units
+    const follow = fx[eff].FollowParent ? () => {
+      const f = this.frame;
+      const live = f && f.battle.units.includes(u) && u.state !== ST_DEAD;
+      return live && f ? [f.ux(u), f.uy(u), f.uz(u)] as [number, number, number] : null;
+    } : undefined;
+    this.fx.play(eff, u.x, u.y + front, { team: u.team as Team, z: u.z, follow });
+  }
+
+  /** View vt+0xc0 (0x84f11c): an effect at the actor's logic x, y and z, enemy version for the opponent, not following it. */
+  private playOnActor(u: Unit, eff: string | undefined, angle?: number): void {
+    if (eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: u.z, angle });
+  }
+
+  /**
+   * Shooter effect of each projectile the attack just made (AttackComp_execute 0xfc619c -> 0xf85244): the
+   * projectile's OverrideShooterProjectileEffect (projectile data +0x348), else the shooter's
+   * ProjectileEffect (character data +0x108; +0x110 ProjectileEffectSpecial for a special attack,
+   * 0xde0438), played by the world listener vt+0x48 (0x850258) at the projectile's x, y, z right after
+   * Projectile_init (its start) with the shooter's facing angle (0x1294e04 on actor +0xf8), not attached.
+   * Crown towers use their building row (KingTower: King_attack, PrincessTower: ArcherTowerAttack).
+   */
+  private shooterEffects(b: Battle, id: number): void {
+    const m = this.art.manifest;
+    const u = b.units.find((q) => q.id === id);
+    if (!u) return;
+    const fx = u.tower === TOWER_KING ? m.towers.king.effects : u.tower === TOWER_PRINCESS ? m.towers.princess.effects
+      : m.characters[u.def.name]?.effects;
+    for (const p of b.projectiles) {
+      if (p.sourceId !== id || p.spell || this.muzzled.has(p.id)) continue;
+      this.muzzled.add(p.id);
+      const eff = (m.projectiles[p.def.name]?.overrideShooterProjectileEffect as string | undefined) ?? fx?.projectileEffect;
+      if (eff && this.fx.has(eff)) {
+        this.fx.play(eff, p.startX, p.startY, { team: u.team as Team, z: p.startZ, angle: nativeAngle(u.dirX, u.dirY) });
+      }
+    }
+  }
+
+  /**
+   * Death effect (character death 0xf83990 -> world listener vt+0x60 0x850504; a crown tower's 0xfa3d08
+   * ends there too in this mode): the first DeathEffectOverride among the actor's buffs (0xfc2288, buff
+   * data +0x1b0) else its DeathEffect (vt+0x158), at the actor's x, y and z (0xf942a8: FlyingHeight for a
+   * flyer), angle = health +0x18 (0xfcc040), the native angle of the lethal damage's direction
+   * (0xfcb29c); none when the damage carried no direction. Tower rubble is drawn by drawTowerRuin, so a
+   * tower's effect skips its permanent particles.
+   */
+  private deathEffect(b: Battle, id: number, name: string, tower: boolean, team: Team, x: number, y: number): void {
+    const m = this.art.manifest;
+    const u = this.byId.get(id);
+    let eff = (tower ? (name === 'KingTower' ? m.towers.king.effects?.deathEffect : m.towers.princess.effects?.deathEffect)
+      : m.characters[name]?.effects?.deathEffect) as string | undefined;
+    for (const q of u?.buffs ?? []) {
+      const o = m.buffs?.[q.def.name]?.deathEffectOverride as string | undefined;
+      if (o) { eff = o; break; }
+    }
+    const v = this.stepVec.get(id);
+    const angle = v ? nativeAngle(v[0], v[1]) : 0;
+    if (eff && this.fx.has(eff)) this.fx.play(eff, x, y, { team, z: u ? u.z : 0, angle, skipPersistent: tower });
   }
 
   // ---------------------------------------------------------------- frame
@@ -263,13 +502,18 @@ export class ArtWorld implements WorldRenderer {
     this.fx.update(fxDt);
     // battle layer update (0x856f28): cloud shadows, then the screen shake (SC px)
     if (this.cloudsFor !== b) { this.cloudsFor = b; this.clouds = new Clouds(art, this.ui.layout.stageW); }
+    this.battleState(b);
     this.clouds?.update(fxDt / 1000, this.ui.layout.stageW);
     const [shx, shy] = this.fx.shakeOffset(fxDt / 1000);
+    this.updateViews(b, sim, f.alpha);
     this.updateAnims(f, sim);
     this.ui.update(fxDt / 1000, f);
     const dpr = this.cam.dpr;
 
     r.begin([0.05, 0.08, 0.05, 1]);
+    // text in the battle layer is laid out and rasterised at the stage scale, then scaled with the layer
+    // (0x126ab4c: glyph size = stage scale x field size; sc/text.ts)
+    r.textStageScale = this.ui.layout.k * dpr;
     r.setView(this.s * dpr, 0, 0, this.s * dpr, (this.vx + this.s * shx) * dpr, (this.vy + this.s * shy) * dpr);
     art.drawBackground(r, sim);
     art.drawArenaObjects(r, sim, ['Base']);
@@ -302,7 +546,8 @@ export class ArtWorld implements WorldRenderer {
       }
     }
     for (const u of b.units) {
-      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling) continue;
+      // state 11 (summon delay) hides the view, its shadow container included (0x839b08 +0xad5 -> +0x340)
+      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling || u.waitTicks > 0) continue;
       const ca = m.characters[u.def.name];
       if (!ca) continue;
       const st = this.unitState(u, f);
@@ -357,7 +602,7 @@ export class ArtWorld implements WorldRenderer {
     }
     // units (0-HP actors such as death bombs and the Rage bottle are drawn too)
     for (const u of b.units) {
-      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling) continue;
+      if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling || u.waitTicks > 0) continue;
       const ca = m.characters[u.def.name];
       const x = f.ux(u);
       const y = f.uy(u);
@@ -380,7 +625,12 @@ export class ArtWorld implements WorldRenderer {
       // shadow stays at z 0 (0x84d738 places entry +0x18 at the node's x, y and 0) and keeps its size
       // (0x83ce70 shrinks it only for JumpHeight > 0 with DashCooldown > 0)
       const lift = f.uz(u) - u.def.flyingHeight;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { z: lift, deployMs: st.deployMs, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
+      // the deploy filter slot plays from its start (0x839b08: +0x4c8 += dt) to its last frame; a summon
+      // member waiting for its reveal sits at SUMMON_WAIT_ALPHA (0x846b2c, applied by 0x839b08 -> 0x851378)
+      const view = this.views.get(u.id);
+      const deployMs = view?.filterStart != null ? sim - view.filterStart : undefined;
+      const alpha = view?.waiting ? SUMMON_WAIT_ALPHA : undefined;
+      const o: Parameters<BattleArt['drawUnit']>[8] = { z: lift, deployMs, alpha, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
         face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9,
         clipFrame: this.clipFrames.get(u.id) };
       items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
@@ -413,28 +663,181 @@ export class ArtWorld implements WorldRenderer {
     this.clouds?.draw(r);
     this.fx.draw(r, 'Above');
 
-    // health bars (original HUD art)
+    // health bars (original HUD art; per-frame logic 0x83c268, sc/unit_view.ts healthBarState)
     for (const u of b.units) {
-      if (u.state === ST_DEAD || u.maxHp <= 0 || u.tunneling) continue;
+      if (u.state === ST_DEAD || u.maxHp <= 0) continue;
       const team = u.team as Team;
       if (u.tower !== TOWER_NONE) {
         const king = u.tower === TOWER_KING;
         const kind = king ? 'king' : u.x < 9000 ? 'princessLeft' : 'princessRight';
         const [sx, sy] = art.towerBarPx(kind, team);
         const type = (king ? m.towers.king.healthBar : m.towers.princess.healthBar) ?? (king ? 'Summoner' : 'Tower');
-        art.drawHealthBar(r, type, team, sx, sy, u.hp / u.maxHp, u.def.level, u.hp);
+        art.drawTowerHealthBar(r, type, team, sx, sy, u.hp, u.maxHp, u.def.level, u.hp, this.barFlash(u, sim));
         continue;
       }
-      if (u.hp >= u.maxHp && u.shield >= u.def.shieldHitpoints) continue;
       const ca = m.characters[u.def.name];
+      // a "HealthBar" component (client-action bar): 0x83c268 updates it (0x8405c4) and draws no classic bar
+      const nbs = this.newBarSpec(u.def.name);
+      if (nbs) {
+        this.drawNewBar(u, nbs, sim, f);
+        continue;
+      }
+      // HideHealthbar: no bar clips (0x836e58)
       if (ca?.hideHealthbar) continue;
+      const type = (ca?.healthBar as string | undefined) ?? 'Medium';
+      const row = m.hud.healthBars[type];
+      if (!row) continue;
+      const view = this.views.get(u.id) ?? this.newView(u);
+      // the viewer is logic player 0 (blue): own = team 0 (0x84ddcc)
+      const st = healthBarState({
+        own: team === 0, flags: row as HealthBarFlags, hp: u.hp, maxHp: u.maxHp, shield: u.shield, maxShield: u.def.shieldHitpoints,
+        lifeTime: u.def.lifeTime, hidden: u.tunneling || u.waitTicks > 0, swapped: view.barSwapped,
+      });
+      view.barSwapped = st.swapped;
+      if (!st.visible) continue;
       // the bar container follows BASE_SPRITE (or GO_SPRITE) with its z (0x8408f0 -> 0x851b84)
       const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
-      art.drawHealthBar(r, (ca?.healthBar as string | undefined) ?? 'Medium', team, sx, sy, u.hp / u.maxHp, u.def.level);
+      art.drawUnitHealthBar(r, type, team === 0, sx, sy, st, u.def.level,
+        (ca?.showHealthNumber as boolean | undefined) ? st.hp : undefined, this.barFlash(u, sim));
     }
     // HUD layer (battle screen +0x300): HUD elements, deploy timers (0x8d9748) and the drag name text
+    r.textStageScale = null; // the HUD's view is the stage scale itself
     this.ui.drawStage(r, dpr);
     r.end();
+  }
+
+  /**
+   * Health bar flash, view +0x470: every damage entry the actor survives sets it to 1.0 (0xfcb29c ->
+   * view vt+0x20 0x840a2c) and the view update takes 4·dt (s) off it each frame down to 0 (0x839b08),
+   * i.e. 1 − 4·(time since the hit) on the visual clock. Engine damage marks lastHurtTick.
+   */
+  private barFlash(u: Unit, sim: number): number {
+    const t = sim - u.lastHurtTick * 50;
+    return t >= 0 && t < 250 ? 1 - t / 250 : 0;
+  }
+
+  private newBarSpecs = new Map<string, NewBarSpec | null>();
+
+  /**
+   * A character's client-action health bar (csv_client/healthbars.toml): its OnStartingClientActions
+   * flattened through ClientActionGroup's ClientActions in list order; each ClientActionAddHealthBarPart
+   * (0x8645dc) adds a Badge or a Bar with its Conditions / ExcludeConditions masks (0xf739b4), offset and
+   * Blue / Red exports. Null without parts (the classic bar). Segmenter parts (0x853318) are not used by
+   * a supported card.
+   */
+  private newBarSpec(name: string): NewBarSpec | null {
+    if (this.newBarSpecs.has(name)) return this.newBarSpecs.get(name)!;
+    const m = this.art.manifest;
+    const ca = m.characters[name] as Record<string, unknown> | undefined;
+    const acts = (ca?.onStartingClientActions as string[] | undefined) ?? [];
+    const parts = m.hud.healthBarParts ?? {};
+    const badges: NewBarPartSpec[] = [], bars: NewBarPartSpec[] = [];
+    const visit = (n: string, depth: number): void => {
+      const a = parts[n.trim()];
+      if (!a || depth > 8) return;
+      if (a.classType === 'ClientActionGroup') {
+        for (const c of (a.clientActions as string[] | undefined) ?? []) visit(c, depth + 1);
+        return;
+      }
+      if (a.classType !== 'ClientActionAddHealthBarPart') return;
+      const p: NewBarPartSpec = {
+        cond: condMask(a.conditions as string[] | undefined), excl: condMask(a.excludeConditions as string[] | undefined),
+        blue: (a.blueExportName as string | undefined) ?? '', red: (a.redExportName as string | undefined) ?? '',
+        offset: [Number(a.offsetX ?? 0) || 0, Number(a.offsetY ?? 0) || 0],
+        intro: a.hasIntroAnim === true || a.hasIntroAnim === 'true',
+      };
+      if (a.partType === 'Badge') badges.push(p);
+      else if (a.partType === 'Bar') bars.push(p);
+    };
+    for (const n of acts) visit(n, 0);
+    const x = Number(ca?.newHealthBarOffsetX ?? 0) || 0;
+    const spec = badges.length || bars.length ? {
+      base: [x + (Number(ca?.newHealthBarOffsetXBlue ?? 0) || 0), x + (Number(ca?.newHealthBarOffsetXRed ?? 0) || 0)] as [number, number],
+      badges, bars,
+    } : null;
+    this.newBarSpecs.set(name, spec);
+    return spec;
+  }
+
+  /**
+   * One frame of a client-action health bar (0x8405c4 -> 0x853574, sc/unit_view.ts): the shown flags
+   * and percentages, the part choice, the badge clip's frame (stopped on its last frame when the badge
+   * changes, its intro played 0..last when chosen with HasIntroAnim), drawn by BattleArt.drawNewHealthBar
+   * at the bar holder (the classic anchor, 0x84f740). Underground = tunnelling and the holder hidden in
+   * state 11 are not traced (A).
+   */
+  private drawNewBar(u: Unit, spec: NewBarSpec, sim: number, f: Frame): void {
+    const art = this.art, r = this.r;
+    const team = u.team as Team;
+    const own = team === 0;
+    const view = this.views.get(u.id) ?? this.newView(u);
+    if (!view.nb) view.nb = newBarView();
+    const nb = view.nb;
+    const fr = newBarFrame(nb, {
+      own, hp: u.hp, maxHp: u.maxHp, shield: u.shield, maxShield: u.def.shieldHitpoints, boost: 0, champion: false,
+      underground: u.tunneling, invincible: false,
+    });
+    const level = u.def.level;
+    const ch = newBarChoose(nb, spec.badges, spec.bars, fr.flags, level);
+    const lib = art.lib(art.manifest.hud.sc);
+    const exp = (p: NewBarPartSpec) => (own ? p.blue : p.red);
+    let badgeFrame = 0;
+    if (ch.badge >= 0) {
+      const e = exp(spec.badges[ch.badge]);
+      const last = Math.max(0, lib.frameCount(e) - 1);
+      let st = view.nbBadges.get(ch.badge);
+      if (!st) { st = { frame: 0, playFrom: null }; view.nbBadges.set(ch.badge, st); } // 0x8530e0: frame 0
+      if (ch.intro) { st.playFrom = sim; st.frame = 0; } else if (ch.badgeChanged) { st.playFrom = null; st.frame = last; }
+      badgeFrame = st.playFrom !== null ? Math.min(last, Math.floor(((sim - st.playFrom) * lib.fps(e)) / 1000)) : st.frame;
+    }
+    if (u.waitTicks > 0) return;
+    const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
+    const part = (p: NewBarPartSpec | undefined) => (p ? { exp: exp(p), offset: p.offset } : null);
+    view.nbRootX = art.drawNewHealthBar(r, sx, sy, {
+      base: own ? spec.base[0] : spec.base[1], badge: part(spec.badges[ch.badge]), badgeFrame, showBadge: fr.show,
+      bar: part(spec.bars[ch.bar]), showBar: fr.bar, level, hpPct: fr.hpPct, shieldPct: fr.shieldPct,
+      flash: this.barFlash(u, sim), rootX: view.nbRootX,
+    });
+  }
+
+  /**
+   * The deploy part of the character view update for each troop / building (0x840d44 state 4 with
+   * 0x846b2c's delay, sc/unit_view.ts): a summon member leaving state 11 gets vt+0x138(0); a waiting
+   * UseAnimator view is revealed once the deploy elapsed time 0xf8519c (a logic value: DeployTime − the
+   * timer) reaches its delay: SpawnEffect via vt+0xc0 (not for a SpawnEffectOnce character other than
+   * summon index 0), the deploy filter starts and the alpha returns to 1; out of state 4 the alpha is
+   * restored every frame without an effect. Other views keep the deploy filter from their deploy start:
+   * single-clip buildings take it in 0x840d44's first branch while in state 4; actors not made by a
+   * cast's summon (0xd35ab4 with param 7 clear) are not traced further (A).
+   */
+  private updateViews(b: Battle, sim: number, alpha: number): void {
+    const m = this.art.manifest;
+    const live = new Set<number>();
+    for (const u of b.units) {
+      if (u.tower !== TOWER_NONE || u.state === ST_DEAD) continue;
+      live.add(u.id);
+      const v = this.views.get(u.id) ?? this.newView(u);
+      const waiting11 = u.state === ST_DEPLOYING && u.waitTicks > 0;
+      if (v.summon && v.wasWaiting && !waiting11 && u.state === ST_DEPLOYING) this.viewDelay(u, v, 0); // 0xf7f2c8 11 -> 4
+      v.wasWaiting = waiting11;
+      if (v.waiting) {
+        if (u.state !== ST_DEPLOYING) {
+          v.waiting = false; // 0x840d44: out of state 4 the alpha follows 0x83c0ac again
+        } else if (!waiting11 && deployElapsed(v.deployTime, (u.deployTicks - u.waitTicks) * 50) >= v.delay) {
+          v.waiting = false;
+          const ca = m.characters[u.def.name];
+          if (!ca?.spawnEffectOnce || v.index === 0) this.playOnActor(u, ca?.effects?.spawnEffect);
+          v.filterStart = sim;
+        }
+      } else if (v.filterStart === null && u.state === ST_DEPLOYING && !waiting11 && !u.tunneling
+        && (!v.summon || !m.characters[u.def.name]?.useAnimator)) {
+        // from the deploy start (state 4): views without an anim set take the filter in 0x840d44's first
+        // branch; the rest as before (not traced)
+        const total = v.summon ? v.deployTime / 50 : u.deployTotal;
+        v.filterStart = sim - ((total - (u.deployTicks - u.waitTicks)) * 50 + alpha * 50);
+      }
+    }
+    for (const id of this.views.keys()) if (!live.has(id)) this.views.delete(id);
   }
 
   /**
@@ -459,7 +862,7 @@ export class ArtWorld implements WorldRenderer {
       seen.add(u.id);
       const walker = u.def.speed > 0 && !u.isBuilding && u.tower === TOWER_NONE;
       const state = u.state === ST_DEPLOYING ? 4 : u.jumping ? 5 : u.locked ? 2 : walker ? 1 : 0;
-      this.sprites.set(u.id, animate(ca, u.team as Team, s, {
+      const af = animate(ca, u.team as Team, s, {
         state, dirX: u.dirX, dirY: u.dirY, id: u.id, walker, charge: u.charge,
         walk: u.walkMs, walkPrev: f.prevWalk.get(u.id) ?? u.walkMs,
         atk: u.atkTimer, atkPrev: f.prevAtk.get(u.id) ?? u.atkTimer, finish: u.finishMs,
@@ -469,10 +872,27 @@ export class ArtWorld implements WorldRenderer {
         hitSpeed: u.tower === TOWER_PRINCESS ? u.def.hitSpeed : undefined,
         pathFacing: this.pathFacing.get(u.id),
         jumpLeft: state === 5 ? this.jumpLeft(u, b.arena.w) : undefined,
-      }));
+      });
+      this.sprites.set(u.id, af);
+      // MoveEffect on the run clip's action_frame1 / 2 and the location's WalkEffect (0x840d44)
+      this.unitFx.step(this.fx, ca, { id: u.id, team: u.team, x: u.x, y: u.y, z: u.z, dirX: u.dirX, dirY: u.dirY, walker }, af,
+        (m.arena as { walkEffect?: string }).walkEffect);
+      // 0x840d44 -> 0x83e524: AttackStartEffect (de05a8 with 0: never the Special one; attack sequences
+      // of data +0x3d4 are not in the engine) when the swing flag rises, via vt+0xc0 at the actor's x, y,
+      // z (the tower princess: her tower's x, y at AttachedCharacterHeight); its buff-scaled speed
+      // (0x82ccf0, effect +0xb0) only changes the effect's sound (0x82bf10)
+      if (af?.attackStart) {
+        const eff = ca.effects?.attackStartEffect;
+        if (u.tower === TOWER_PRINCESS) {
+          if (eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: (m.towers.princess.attachedHeight as number | undefined) ?? 0 });
+        } else {
+          this.playOnActor(u, eff);
+        }
+      }
     }
     this.pathFacing.clear();
     for (const id of this.anims.keys()) if (!seen.has(id)) this.anims.delete(id);
+    this.unitFx.prune(this.fx, seen);
     // buildings drawn from one labelled clip (no anim set, no turret): the client's clip player
     this.clipFrames.clear();
     for (const u of b.units) {
@@ -543,12 +963,9 @@ export class ArtWorld implements WorldRenderer {
   }
 
   /** Engine state -> clip, angle and clip time. */
-  private unitState(u: Unit, f: Frame): { action: string; angle: number; ms: number; deployMs?: number } {
+  private unitState(u: Unit, f: Frame): { action: string; angle: number; ms: number } {
     const angle = Math.atan2(u.dirY, u.dirX);
-    if (u.state === ST_DEPLOYING) {
-      const elapsed = (u.deployTotal - u.deployTicks) * 50 + f.alpha * 50;
-      return { action: 'idle', angle, ms: 0, deployMs: elapsed };
-    }
+    if (u.state === ST_DEPLOYING) return { action: 'idle', angle, ms: 0 };
     const atk = this.attackPhase(u, f);
     if (atk !== null) return { action: 'attack', angle, ms: atk };
     if (u.moving) return { action: 'run', angle, ms: f.simMs + (u.id % 7) * 61 };

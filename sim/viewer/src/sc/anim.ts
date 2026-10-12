@@ -120,11 +120,13 @@ export interface AnimState {
   walkHold: number;
   /** seconds spent in the jump state 5 (view +0xa2c, float), JumpEnabled characters only */
   jumpT: number;
+  /** last frame's swing flag (view +0xa15): the attack clip was in its wind-up toward the action frame */
+  swing: boolean;
 }
 
 export function newAnimState(): AnimState {
   return { angle: -1, hold: 0, rot: 0, sign: 1, action: -1, actionStart: 0, stepToggle: 0, stopped: false,
-    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0 };
+    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false };
 }
 
 /** Logic inputs for one character view frame (native names in brackets). */
@@ -171,6 +173,12 @@ export interface AnimFrame {
   /** action slot (0 run, 1 idle, 2 attack, 3 charge, 4 jump) */
   action: number;
   key: string;
+  /**
+   * The swing flag rose this frame (0x840d44: the attack frame's wind-up flag of 0x84a9cc, set while
+   * the clip runs from the wind-up start to its action frame, against view +0xa15): the view plays
+   * AttackStartEffect (0x83e524 -> vt+0xc0)
+   */
+  attackStart?: boolean;
 }
 
 function slotArt(art: CharacterArt, team: 0 | 1, slot: number): [string, ActionArt] | null {
@@ -261,6 +269,7 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   s.action = slot;
   const frameDur = 1 / a.fps;
   let frame = t(i.clock / frameDur);
+  let swing = false;
 
   if (slot === 2) {
     const clipMs = t((a.frames * 1000) / a.fps);
@@ -277,6 +286,7 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
     if (af >= 0) {
       const f = attackFrame(!!art.animationsKeepLastFrame, false, i.hitSpeed ?? art.hitSpeed ?? 1000, time, a.frames, clipMs, af, extra);
       frame = f.frame;
+      swing = f.done;
       if (s.finishing && f.frame === 0) s.finishing = false;
     }
   } else if (slot === 4) {
@@ -333,7 +343,9 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   }
   frame %= a.frames;
   if (frame < 0) frame += a.frames;
-  return { export: `${a.export}_${dir.idx + 1}`, frame, mirror: dir.sign < 0, action: slot, key };
+  const attackStart = swing && !s.swing;
+  s.swing = swing;
+  return { export: `${a.export}_${dir.idx + 1}`, frame, mirror: dir.sign < 0, action: slot, key, attackStart };
 }
 
 /**

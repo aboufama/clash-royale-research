@@ -268,12 +268,19 @@ export class Announcements {
     this.prevDraw = drawMs !== 0;
   }
 
-  /** Drawn in stage px; `pos` = the arena centre in stage px (truncated). */
-  draw(r: ScRenderer, pos: [number, number]): void {
+  /**
+   * Drawn in stage px; `pos` = the arena centre in stage px (truncated). `part` draws only the crown-score
+   * prints (HUD init children, under the crown flights and everything added later) or only the timed
+   * announcements.
+   */
+  draw(r: ScRenderer, pos: [number, number], part: 'all' | 'prints' | 'timed' = 'all'): void {
     const m: [number, number, number, number, number, number] = [1, 0, 0, 1, pos[0], pos[1]];
     // the crown-score prints were added at HUD init, before every announcement
-    this.printEnemy?.draw(r, this.ui, m);
-    this.printPlayer?.draw(r, this.ui, m);
+    if (part !== 'timed') {
+      this.printEnemy?.draw(r, this.ui, m);
+      this.printPlayer?.draw(r, this.ui, m);
+    }
+    if (part === 'prints') return;
     const shown: { seq: number; draw: () => void }[] = [];
     const et = this.endTimer;
     if (et?.visible) {

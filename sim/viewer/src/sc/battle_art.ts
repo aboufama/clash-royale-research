@@ -7,7 +7,7 @@
 // SC space: the arena export's pixels (y down). See manifest.arena for the constants.
 
 import type { Col, Mat } from './math.ts';
-import { matMul, WHITE } from './math.ts';
+import { colMul, matMul, WHITE } from './math.ts';
 import { emptyLibrary, ScLibraryCache } from './library.ts';
 import type { ScLibrary, ShapeCmd } from './library.ts';
 import type { BuildingClip, CharacterArt, Manifest } from './manifest.ts';
@@ -20,6 +20,32 @@ import { newProjectileViewState, projectileMatrix, projectileView } from './proj
 import type { ProjectileViewFrame } from './projectile_view.ts';
 import { turretPose, viewAngle as nativeViewAngle } from './anim.ts';
 import { radialFillStrip } from './ui_port.ts';
+import { barFrame, healthBarState } from './unit_view.ts';
+import type { BarState, HealthBarFlags } from './unit_view.ts';
+
+/** One client-action health bar part as drawn (sc/unit_view.ts; component 0x853574). */
+export interface NewBarPartArt {
+  exp: string;
+  offset: [number, number];
+}
+
+/** A client-action health bar's frame for BattleArt.drawNewHealthBar. */
+export interface NewBarDraw {
+  /** component position x: NewHealthBarOffsetX + NewHealthBarOffsetXBlue / Red (0xde1668, own / enemy) */
+  base: number;
+  badge: NewBarPartArt | null;
+  badgeFrame: number;
+  showBadge: boolean;
+  bar: NewBarPartArt | null;
+  showBar: boolean;
+  level: number;
+  hpPct: number;
+  shieldPct: number;
+  /** view +0x470 */
+  flash: number;
+  /** root x kept from the last frame */
+  rootX: number;
+}
 import type { ActionName, UnitSprite } from './units.ts';
 
 export type Team = 0 | 1;
@@ -791,26 +817,266 @@ export class BattleArt {
   }
 
   /**
-   * Classic health bar (health_bars.csv: hp_player_* / hp_enemy_*). The `bar` child's frame 0 is
-   * full and frame 99 empty; the client picks 99 - floor(hp * 99 / maxHp), clamped (0x83c268).
+   * Crown tower health bar (health_bars.csv Tower / Summoner: ShowOwnAlways and ShowEnemyAlways, the
+   * NoDamage export equals the normal one, so the client always shows it). Clip setup 0x83f7a8 / 0x836e58
+   * and per-frame 0x83c268 as in drawUnitHealthBar; hpNumber shows the hitpoints (ShowHealthNumber).
    */
-  drawHealthBar(r: ScRenderer, type: string, team: Team, px: number, py: number, frac: number,
-    level?: number, hp?: number): void {
+  drawTowerHealthBar(r: ScRenderer, type: string, team: Team, px: number, py: number, hp: number, maxHp: number,
+    level?: number, hpText?: number, flash = 0): void {
     const hb = this.manifest.hud.healthBars[type];
     if (!hb) return;
     const exp = (team === 0 ? hb.playerExportName : hb.enemyExportName) as string | undefined;
     if (!exp) return;
+    this.drawBarClip(r, exp, px, py, healthBarState({ own: team === 0, flags: hb as HealthBarFlags, hp, maxHp, shield: 0,
+      maxShield: 0, lifeTime: 0, hidden: false, swapped: true }), level, hpText, flash);
+  }
+
+  /** Gallery helper (sc-test.ts): the normal bar of `type` at fill fraction `frac` (hp / max = frac · 10000 / 10000). */
+  drawHealthBar(r: ScRenderer, type: string, team: Team, px: number, py: number, frac: number, level?: number, hp?: number): void {
+    const hb = this.manifest.hud.healthBars[type];
+    const exp = (team === 0 ? hb?.playerExportName : hb?.enemyExportName) as string | undefined;
+    if (!exp) return;
+    const h = Math.round(Math.max(0, Math.min(1, frac)) * 10000);
+    this.drawBarClip(r, exp, px, py, { visible: true, swapped: true, hp: h, max: 10000, shieldBar: false, shieldUp: false }, level, hp);
+  }
+
+  /**
+   * Troop / building health bar as the character view keeps it (sc/unit_view.ts healthBarState, 0x83c268):
+   * the NoDamage export (the level badge) until the first damage, then the normal bar for good; `own` = the
+   * viewing player's actor (0x84ddcc) picks the Player / Enemy exports.
+   */
+  drawUnitHealthBar(r: ScRenderer, type: string, own: boolean, px: number, py: number, st: BarState, level?: number,
+    hpText?: number, flash = 0): void {
+    const hb = this.manifest.hud.healthBars[type];
+    if (!hb || !st.visible) return;
+    const exp = (st.swapped ? (own ? hb.playerExportName : hb.enemyExportName)
+      : (own ? hb.noDamagePlayerExportName : hb.noDamageEnemyExportName)) as string | undefined;
+    if (!exp) return;
+    this.drawBarClip(r, exp, px, py, st, level, hpText, flash);
+  }
+
+  /**
+   * Client-action health bar (sc/unit_view.ts newBarFrame / newBarChoose; component update 0x853574)
+   * drawn at the view's bar holder `px, py` (0x84f740: the classic bar's anchor). Root sprite x =
+   * −½ · width of the shown bar part (0x123c9e0, its hidden children left out), else `rootX` (kept from
+   * the last frame with a bar part). In the root, at the component position (base, 0):
+   *   - the badge at ⌊pos + its offset⌋ (setPosition 0x123c550 floors), `level` = the level, its
+   *     snappoint_for_hp_bar hidden (0x8530e0); the anchor = pos + offset + (trunc(left + tx),
+   *     trunc(top + ty)) of that text field (rect 0x126f52c, instance tx / ty; root scale 1, vt+0x48 /
+   *     vt+0x50 read the matrix a / d);
+   *   - the bar behind it (addChildAt 0, 0x853204) at ⌊anchor + its offset + (−trunc(left + tx),
+   *     trunc(top + ty)) of its snappoint_for_level_bg⌋: `bar` on clamp(n − 1 − ⌊hp%·99 / 100⌋), `bar_temp`
+   *     likewise, `bar_shield` shown while shield% > 0 with its own `bar` on clamp(m − 1 − ⌊shield%·99 /
+   *     100⌋); additive colour (flash f = view +0x470, heal flash 0): without shield the HP `bar` gets
+   *     (f, f, f)·255, with shield the HP bar gets 0 and the shield's `bar` (f, f, f)·255.
+   * Returns the root x.
+   */
+  drawNewHealthBar(r: ScRenderer, px: number, py: number, d: NewBarDraw): number {
     const lib = this.lib(this.manifest.hud.sc);
-    const barFrame = Math.max(0, Math.min(99, 99 - Math.floor(frac * 99 + 1e-9)));
+    const pos: [number, number] = [d.base, 0];
+    let ax = pos[0], ay = pos[1];
+    let badgeAt: [number, number] | null = null;
+    if (d.badge) {
+      const bx = pos[0] + d.badge.offset[0], by = pos[1] + d.badge.offset[1];
+      badgeAt = [Math.floor(bx), Math.floor(by)];
+      ax = bx; ay = by;
+      const sp = this.childText(lib, d.badge.exp, 'snappoint_for_hp_bar');
+      if (sp) { ax = Math.trunc(sp.rect[0] + sp.tx) + bx; ay = Math.trunc(sp.rect[1] + sp.ty) + by; }
+    }
+    let rootX = d.rootX;
+    let barAt: [number, number] | null = null;
+    let hpFrame = 0, shieldFrame = 0, tempFrame = 0;
+    const shieldShown = d.shieldPct > 0;
+    if (d.bar) {
+      const exp = d.bar.exp;
+      const n = this.childFrameCount(lib, exp, 'bar');
+      const step = Math.trunc((d.hpPct * 99) / 100);
+      const clampF = (last: number, v: number) => (v < 1 ? 0 : v >= last ? last : v);
+      hpFrame = clampF(n - 1, n - 1 - step);
+      const m = this.nestedFrameCount(lib, exp, 'bar_shield', 'bar');
+      shieldFrame = clampF(m - 1, m - 1 + Math.trunc((d.shieldPct * -99) / 100));
+      const t = this.childFrameCount(lib, exp, 'bar_temp');
+      tempFrame = clampF(t - 1, t - 1 - step);
+      let sx = 0, sy = 0;
+      const sp = this.childText(lib, exp, 'snappoint_for_level_bg');
+      if (sp) { sx = -Math.trunc(sp.rect[0] + sp.tx); sy = Math.trunc(sp.rect[1] + sp.ty); }
+      barAt = [Math.floor(ax + d.bar.offset[0] + sx), Math.floor(ay + d.bar.offset[1] + sy)];
+      rootX = d.showBar ? -0.5 * this.barPartWidth(lib, exp, hpFrame, shieldShown ? shieldFrame : -1, tempFrame) : 0;
+    }
+    const ox = px + rootX, oy = py;
+    if (d.bar && d.showBar && barAt) {
+      const f = Math.trunc(Math.min(1, Math.max(0, d.flash)) * 255);
+      const add: Col = [1, 1, 1, 1, f, f, f];
+      this.drawBarPart(r, lib, d.bar.exp, ox + barAt[0], oy + barAt[1], hpFrame, shieldShown ? shieldFrame : -1, tempFrame,
+        shieldShown ? WHITE : add, shieldShown ? add : WHITE);
+    }
+    if (d.badge && d.showBadge && badgeAt) {
+      r.draw(lib, d.badge.exp, d.badgeFrame, [1, 0, 0, 1, ox + badgeAt[0], oy + badgeAt[1]], WHITE, {
+        childFrame: d.badgeFrame, named: { snappoint_for_hp_bar: { hide: true } }, text: { level: String(d.level) },
+      });
+    }
+    return rootX;
+  }
+
+  /** A named text-field child on frame 0 of an export: its rect and instance translation. */
+  private childText(lib: ScLibrary, exp: string, name: string): { rect: [number, number, number, number]; tx: number; ty: number } | null {
+    const clip = lib.clip(exp);
+    if (!clip) return null;
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const ci = clip.elements[i * 3];
+      if (clip.names?.[ci] !== name) continue;
+      const tf = lib.textFields.get(clip.children[ci]);
+      if (!tf) return null;
+      const mi = clip.elements[i * 3 + 1];
+      const bm = lib.banks[clip.bank].m;
+      return { rect: tf.rect, tx: mi >= 0 ? bm[mi * 6 + 4] : 0, ty: mi >= 0 ? bm[mi * 6 + 5] : 0 };
+    }
+    return null;
+  }
+
+  /** Frame count of `inner` inside the named child `outer` of an export (frame 0 of both; 0 when absent). */
+  private nestedFrameCount(lib: ScLibrary, exp: string, outer: string, inner: string): number {
+    const clip = lib.clip(exp);
+    if (!clip) return 0;
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const ci = clip.elements[i * 3];
+      if (clip.names?.[ci] !== outer) continue;
+      const o = lib.clips.get(clip.children[ci]);
+      if (!o) return 0;
+      for (let j = o.frameStart[0]; j < o.frameStart[1]; j++) {
+        const cj = o.elements[j * 3];
+        if (o.names?.[cj] === inner) return lib.clips.get(o.children[cj])?.frameCount ?? 1;
+      }
+      return 0;
+    }
+    return 0;
+  }
+
+  /**
+   * One frame-0 child of a bar part export at a time, so its two `bar` clips can take different frames
+   * and colours: `bar` (hpFrame, hpAdd), `bar_temp` (tempFrame), `bar_shield` (hidden when shieldFrame
+   * < 0; its `bar` on shieldFrame with shieldAdd), the empty snappoint text left out.
+   */
+  private drawBarPart(r: ScRenderer, lib: ScLibrary, exp: string, x: number, y: number, hpFrame: number, shieldFrame: number,
+    tempFrame: number, hpAdd: Readonly<Col>, shieldAdd: Readonly<Col>): void {
+    const clip = lib.clip(exp);
+    if (!clip) return;
+    const bank = lib.banks[clip.bank];
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const ci = clip.elements[i * 3], mi = clip.elements[i * 3 + 1], coi = clip.elements[i * 3 + 2];
+      const cid = clip.children[ci];
+      if (lib.modifiers.has(cid)) continue; // (no bar part export uses masks)
+      const name = clip.names?.[ci] ?? null;
+      if (name === 'snappoint_for_level_bg') continue;
+      const m: Mat = mi >= 0 ? [bank.m[mi * 6], bank.m[mi * 6 + 1], bank.m[mi * 6 + 2], bank.m[mi * 6 + 3],
+        bank.m[mi * 6 + 4] + x, bank.m[mi * 6 + 5] + y] : [1, 0, 0, 1, x, y];
+      const c: Col = coi >= 0 ? [bank.c[coi * 7], bank.c[coi * 7 + 1], bank.c[coi * 7 + 2], bank.c[coi * 7 + 3],
+        bank.c[coi * 7 + 4], bank.c[coi * 7 + 5], bank.c[coi * 7 + 6]] : [...WHITE] as Col;
+      if (name === 'bar') r.drawId(lib, cid, hpFrame, m, colMul(c, hpAdd), { childFrame: hpFrame });
+      else if (name === 'bar_temp') r.drawId(lib, cid, tempFrame, m, c, { childFrame: tempFrame });
+      else if (name === 'bar_shield') {
+        if (shieldFrame >= 0) r.drawId(lib, cid, 0, m, c, { childFrame: 0, named: { bar: { frame: shieldFrame, color: [...shieldAdd] as Col } } });
+      } else r.drawId(lib, cid, 0, m, c, { childFrame: 0 });
+    }
+  }
+
+  /** Width (0x123c9e0) of a bar part export as shown: frame-0 shapes, `bar` / `bar_temp` / `bar_shield`'s
+   * `bar` on their frames, `bar_shield` left out when hidden (shieldFrame < 0), text fields empty. */
+  private barPartWidth(lib: ScLibrary, exp: string, hpFrame: number, shieldFrame: number, tempFrame: number): number {
+    const id = lib.exports.get(exp);
+    if (id === undefined) return 0;
+    const b = [Infinity, -Infinity];
+    const walk = (cid: number, frame: number, m: number[], top: boolean, inShield: boolean, depth: number): void => {
+      if (depth > 16) return;
+      const sh = lib.shapes.get(cid);
+      if (sh) {
+        for (const cmd of sh) {
+          const v = cmd.verts;
+          for (let i = 0; i < v.length; i += 4) {
+            const xx = m[0] * v[i] + m[2] * v[i + 1] + m[4];
+            if (xx < b[0]) b[0] = xx;
+            if (xx > b[1]) b[1] = xx;
+          }
+        }
+        return;
+      }
+      const clip = lib.clips.get(cid);
+      if (!clip) return;
+      const f = Math.max(0, Math.min(clip.frameCount - 1, frame));
+      const bm = lib.banks[clip.bank].m;
+      for (let i = clip.frameStart[f]; i < clip.frameStart[f + 1]; i++) {
+        const ci = clip.elements[i * 3], mi = clip.elements[i * 3 + 1];
+        const name = clip.names?.[ci] ?? null;
+        let fr = 0, sh2 = inShield;
+        if (top && name === 'bar_shield') { if (shieldFrame < 0) continue; sh2 = true; }
+        if (name === 'bar') fr = inShield ? shieldFrame : top ? hpFrame : 0;
+        if (top && name === 'bar_temp') fr = tempFrame;
+        const cm = mi >= 0 ? [bm[mi * 6], bm[mi * 6 + 1], bm[mi * 6 + 2], bm[mi * 6 + 3], bm[mi * 6 + 4], bm[mi * 6 + 5]] : [1, 0, 0, 1, 0, 0];
+        const mm = [m[0] * cm[0] + m[2] * cm[1], m[1] * cm[0] + m[3] * cm[1], m[0] * cm[2] + m[2] * cm[3],
+          m[1] * cm[2] + m[3] * cm[3], m[0] * cm[4] + m[2] * cm[5] + m[4], m[1] * cm[4] + m[3] * cm[5] + m[5]];
+        walk(clip.children[ci], fr, mm, false, sh2, depth + 1);
+      }
+    };
+    walk(id, 0, [1, 0, 0, 1, 0, 0], true, false, 0);
+    return b[0] <= b[1] ? b[1] - b[0] : 0;
+  }
+
+  /** Health bar clip children the client hides at creation (0x83f7a8) and every frame (`prestige`, 0x83c268). */
+  private static readonly BAR_HIDDEN = ['buff', 'ammo', 'chef_upgrade', 'chef_upgrade_shield', 'downgrade',
+    'downgrade_shield', 'prestige'];
+
+  /**
+   * One health bar clip on its last frame (0x83f7a8 / 0x836e58 stop both clips there): the `bar` child
+   * on clamp(n − 1 − ⌊hp·99 / max⌋, 0, n − 1) (n = its frame count; 0x83c268 sets the frame on the
+   * normal clip's `bar`), `level` = the level, `hpNumber` → `txt` = the hitpoints when given; a shield
+   * bar's `base` shows `shield` / `shield_champion` while the shield lasts.
+   */
+  private drawBarClip(r: ScRenderer, exp: string, px: number, py: number, st: BarState, level?: number, hpText?: number,
+    flash = 0): void {
+    const lib = this.lib(this.manifest.hud.sc);
+    const named: NonNullable<DrawOptions['named']> = {};
+    for (const n of BattleArt.BAR_HIDDEN) named[n] = { hide: true };
+    const n = this.childFrameCount(lib, exp, 'bar');
+    if (n > 0) {
+      named.bar = { frame: barFrame(st.hp, st.max, n) };
+      // 0x83c268: the normal clip's `bar` (+0x998) takes the additive colour (f, max(f, heal), f)·255 every
+      // frame (f = view +0x470, the heal flash +0xa00 has no supported source); MovieClip vt+0x138 is
+      // 0x1252f58 (false), so the colour always applies
+      if (st.swapped && flash > 0) {
+        const a = Math.trunc(Math.min(1, flash) * 255);
+        named.bar.color = [1, 1, 1, 1, a, a, a];
+      }
+    }
+    if (st.shieldBar && this.childFrameCount(lib, exp, 'base') > 0) {
+      // the base's `shield` child (all baked shield bars have one; else its `level` would be toggled)
+      named.shield = { hide: !st.shieldUp };
+      named.shield_champion = { hide: !st.shieldUp };
+    }
     const text: Record<string, string> = {};
     if (level !== undefined) text.level = String(level);
-    if (hp !== undefined) text.hpNumber = String(Math.max(0, Math.round(hp)));
-    const frames = lib.frameCount(exp);
-    r.draw(lib, exp, frames - 1, [1, 0, 0, 1, px, py], WHITE, {
-      childFrame: 0,
-      named: { bar: { frame: barFrame }, downgrade: { hide: true }, chef_upgrade: { hide: true } },
-      text,
-    });
+    if (hpText !== undefined) text.hpNumber = String(Math.max(0, Math.round(hpText)));
+    r.draw(lib, exp, lib.frameCount(exp) - 1, [1, 0, 0, 1, px, py], WHITE, { childFrame: 0, named, text });
+  }
+
+  private childFrames = new Map<string, number>();
+
+  /** Frame count of an export's named child on frame 0 (0 when absent; 1 for shapes and text). */
+  private childFrameCount(lib: ScLibrary, exp: string, name: string): number {
+    const key = `${lib.name}/${exp}/${name}`;
+    const hit = this.childFrames.get(key);
+    if (hit !== undefined) return hit;
+    let v = 0;
+    const clip = lib.clip(exp);
+    if (clip) {
+      for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+        const ci = clip.elements[i * 3];
+        if (clip.names?.[ci] !== name) continue;
+        v = lib.clips.get(clip.children[ci])?.frameCount ?? 1;
+        break;
+      }
+    }
+    if (clip) this.childFrames.set(key, v);
+    return v;
   }
 
   /** Rectangle [x0, y0, x1, y1] (export space) of a named text-field child — the HUD uses

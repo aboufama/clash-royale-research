@@ -8,7 +8,12 @@
 //   ringStrip            radius indicator mesh (0xcf0838 -> 0xcf152c, texture image/range.png)
 //   DeployTimer          troopDeployTimer clock (ctor 0x8d9748, update 0x8d9ad0)
 //   uiEase               value ease with overshoot (0x1433fb0)
-//   ElixirBar            HUD_player elixir bar state (0x8da088 setup, 0x8dbebc update, bar 0x8b2368)
+//   ElixirBar            HUD_player elixir bar state (0x8da088 setup, 0x8dbebc update) and its refund flash
+//   UiBar, refundBar     one stretched bar of the elixir bar (0x8b2368 / 0x8b2490 / 0x8b2408 / 0x8b2520)
+//   barTipX              bar_tip position after a change (0x8dbebc)
+//   elixirDropXs         Elixir_bar_drop_anim of a spend (0x85ada8 -> 0x8d144c -> 0x8dcbf4)
+//   elixirGainText/Export, PanelFlash  elixir gain floats (battle screen vt+0x398 0xbe4a8c, 0x8dce48)
+//   regenBadgeText       elixirRegen badge text (0x8d38c4 -> 0x8d5158)
 //   cardSlot             hand card placement in cardArea (0x8da088)
 //   HandCard, cardEntry  hand card cycle: hide after a play, deal from the next card (0x8e0b84, 0x8e1408)
 //   nextCardTimer        next card grayscale + NextSpellTimer while the hand timer runs (0x8dc37c)
@@ -453,9 +458,15 @@ export function uiEase(from: number, to: number, t: number, a: number, amp: numb
  * is replaced and a 0.255 s bounce starts (number scale 1 +- 0.08 sin(36.96 t)), the bar easing from
  * (n - 1) / max to n / max with uiEase(t' = 1 - 3.92 * timer, a = 0.25, amp = 0.02, b = 0.75); bar_tip
  * replays at the new end. bar_flow shows (and elixir_warning plays) when full.
+ * Refund flash: when whole elixir rises by more than 1 (a play that failed at its commit gives its
+ * reserved elixir back; also the first update, since the setup 0x8da088 sets +0x260 = -1), bar_refund
+ * (+0x1f0) shows the refund bar (+0x1c0: bar_body_refund / bar_end_refund) from the old count to the
+ * new one (x = old * len / max - 7, length = len / max * rise, fill 1) and fades over 0.25 s: timer
+ * +0x214 = 0.25 at the rise, then each frame t = max(0, t - dt), alpha = 1 - (1 - 4 t)^2 (0x123cbc0),
+ * hidden on the frame after t reached 0.
  */
 export class ElixirBar {
-  last = 0; // +0x260
+  last = -1; // +0x260 (0x8da088: -1)
   timer = 0; // +0x218
   fill = 0; // main bar fraction (+0x1b0 helper)
   ghost = 0; // ghost fraction (+0x1b8)
@@ -466,6 +477,17 @@ export class ElixirBar {
   tipAt: number | null = null;
   /** set when bar_flow / elixir_warning restart (became full) */
   flowStarted = false;
+  /** bar_refund visible (+0x1f0 +8) */
+  refundShown = false;
+  /** refund timer (+0x214) */
+  refundT = 0;
+  /** bar_refund alpha byte (0x123cbc0) */
+  refundAlpha = 0;
+  /** whole elixir before the last refund (the refund bar's start, 0x8b2520) and the rise (+0x208) */
+  refundFrom = 0;
+  refund = 0;
+  /** a refund started this frame (place the refund bar) */
+  refundStarted = false;
 
   readonly max: number;
 
@@ -489,12 +511,166 @@ export class ElixirBar {
       this.textScaleX = this.textScaleY = 1;
     }
     this.tipAt = null;
-    if (whole - this.last !== 0) {
+    this.refundStarted = false;
+    const rise = whole - this.last;
+    if (rise !== 0) {
+      if (rise > 1) {
+        this.refundStarted = true;
+        this.refund = rise;
+        this.refundFrom = this.last;
+        this.refundShown = true;
+        this.refundT = 0.25;
+      }
       this.last = whole;
       this.timer = 0.255;
       this.tipAt = Math.max(0, Math.min(1, whole / max));
     }
+    if (this.refundShown) {
+      if (this.refundT > 0) {
+        const t = Math.max(0, f32(this.refundT - dt));
+        this.refundT = t;
+        const k = f32(f32(t * -4) + 1);
+        const a = f32(1 - f32(k * k));
+        this.refundAlpha = a < 0 ? 0 : Math.trunc(f32((a > 1 ? 1 : a) * 255));
+      } else {
+        this.refundShown = false;
+      }
+    }
   }
+}
+
+/**
+ * One bar of the elixir bar (object 0x8b2368, 0x30 bytes): a body clip stretched in x and an optional
+ * end cap at the body's right edge. The constructor 0x8b2368(len, body, end) keeps the body's width
+ * (+0x18, 0x123c9e0: its bounds in the parent's space), its scale x (+0x1c, 0x123cc04), len (+0x20),
+ * the end's width (+0x24, 0 without one) and fill 0 (+0x28). Every setter re-applies
+ *   body scale x = ((len - end width) * fill * scale x) / width        (0x123c570)
+ * and puts the end at the right edge of the body's bounds in the parent's space (0x123c5ac). setFill
+ * 0x8b2490, setLength 0x8b2408, setX 0x8b2520 (the body's x); 0x8b2400 = len, 0x8b2514 = body x.
+ * Body: its x, scale x and local bounds x0..x1 (in its own space, before its matrix).
+ */
+export class UiBar {
+  len: number; // +0x20
+  readonly endW: number; // +0x24
+  fill = 0; // +0x28
+  bodyX: number; // body +0x20
+  bodyScale: number; // body +0x10
+  private readonly w0: number; // +0x18
+  private readonly s0: number; // +0x1c
+  private readonly lx0: number;
+  private readonly lx1: number;
+
+  constructor(len: number, body: { x: number; scale: number; x0: number; x1: number }, endW = 0) {
+    this.len = len;
+    this.endW = endW;
+    this.bodyX = body.x;
+    this.bodyScale = body.scale;
+    this.s0 = body.scale;
+    this.lx0 = body.x0;
+    this.lx1 = body.x1;
+    this.w0 = Math.abs(body.scale) * (body.x1 - body.x0);
+  }
+
+  private apply(): void {
+    this.bodyScale = this.w0 ? f32(f32(f32(f32(this.len - this.endW) * this.fill) * this.s0) / this.w0) : 0;
+  }
+
+  setFill(f: number): void { this.fill = f; this.apply(); }
+
+  setLength(len: number): void { this.len = len; this.apply(); }
+
+  setX(x: number): void { this.bodyX = x; this.apply(); }
+
+  /** x of the end cap: the right edge of the body's bounds in the parent's space. */
+  get endX(): number {
+    const a = this.bodyX + this.bodyScale * this.lx0, b = this.bodyX + this.bodyScale * this.lx1;
+    return a > b ? a : b;
+  }
+}
+
+/**
+ * The refund bar of a refund (0x8dbebc): setX(old * (len / max) - 7), setLength((len / max) * rise),
+ * setFill(1), `len` = the main bar's length (0x8b2400).
+ */
+export function refundBar(bar: UiBar, mainLen: number, max: number, from: number, rise: number): void {
+  const per = f32(mainLen / max);
+  bar.setX(f32(f32(f32(from) * per) - 7));
+  bar.setLength(f32(per * rise));
+  bar.setFill(1);
+}
+
+/** bar_tip x after a change of whole elixir (0x8dbebc): clamp(whole / max, 0, 1) * len + 2 + body x. */
+export function barTipX(whole: number, max: number, len: number, bodyX: number): number {
+  const q = f32(whole / max);
+  const k = q >= 0 ? (q <= 1 ? q : 1) : 0;
+  return f32(f32(f32(k * len) + 2) + bodyX);
+}
+
+/**
+ * Elixir_bar_drop_anim of a spend (0x8dcbf4 from the unit view's card-deploy handler 0x85ada8 ->
+ * 0x8d144c): `n` = the play's elixir cost, one clip each, the first at the elixir_bar's position in
+ * HUD_player (+0x1a8 +0x20 / +0x24), each next one `w` further right (0x123c9e0: the clip's width at
+ * its first frame); each plays 0..frames-1 once (0x1241f50) as a HUD_player child (elixir_bar +0x38)
+ * and the HUD_player update 0x8db8e0 deletes it once it stopped (+0x4d == 2). Returns the x of each.
+ */
+export function elixirDropXs(n: number, barX: number, w: number): number[] {
+  const xs: number[] = [];
+  let x = barX;
+  for (let i = 0; i < n; i++) { xs.push(x); x = f32(w + x); }
+  return xs;
+}
+
+/**
+ * Text of an elixir gain float (battle screen listener vt+0x398 0xbe4a8c): amount in 1/10000 elixir;
+ * "%d" of amount / 10000 when amount % 10000 is within +-999, else "%d.%d" with the tenths
+ * ((amount % 10000) / 1000), both truncated toward zero.
+ */
+export function elixirGainText(amount: number): string {
+  const whole = Math.trunc(amount / 10000);
+  const rem = amount - whole * 10000;
+  if (rem + 999 >= 0 && rem + 999 < 1999) return String(whole);
+  return `${whole}.${Math.trunc(rem / 1000)}`;
+}
+
+/**
+ * Export of an elixir gain float (0xbe4a8c): elixir_float_txt for side -1 (the Elixir Collector's
+ * collection, 0xf800bc), else elixir_float_txt_blue when the side's parity is the HUD player's team
+ * (0xd39718 of the home player), else elixir_float_txt_red.
+ */
+export function elixirGainExport(side: number, homeTeam: number): string {
+  if (side === -1) return 'elixir_float_txt';
+  return (side < 0 ? -(side & 1) : side & 1) === homeTeam ? 'elixir_float_txt_blue' : 'elixir_float_txt_red';
+}
+
+/**
+ * HUD_player gain flash: 0xbe4a8c (side >= 0) calls 0x8dce48 on the receiving player's panel, which
+ * sets +0x27c = 0.4; each HUD_player update 0x8db8e0 does t = max(0, t - dt) and gives the HUD_player
+ * clip the additive colour (r, g, b) = (int)(min(1, t / 2) * 255).
+ */
+export class PanelFlash {
+  t = 0; // +0x27c
+  add = 0; // HUD_player +0xd..+0xf
+
+  start(): void { this.t = f32(0.4); }
+
+  update(dt: number): void {
+    const t = Math.max(0, f32(this.t - dt));
+    this.t = t;
+    const v = f32(t * 0.5);
+    this.add = v >= 0 ? Math.trunc(f32((v <= 1 ? v : 1) * 255)) : 0;
+  }
+}
+
+/**
+ * The elixir speed badge `elixirRegen` of HUD_topRight / HUD_topRight_overtime (the HUD time update
+ * 0x8d38c4, not while the battle is over or on its first update): hidden while the phase's visible rate
+ * (x10, 0xd56780) is below 11; otherwise when the rate changed or the badge is hidden, 0x8d5158 sets its
+ * child `elixir`'s txt to "x%d" (rate / 10) or "x%d.%d" (rate / 10, rate % 10), shows it and plays it
+ * 0..frames-1 once.
+ */
+export function regenBadgeText(rate10: number): string {
+  const q = Math.trunc(rate10 / 10), r = rate10 - q * 10;
+  return r === 0 ? `x${q}` : `x${q}.${r}`;
 }
 
 // -- hand ------------------------------------------------------------------------------------------

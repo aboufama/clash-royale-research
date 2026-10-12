@@ -90,6 +90,8 @@ class App {
   speed = 1;
   private statusAt = 0;
   acc = 0;
+  /** visual ms run since the battle ended (the engine is not stepped any more) */
+  afterEnd = 0;
   last = 0;
   seed = 1;
   infinite = false;
@@ -161,6 +163,7 @@ class App {
     this.frame.cam = this.cam;
     this.frame.snapshot(this.battle);
     this.acc = 0;
+    this.afterEnd = 0;
     this.drag = null;
     this.held = null;
     this.ui?.reset();
@@ -192,11 +195,17 @@ class App {
         this.stepOnce();
         this.acc -= TICK_MS;
         n++;
+        if (this.battle.ended) break;
       }
+    } else if (!this.paused) {
+      // After the result the engine stays on its last tick, but the client keeps running the battle
+      // layer every frame (battle screen update 0xbe1d3c -> 0x856f28: views, effects, clouds, shake; the
+      // end screen follows the location's EndScreenDelay): the visual clock runs on past the last tick.
+      this.afterEnd += dt * this.speed;
     }
     this.frame.alpha = this.paused ? 1 : Math.min(1, this.acc / TICK_MS);
     this.frame.now = t;
-    this.frame.simMs = this.battle.tick * TICK_MS + this.frame.alpha * TICK_MS;
+    this.frame.simMs = this.battle.tick * TICK_MS + this.frame.alpha * TICK_MS + this.afterEnd;
     this.updatePreview();
     this.world.draw(this.frame);
     this.overlay.draw(this.frame);
@@ -237,6 +246,10 @@ class App {
       if (!ui) return;
       e.preventDefault();
       const [bx, by] = this.boardXY(e);
+      // result screen OK (sc/result.ts): leave the battle; the client returns home, here a new battle starts
+      if (ui.screens.okAt(bx, by, ui.layout)) { this.newBattle(); return; }
+      // battle input is blocked by the intro before its actionFrame and once the battle is over (0xbe4400)
+      if (ui.screens.inputBlocked) return;
       const [sx, sy] = ui.hud.toStage(bx, by);
       const slot = ui.hud.cardAt(sx, sy);
       const team = ui.hud.team;

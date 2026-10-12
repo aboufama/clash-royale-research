@@ -23,7 +23,8 @@ is pre-rendered. Ids are the original object ids.
             multipliers 0..1, adds 0..255 (sc2.Color semantics)
     exports {name: id}
     mods    {id: 38 | 39 | 40}  mask begin / masked content begin / mask end
-    tf      {id: {font, text, rect: [l, t, r, b], color, outline, size, align, flags}}
+    tf      {id: {font, text, rect: [l, t, r, b], color, outline, bytes: [flags, align, size, 0],
+                  lead?, bend?}}  (TextField struct, 0x126c030; lead / bend only when non-zero)
 
 Libraries are tree-shaken to the exports the manifest needs, matrix/color banks are
 compacted, and atlases that would be mostly unused are repacked (exact texel copies with a
@@ -111,7 +112,8 @@ CHAR_EFFECT_FIELDS = ("SpawnEffect", "DeathEffect", "AttackStartEffect", "Damage
                       "IngamePathfindEffect", "ProjectileEffectSpecial", "AttackStartEffect2", "LandingEffect",
                       "ReflectedAttackEffect", "ReflectedAttackTargetedEffect", "BuffWhenNotAttackingEffect")
 CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim", "DeathSpawnDeployBaseAnim")
-PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect")
+PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect",
+                      "OverrideShooterProjectileEffect")
 
 # Common UI pieces (sc/ui_common.sc: 9-slice buttons and popup backgrounds) for the simulator's own
 # side panel, so its controls use the game's art.
@@ -150,6 +152,15 @@ HUD_EXPORTS = (
     # popup manager floater text (0x88cb54: "Not enough Elixir!" of a play rejected for elixir, 0xbe7184)
     "floater_text",
 )
+# Crown flight clips of the HUD (sc/effects.sc, 0x1a5e908): 0x8d5804 -> 0x8dd754 makes one per crown tower.
+HUD_FLY_EXPORTS = ("star_appear", "star_appear_enemy")
+# Battle intro banner (0xbdfa8c -> 0x8c81b8; 0x8c8038 picks battle_intro_banners for a 1v1 battle) and the
+# banner object's clips (0x870afc: battle_banner with the default decoration), sc/ui_battle_banners.sc
+INTRO_SC = "sc/ui_battle_banners.sc"
+INTRO_EXPORTS = ("battle_intro_banners", "battle_banner", "banner_bg_default_green", "banner_fg_default_green")
+# End-of-battle result screen (0xbe0100 -> 0x8bc564; 0x8bcab8 picks pvp_battle_end_new for a 1v1 battle)
+RESULT_SC = "sc/ui_battle_end.sc"
+RESULT_EXPORT = "pvp_battle_end_new"
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
              "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
@@ -444,14 +455,23 @@ def export_library(src: ScSource, export_names: set[str] | None, out_dir: Path, 
         tf = sc.textfields.get(o)
         if tf is None:
             continue
-        # struct TextField: id, ?, font_ref, l, t, r, b, color, outline, text_ref, ?, flags.., size, align..
-        tid, _u0, font_ref, l, t, r, b, color, outline, text_ref, _u1, b0, b1, b2, b3, _u2 = tf
+        # struct TextField as the client's loader 0x126c030 reads it: id, (unused), font_ref, l, t, r, b,
+        # color, outline, text_ref, style_ref, flags, align, size, (unused), then an int whose low int16
+        # is the leading (def +0x7c) and high int16 the bend angle (def +0x7e)
+        tid, _u0, font_ref, l, t, r, b, color, outline, text_ref, _u1, b0, b1, b2, b3, lead_bend = tf
         s = sc.strings
 
         def sref(i):
             return s[i] if 0 <= i < len(s) else ""
-        tf_out[str(o)] = {"font": sref(font_ref), "text": sref(text_ref), "rect": [l, t, r, b],
-                          "color": color, "outline": outline, "bytes": [b0, b1, b2, b3]}
+        d_tf = {"font": sref(font_ref), "text": sref(text_ref), "rect": [l, t, r, b],
+                "color": color, "outline": outline, "bytes": [b0, b1, b2, b3]}
+        lead = ((lead_bend & 0xFFFF) ^ 0x8000) - 0x8000
+        bend = (((lead_bend >> 16) & 0xFFFF) ^ 0x8000) - 0x8000
+        if lead:
+            d_tf["lead"] = lead
+        if bend:
+            d_tf["bend"] = bend
+        tf_out[str(o)] = d_tf
 
     lib = {"v": 1, "name": src.name, "tex": tex_out, "shapes": shapes_out, "clips": clips_out,
            "banks": banks_out, "exports": {n: sc.exports[n] for n in names}}
@@ -764,7 +784,9 @@ class Baker:
                   "DeployDelay", "Speed", "HitSpeed", "LoadTime", "Range", "AnimationsKeepLastFrame",
                   "TryToFinishAttackAnimation", "TryToFinishAttackAnimationBeforeNextAttack", "DontStopMoveAnim",
                   "LoopMoveEffect", "WalkingSpeedTweakPercentage", "StopMovementAfterMS", "WaitMS",
-                  "RotateAngleSpeed", "AttackFinishTime", "JumpEnabled"):
+                  "RotateAngleSpeed", "AttackFinishTime", "JumpEnabled", "SpawnEffectOnce",
+                  # client-action health bar (healthbars.toml parts, view 0x8405c4 / 0x853574)
+                  "OnStartingClientActions", "NewHealthBarOffsetX", "NewHealthBarOffsetXBlue", "NewHealthBarOffsetXRed"):
             if k in row:
                 entry[k[0].lower() + k[1:]] = row[k]
         if not entry.get("healthBar"):
@@ -932,7 +954,7 @@ class Baker:
                     a, b = col_at(0), col_at(len(mc.frames) - 1)
                     f["loop"] = all(abs(x - y) < (0.05 if i < 4 else 8) for i, (x, y) in enumerate(zip(a, b)))
                 d["filter"] = f
-        for k in ("Effect", "MarkEffect", "BuffEffect", "RemoveEffect"):
+        for k in ("Effect", "MarkEffect", "BuffEffect", "RemoveEffect", "DeathEffectOverride"):
             if isinstance(row.get(k), str) and row[k]:
                 self.effect(row[k])
                 d[k[0].lower() + k[1:]] = row[k]
@@ -1119,6 +1141,24 @@ class Baker:
                 common["exports"].append(e)
         if common["sc"]:
             out["common"] = common
+        fly = {"sc": None, "exports": []}
+        for e in HUD_FLY_EXPORTS:
+            lib = self.want("sc/effects.sc", e)
+            if lib:
+                fly["sc"] = lib
+                fly["exports"].append(e)
+        if fly["sc"]:
+            out["crownFly"] = fly
+        # battle intro banner and end-of-battle result screen (sim/viewer/src/sc/intro.ts, result.ts); the
+        # result waits for the location's EndScreenDelay (0xe48ce4 via 0xd3581c)
+        intro = [self.want(INTRO_SC, e) for e in INTRO_EXPORTS]
+        if all(intro):
+            out["intro"] = {"sc": intro[0], "export": INTRO_EXPORTS[0], "banner": INTRO_EXPORTS[1],
+                            "bannerBg": INTRO_EXPORTS[2], "bannerFg": INTRO_EXPORTS[3]}
+        res = self.want(RESULT_SC, RESULT_EXPORT)
+        if res:
+            loc = load_json("locations").get(self.args.location) or {}
+            out["result"] = {"sc": res, "export": RESULT_EXPORT, "endScreenDelay": int(loc.get("EndScreenDelay") or 0)}
         # radius indicator texture of the spell drag (0xcf0464 loads image/range.png: a 2x32 white ramp)
         if apk.exists("image/range.png"):
             OUT.mkdir(parents=True, exist_ok=True)
@@ -1170,11 +1210,13 @@ class Baker:
                     except ValueError:
                         pass
                 cur[k[0].lower() + k[1:]] = v
-        # multi-line ClientActions arrays
-        for blk in re.finditer(r"\[CLIENT_ACTION\.(\w+)\]([^\[]*(?:\[[^\]]*\][^\[]*)*?)(?=\n\[CLIENT_ACTION|\Z)", toml):
-            acts = re.search(r"ClientActions\s*=\s*\[(.*?)\]", blk.group(2), re.S)
+        # ClientActions arrays (one line or several): the text after each header up to the next header
+        heads = list(re.finditer(r"^\s*\[CLIENT_ACTION\.(\w+)\]", toml, re.M))
+        for i, h in enumerate(heads):
+            body = toml[h.end():heads[i + 1].start() if i + 1 < len(heads) else len(toml)]
+            acts = re.search(r"ClientActions\s*=\s*\[(.*?)\]", body, re.S)
             if acts:
-                out["healthBarParts"][blk.group(1)]["clientActions"] = re.findall(r'"([^"]*)"', acts.group(1))
+                out["healthBarParts"][h.group(1)]["clientActions"] = re.findall(r'"([^"]*)"', acts.group(1))
         return out
 
     # -- main ------------------------------------------------------------------------------------

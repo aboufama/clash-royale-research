@@ -46,6 +46,7 @@ import type { Col, Mat } from './math.ts';
 import { WHITE } from './math.ts';
 import type { ScLibrary, TextFieldDef } from './library.ts';
 import type { ScRenderer } from './renderer.ts';
+import { measureTextField } from './text.ts';
 
 export const FLOATER_EXPORT = 'floater_text';
 /** 0x88cb54: no new floater with this many live ones (manager +0x158) */
@@ -304,25 +305,9 @@ function accBounds(ui: ScLibrary, id: number, m: number[], b: number[], depth: n
 }
 
 /**
- * Text size as the viewer's renderer draws the field (A: the client lays the text out with its own
- * glyph metrics): the font's advance width plus the outline the renderer strokes, and the glyph height
- * plus the client's + 2 (0x126f464).
+ * The text's width and height in field units as the client measures them for the shadow and the clamp
+ * (0x126f3ac / 0x126f464: the text layout at stage scale `S`, sc/text.ts measureTextField).
  */
-export function measureFieldText(tf: TextFieldDef, text: string): TextSize {
-  const size = tf.bytes[2] || 16;
-  const outline = (tf.outline >>> 24) & 255 ? Math.max(1, size * 0.16) : 0;
-  let w = text.length * size * 0.6, h = size;
-  try {
-    const cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(4, 4)
-      : typeof document !== 'undefined' ? Object.assign(document.createElement('canvas'), { width: 4, height: 4 }) : null;
-    const g = cv?.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null | undefined;
-    if (g) {
-      g.font = `${size}px "${tf.font}", "Supercell-Magic", sans-serif`;
-      const mt = g.measureText(text);
-      w = mt.width;
-      const asc = mt.actualBoundingBoxAscent, desc = mt.actualBoundingBoxDescent;
-      if (Number.isFinite(asc) && Number.isFinite(desc) && asc + desc > 0) h = asc + desc;
-    }
-  } catch { /* keep the estimate */ }
-  return { w: w + outline, h: h + outline + 2 };
+export function measureFieldText(tf: TextFieldDef, text: string, S: number): TextSize {
+  return measureTextField(tf, text, S) ?? { w: 0, h: 0 };
 }

@@ -50,7 +50,7 @@ Last updated 2026-10-11 (native movement, spells and formations ported; 70 cards
 | Art | ✅ `tools/art/` decodes the SC2 sprite format (`.sc` v5: FlatBuffers + zstd) and the `.sctx` ASTC textures, and renders original animation frames to sheets plus JSON (anchor, hit frame). Verified on the Knight's run and attack animations. See [tools/art/README.md](tools/art/README.md) |
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
 | Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map. 67 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
-| Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup) |
+| Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. Area-damage indicator rings (World_areaDamage 0xf97be8 and area-effect pulses → battle screen listener 0xbe76e8 / 0xbe7980, ring class 0xcf0464, fade 0xbe1d3c; `sc/area_rings.ts`), footstep MoveEffects on the run clips' action_frame labels (0x840d44, `sc/unit_fx.ts`, called from art.ts) and the river-jump LandingEffect (0xf7f2c8 → view vt+0x80) are ported from engine events `areaRing` / `pushRing` / `landing` (decompiles in `work/native/decomp_rings/`). The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup). Text is the client's own text path (sc/text.ts, sc/freetype.ts: the two game fonts, FreeType 2.9 unhinted glyphs with the post-processed outline channel, HarfBuzz kerning, the TextField layout and two-pass drawing of 0x126ab4c; the battle layer should set `ScRenderer.textStageScale` to the HUD's scale) |
 | Demo (GitHub Pages) | ✅ Live at https://aboufama.github.io/clash-royale-research/ . `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on every push to `main` (Pages source: GitHub Actions). The repository was made public by the owner (2026-10-11) to serve Pages; the Checks workflow flags `game-files/` in a public repo by design |
 | AI opponent | ✅ `sim/core/src/bot.ts`: deterministic scripted bot for either side and any supported deck (`new Bot(team, { seed, level })`, `bot.act(battle)` each tick; in the viewer the panel's Blue AI / Red AI buttons pick off / easy / medium / hard); card roles from the data and a coarse fight estimate drive defence, pushes, spells and elixir management. Not a native port ([docs/DECISIONS.md](docs/DECISIONS.md)). About 87% wins against `randomPolicy` with mixed random decks, 100% against a passive side, ~2 µs per tick; `node sim/bench/bot.ts` evaluates it. Viewer toggle not wired yet |
 | Training bridge | ❌ Not started |
@@ -156,8 +156,16 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    back-row line of 0xbe1500 / 0x8e1fb8
    (logic Globals +0x1c8 rows, not written by the Globals loaders), the Log
    leftover's end event (battle screen vt+0xd8 0xbe4340 by projectile id,
-   reached from view method 0x84fdcc). Training bridge (M3) and
-   the fidelity pass (M5); see [GOAL.md](GOAL.md). Done 2026-10-12: the
+   reached from view method 0x84fdcc), the death-elixir floats (0xfca5ec calls the battle screen's
+   vt+0x398 0xbe4a8c for ManaOnDeath / ManaOnDeathForOpponent: the engine needs an event with the
+   receiving team, the dying unit's x/y and the amount; viewer hook `BattleUi.gainFloat`), the gain
+   flash on the hand cards (BattleArt.drawCard takes no colour) and the crown sound. Training bridge (M3) and
+   the fidelity pass (M5); see [GOAL.md](GOAL.md). Done 2026-10-12 (hud3): crown flights to the counter
+   and its fade (0x8d0dd8 / 0x8d2de0 / 0x8dd90c / 0x8d1e6c, `sc/crown_fly.ts`, effects.sc star_appear*
+   in the bake), the spend drops and the "-cost" float at the play's pending run (0xd77504 -> 0xfa35c4 ->
+   0x85ada8 -> 0x8dcbf4 / 0xbe5898; spells too), the refund flash and the 0x8b2368 bar geometry
+   (0x8dbebc), the x2/x3 badge (0x8d38c4 -> 0x8d5158), the collector's gain float (0xbe4a8c), both
+   `darken` backdrops (graphics level 2 assumed). Also done: the
    "Not enough Elixir!" floater of a play rejected for elixir (0xd77504 →
    0xbe7184, gate SHOW_NOT_ENOUGH_MANA_AFTER_FAILURES; popup manager floaters
    0x88cb54 / 0x88ce50 / 0x88cc2c / 0x88c7fc, `sc/floater.ts`; decompiles in
@@ -174,8 +182,30 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 6. **Viewer fidelity left:** the arena clip field +0x84 used as the 180°
    turn's ty (768 assumed), how the client picks direction frames under the
    flip, particle emitter semantics (EmitterReplaceType modifiers, TrailSWF),
-   and the items of the 2026-10-12 audit not yet ported (battle intro banner,
-   end-of-battle result screen, emotes, per-card effects of non-default cards).
+   and the items of the 2026-10-12 audit not yet ported (emotes, per-card
+   effects of non-default cards). Done 2026-10-12: the battle intro banner
+   (0xbdfa8c → 0x8c81b8, `sc/intro.ts`; HUD hidden and input blocked until its
+   actionFrame, the battle clock does not wait) and the end-of-battle result
+   screen after EndScreenDelay (0xd3581c → 0xbe0100 → 0x8bc564 / 0x8c2b80,
+   `sc/result.ts`), both on the client's MovieClip runtime (`sc/movieclip.ts`,
+   per-instance playheads); decompiles in `work/native/decomp_intro/`. Left:
+   the result's confetti and the HUD hand panel's slide-in / hide around them.
+   Done 2026-10-12 (units3, `sc/unit_view.ts`, decompiles in
+   `work/native/decomp_units3/`): health bars per frame as 0x83c268 (enemy
+   NoDamage badge always, own bars only once damaged, LifeTime buildings always,
+   the shield as the bar, the +0x470 damage flash) and the client-action bar of
+   Dark Prince / Skeleton Warrior (0x8405c4 → 0x853574); summon members'
+   staggered reveal at half alpha (0xd423bc → vt+0x138 0x846b2c); shooter
+   effects (0xf85244), death effects at z with angle and buff override
+   (0x850504 / 0xfc2288), AttackStartEffect (0x83e524), view effect calls
+   vt+0x80 / vt+0xc0; the frame clock keeps running after the battle end
+   (0xbe1d3c → 0x856f28). Left (A): the bar holder's visibility in state 11,
+   Underground read as tunnelling, the tunnel view vt+0x168 of Miner summons.
+   Seen in the browser: a battle won at the end of regulation shows the
+   overtime clock ("Overtime 2:00") under the result, because the HUD reads
+   the tick after the last step; trace what the client's time update shows
+   once the battle has ended (0x8d1e6c's end fade of HUD_topRight is not
+   ported either).
    The battle layer's placement (content scale 0x772a70, layer scale and
    position 0xbdefac, `sc/ui_port.ts` stageLayout) and the drag preview's
    snap (deploy check 0xf9e16c) are ported. 0x83c0ac is the HideBeforeFirstHit
