@@ -215,11 +215,15 @@ class Actor(nn.Module):
         slp = torch.log_softmax(sl, -1)
         logp = slp.gather(1, slot.unsqueeze(1)).squeeze(1)
         ent_slot = -(slp.exp() * slp).sum(-1)
-        tl = masked_logits(self.tile_logits(tok, kpm, glob, slot_tok, slot).float(), tile_mask.bool())
-        tlp = torch.log_softmax(tl, -1)
-        play = (slot > 0).float()
-        logp = logp + play * tlp.gather(1, tile.unsqueeze(1)).squeeze(1)
-        ent_tile = -(tlp.exp() * tlp).sum(-1) * play
+        ent_tile = torch.zeros_like(ent_slot)
+        play = slot > 0
+        if play.any():
+            # the tile head (576 queries per row) runs only for rows that played a card
+            r = play.nonzero().squeeze(1)
+            tl = masked_logits(self.tile_logits(tok[r], kpm[r], glob[r], slot_tok[r], slot[r]).float(), tile_mask[r].bool())
+            tlp = torch.log_softmax(tl, -1)
+            logp = logp.index_add(0, r, tlp.gather(1, tile[r].unsqueeze(1)).squeeze(1))
+            ent_tile = ent_tile.index_add(0, r, -(tlp.exp() * tlp).sum(-1))
         return logp, ent_slot, ent_tile
 
 

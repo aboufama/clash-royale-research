@@ -59,13 +59,13 @@ def install_node() -> None:
     STATE["node"] = "installing"
     url = f"https://nodejs.org/dist/{NODE_VERSION}/node-{NODE_VERSION}-linux-x64.tar.xz"
     log(f"downloading {url}")
-    HOME.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(NODE_DIR, ignore_errors=True)
+    NODE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = HOME / "node.tar.xz"
     urllib.request.urlretrieve(url, tmp)
-    with tarfile.open(tmp) as tf:
-        extract(tf, HOME)
-    shutil.rmtree(NODE_DIR, ignore_errors=True)
-    (HOME / f"node-{NODE_VERSION}-linux-x64").rename(NODE_DIR)
+    # straight into NODE_DIR: RunPod's /workspace is NFS, where renaming the unpacked directory fails
+    # (EXDEV) and chown is refused (hence --no-same-owner)
+    subprocess.run(["tar", "-xJf", str(tmp), "--no-same-owner", "--strip-components=1", "-C", str(NODE_DIR)], check=True)
     tmp.unlink()
     STATE["node"] = subprocess.run([str(node_bin()), "--version"], capture_output=True, text=True).stdout.strip()
     log(f"node {STATE['node']} ready")
@@ -188,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = RUNS / run
                 out.mkdir(parents=True, exist_ok=True)
                 logf = out / "train.log"
-                env = {**os.environ, "CRL_NODE": str(node_bin()), "PYTHONUNBUFFERED": "1",
+                env = {**os.environ, "CRL_NODE": str(node_bin()), "PYTHONUNBUFFERED": "1", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                        "PATH": f"{NODE_DIR / 'bin'}:{os.environ.get('PATH', '')}"}
                 cmd = ["python3", "-m", "crl.train", "--out", str(out), *req.get("args", [])]
                 fh = open(logf, "ab")

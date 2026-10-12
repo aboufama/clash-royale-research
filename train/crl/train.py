@@ -54,7 +54,7 @@ def parse(argv=None):
     # ppo
     a("--rollout", type=int, default=65536, help="complete transitions per update")
     a("--buffer", type=int, default=0, help="rollout buffer capacity (default 2x rollout)")
-    a("--minibatch", type=int, default=8192)
+    a("--minibatch", type=int, default=4096)
     a("--epochs", type=int, default=2)
     a("--lr", type=float, default=3e-4)
     a("--lr-decay", action="store_true", help="linear decay to 0 over --total-decisions")

@@ -33,8 +33,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 STATE = REPO / "work" / "runpod" / "pods.json"
 REST = "https://rest.runpod.io/v1"
-IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-GPUS = ["NVIDIA GeForce RTX 4090", "NVIDIA L40S", "NVIDIA RTX A6000", "NVIDIA A100 80GB PCIe", "NVIDIA H100 PCIe"]
+IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+GPUS = ["NVIDIA H100 80GB HBM3", "NVIDIA H100 PCIe", "NVIDIA RTX PRO 6000 Blackwell Server Edition", "NVIDIA A100 80GB PCIe", "NVIDIA L40S"]
+# Cloudflare in front of RunPod rejects urllib's default User-Agent (error 1010)
+UA = "crl-launch/1.0 (+https://github.com/aboufama/clash-royale-research)"
 BUNDLE = ["sim/core/src", "sim/rl", "sim/data", "sim/package.json", "sim/tsconfig.json", "train/crl", "train/requirements.txt"]
 
 
@@ -57,7 +59,7 @@ def save_state(st: dict) -> None:
 
 def rest(method: str, path: str, body: dict | None = None) -> dict:
     req = urllib.request.Request(REST + path, method=method, data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
+                                 headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json", "User-Agent": UA})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             raw = r.read()
@@ -76,7 +78,7 @@ def pod(args) -> dict:
 
 def ctl(p: dict, method: str, path: str, body: bytes | None = None, ctype="application/json", timeout=120, raw=False):
     url = f"https://{p['id']}-8000.proxy.runpod.net{path}"
-    req = urllib.request.Request(url, method=method, data=body, headers={"Authorization": f"Bearer {p['token']}", "Content-Type": ctype})
+    req = urllib.request.Request(url, method=method, data=body, headers={"Authorization": f"Bearer {p['token']}", "Content-Type": ctype, "User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read()
     return data if raw else json.loads(data)
@@ -99,6 +101,7 @@ def cmd_create(args):
         "ports": ["8000/http"],
         "minVCPUPerGPU": args.min_vcpu,
         "minRAMPerGPU": args.min_ram,
+        "allowedCudaVersions": args.cuda,  # the image's torch needs a CUDA 12.8+ driver
         "env": {"CRL_TOKEN": token, "CRL_BOOT_B64": boot},
         "dockerStartCmd": ["bash", "-c", "echo \"$CRL_BOOT_B64\" | base64 -d > /crl_podserver.py && exec python3 /crl_podserver.py"],
     }
@@ -175,7 +178,7 @@ def cmd_fetch(args):
 
 
 def cmd_exec(args):
-    r = ctl(pod(args), "POST", "/exec", json.dumps({"cmd": " ".join(args.cmd), "timeout": args.timeout}).encode(), timeout=args.timeout + 30)
+    r = ctl(pod(args), "POST", "/exec", json.dumps({"cmd": " ".join(args.shell), "timeout": args.timeout}).encode(), timeout=args.timeout + 30)
     sys.stdout.write(r["stdout"])
     sys.stderr.write(r["stderr"])
     print(f"[exit {r['code']}]")
@@ -201,11 +204,12 @@ def main():
     c.add_argument("--name", default="crl")
     c.add_argument("--gpu", action="append", help="GPU type id (repeat for a preference list)")
     c.add_argument("--gpu-count", type=int, default=1)
-    c.add_argument("--min-vcpu", type=int, default=16, help="vCPUs per GPU: the simulation is CPU-bound")
-    c.add_argument("--min-ram", type=int, default=32)
-    c.add_argument("--volume", type=int, default=100)
+    c.add_argument("--min-vcpu", type=int, default=24, help="vCPUs per GPU: the simulation is CPU-bound")
+    c.add_argument("--min-ram", type=int, default=64)
+    c.add_argument("--volume", type=int, default=50)
     c.add_argument("--cloud", default="SECURE", choices=["SECURE", "COMMUNITY"])
     c.add_argument("--image", default=IMAGE)
+    c.add_argument("--cuda", nargs="+", default=["12.8", "12.9", "13.0"], help="allowed host CUDA versions")
     w = sub.add_parser("wait")
     w.add_argument("--timeout", type=float, default=1200)
     sub.add_parser("push")
@@ -223,7 +227,7 @@ def main():
     f.add_argument("path")
     f.add_argument("--dest")
     e = sub.add_parser("exec")
-    e.add_argument("cmd", nargs=argparse.REMAINDER)
+    e.add_argument("shell", nargs=argparse.REMAINDER)
     e.add_argument("--timeout", type=float, default=60)
     sub.add_parser("terminate")
     args = ap.parse_args()
