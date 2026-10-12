@@ -124,27 +124,43 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 
 ## Training (self-play RL), 2026-10-12
 
-The owner asked for a training run for an agent that plays well: self-play,
-default deck vs default deck, on RunPod GPUs they provide. The setup is in
-`sim/rl/` and `train/`; see [train/README.md](train/README.md) and DECISIONS
-"Self-play RL setup".
-- **Environment:** N battles per Node worker. Decision points come every 5 ticks
-  while a card is playable. Actions are a hand slot plus one of 18 × 32 tiles,
-  with exact legal masks (`Battle.deployGrid`). Team 1 is turned 180°.
-- **Observations:** fair, plus the opponent's elixir and cycle, which are exactly
-  derivable from public history. The critic also sees privileged state.
-- **Trainer:** entity-transformer actor (slot head plus tile cross-attention
-  head), privileged critic, PPO with GAE over ticks.
-- **Opponents:** the policy itself, PFSP snapshot opponents, and 5 % scripted
-  bot as the yardstick. The reward is win/loss plus tower-damage shaping that
-  anneals to 0.
-- **Verified locally (CPU):** env tests (determinism, masks, cycle tracking,
-  episode ends); the smoke run (update, snapshot, checkpoint, resume); the GAE
-  unit tests; the pod control server end to end (Node install, bundle, start,
-  log, fetch).
-- **Throughput:** about 1 200 decisions/s per core.
-- **Not yet done:** a real run on RunPod. The owner will provide the API key;
-  `launch.py` reads `RUNPOD_API_KEY` from the environment.
+Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). See
+[train/README.md](train/README.md) and DECISIONS "Self-play RL setup".
+
+**Live run.** RunPod pod `crl-1`, an H100 80GB with 28 vCPUs (about 24-core quota) at
+$3.99/hr. Run directory `/workspace/crl/runs/exp1`.
+- **Driving it:** `train/runpod/launch.py status|log|ls|fetch|stop|start|terminate` with
+  `RUNPOD_API_KEY` set. The pod id and its control token are in `work/runpod/pods.json`
+  (ignored, this container only).
+- **Current flags:** `--collectors 2 --workers 20 --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048 --lr 4e-4`.
+- **Opponents:** pure self-play, against the current policy and a PFSP league of snapshots. The
+  scripted bot is a benchmark only: the learner plays it in 10 % of episodes and those games are
+  never stored. Before update 200, 5–25 % of training games were against the bot.
+- **Throughput:** about 7.5k decisions/s. It took these fixes to get there:
+  - learner process plus CUDA MPS;
+  - CUDA-graph inference;
+  - no host syncs in inference;
+  - narrow tile head and token trimming in the learner.
+- **Restarts:** stop, push, start with the same `--run`. It resumes from `latest.pt`, which is
+  written every 10 updates.
+
+**Progress.**
+- **Update 175 (11.8M decisions):** it beats its older snapshots 75–100% of the time. Against
+  the hard bot (level 3) it wins 0–33% per update.
+- **The owner's bar:** at least 2 crowns without losing a tower against the hard bot, most or
+  all of the time. That is the owner's own result. The trainer logs it as `dominant_vs_bot`. At
+  update 174 it was 0, with 0.15–0.37 crowns taken and about 0.95 lost per game.
+- **Budget:** about $17 left on the account at 22:00 UTC, so the pod stops around 02:00 UTC
+  unless the owner tops up.
+
+**Watching the agent.**
+- **Replays:** `train/crl/evaluate.py --replays DIR` writes them, and the viewer plays them with
+  `?replay=replays/<file>.json`. Two update-30 replays are in `sim/viewer/replays/`.
+- **Playing against it:** `?vs=agent`, or the "Red AI" button cycled to "RL agent". It runs
+  `sim/viewer/models/agent.onnx`, currently the update-130 actor, with onnxruntime-web.
+- **Updating the published agent:** fetch `actor_XXXXXX.pt` and `spec.json`, then run
+  `python -m crl.export actor.pt --spec spec.json --out ../sim/viewer/models/agent.onnx` from
+  `train/`, then commit.
 
 ## Next steps
 
