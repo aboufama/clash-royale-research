@@ -74,6 +74,8 @@ class League:
             m = copy.deepcopy(template)
             m.load_state_dict(s.state)
             m.to(device).eval()
+            if hasattr(m, "enc"):
+                m.enc.trim_tokens = False  # fixed shapes: no host syncs in inference
             for p in m.parameters():
                 p.requires_grad_(False)
             self.active.append((s, m))

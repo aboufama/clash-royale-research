@@ -97,8 +97,11 @@ class Encoder(nn.Module):
             x[f], x[i] = x[f][:, :n], x[i][:, :n]
         return x
 
+    trim_tokens = True  # off for ONNX export: fixed shapes (trimming reads the batch on the host)
+
     def forward(self, x: dict[str, torch.Tensor]):
-        x = self.trim(x)
+        if self.trim_tokens:
+            x = self.trim(x)
         dev = x["glob"].device
         B = x["glob"].shape[0]
         T = lambda i: self.e_type.weight[i]  # noqa: E731

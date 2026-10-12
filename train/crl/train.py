@@ -240,6 +240,10 @@ def main(argv=None):
     actor, critic = build_nets(spec, mcfg, device)
     actor.eval()
     critic.eval()
+    # inference keeps fixed shapes: trimming reads the batch's slot counts back from the GPU (a host sync
+    # per block, per network, per frame); the learner trims (training is where the compute is)
+    actor.enc.trim_tokens = False
+    critic.enc.trim_tokens = False
     for p_ in list(actor.parameters()) + list(critic.parameters()):
         p_.requires_grad_(False)
     league = League(out, args.league_size, args.active_opponents, args.pfsp_power, rng)
