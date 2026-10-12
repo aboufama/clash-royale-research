@@ -264,6 +264,7 @@ def main(argv=None):
                 slot[rows], tile[rows] = s.cpu().numpy(), t.cpu().numpy()
         return np.stack([gids, teams, slot, tile], 1).astype(np.int32)
 
+    timing = defaultdict(float)
     groups = [list(pool.group(g, args.groups)) for g in range(args.groups)]
     groups = [g for g in groups if g]
     for ws in groups:
@@ -272,7 +273,16 @@ def main(argv=None):
     while True:
         # one group's frame is handled while the other groups simulate
         ws = groups[gi]
-        pool.send_many(ws, process(pool.recv_many(ws)))
+        t0 = time.time()
+        fr = pool.recv_many(ws)
+        t1 = time.time()
+        acts = process(fr)
+        t2 = time.time()
+        pool.send_many(ws, acts)
+        timing["wait_s"] += t1 - t0
+        timing["process_s"] += t2 - t1
+        timing["frames"] += 1
+        timing["records"] += len(fr.meta)
         gi = (gi + 1) % len(groups)
         if buf.n_complete < args.rollout:
             continue
@@ -344,14 +354,16 @@ def main(argv=None):
 
         rec = {"update": update, "decisions": total_decisions, "transitions": N, "shape_coef": shape_coef(), "explained_var": ev,
                "play_rate": play_rate, "update_s": time.time() - t_up, "league": len(league.pool),
-               **{k: float(np.mean(v)) for k, v in logs.items()}, **stats.summary()}
+               **{k: float(np.mean(v)) for k, v in logs.items()}, **stats.summary(), **{f"t_{k}": v for k, v in timing.items()}}
         metrics_f.write(json.dumps(rec) + "\n")
         metrics_f.flush()
         wr = " ".join(f"{k[11:]}={v:.2f}" for k, v in rec.items() if k.startswith("winrate_vs_"))
         print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {ev:.2f} kl {rec.get('approx_kl', 0):.4f} "
               f"ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} play {play_rate:.2f} "
-              f"ep {rec.get('episode_s', 0):.0f}s {wr}", flush=True)
+              f"ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s proc {timing['process_s']:.1f}s "
+              f"upd {rec['update_s']:.1f}s rec/frame {timing['records'] / max(1, timing['frames']):.0f}", flush=True)
         stats.reset()
+        timing.clear()
 
         if update % args.ckpt_every == 0:
             ck = {"actor": actor.state_dict(), "critic": critic.state_dict(), "opt": opt.state_dict(), "league": league.state(),
