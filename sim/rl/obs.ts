@@ -106,6 +106,35 @@ export interface CycleInfo {
   commits: number;
 }
 
+/**
+ * Each player's commit count, read from its queue as the env and the viewer both see it: a committed
+ * play pushes its card to the queue's back, a refill shifts the head (0xf9f23c / 0xfa5b4c).
+ */
+export class CycleTracker {
+  readonly cycle: [CycleInfo, CycleInfo] = [{ commits: 0 }, { commits: 0 }];
+  private last: [number[], number[]] = [[], []];
+
+  reset(b: Battle): void {
+    for (let t = 0; t < 2; t++) {
+      this.cycle[t].commits = 0;
+      this.last[t] = b.players[t].queue.slice();
+    }
+  }
+
+  /** Call once per tick, after Battle.step. */
+  update(b: Battle): void {
+    for (let t = 0; t < 2; t++) {
+      const q = b.players[t].queue;
+      const old = this.last[t];
+      if (q.length === old.length && q.every((v, i) => v === old[i])) continue;
+      const s = q.length ? old.indexOf(q[0]) : old.length;
+      const kept = s < 0 ? 0 : old.length - s;
+      this.cycle[t].commits += Math.max(0, q.length - kept);
+      this.last[t] = q.slice();
+    }
+  }
+}
+
 export class Encoder {
   readonly L = layout();
   private readonly unitId = new Map<string, number>();

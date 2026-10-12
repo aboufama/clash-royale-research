@@ -430,3 +430,19 @@ change it.
   the true opponent hand (one flag in `obs.ts`), or simulation stops being the bottleneck (a GPU
   batch engine or a faster engine build).
 
+## 2026-10-12 — Play against the trained agent on Pages
+
+- **Decision:** the viewer offers "RL agent" as a fifth AI level (and `?vs=agent` starts with red played
+  by it). The trained actor is exported to ONNX (`train/crl/export.py`, checked against PyTorch), committed
+  as `sim/viewer/models/agent.onnx` and run in the browser with onnxruntime-web (WASM, from jsDelivr, on
+  first use). The agent uses the training observation code (`sim/rl/obs.ts`) on the same engine, the same
+  decision grid and the same masked sampling (`sim/viewer/src/agent.ts`); inference is asynchronous, so a
+  play lands a few ticks after its observation and is dropped if it became illegal.
+- **Why:** the owner asked to play against the agent once it beats the hard bot a few times. It did from
+  update ~115 on (2–5 wins in every ~30 games against level 3).
+- **Check exception:** `scripts/check_public_tree.py` rejects binary files. It now allows exactly
+  `sim/viewer/models/agent.onnx`, and only as an ONNX protobuf under 50 MB. Network weights are not game
+  data. The rule for game-files/ and the public-repository CI check are unchanged.
+- **Would change if:** the model grows past what a browser should download (distil it, or quantise), or
+  per-version history becomes too heavy (publish only milestone versions).
+

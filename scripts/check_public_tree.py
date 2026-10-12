@@ -41,12 +41,22 @@ FORBIDDEN_ROOTS = {
 # inputs here. CI separately fails if this directory exists while it is public.
 GAME_FILES_ROOT = "game-files"
 
+# The trained agent the Pages viewer plays against (train/crl/export.py; owner request
+# 2026-10-12, docs/DECISIONS.md). Network weights, not game data; only this exact path,
+# and only an ONNX file under 50 MB.
+PUBLISHED_MODEL = "sim/viewer/models/agent.onnx"
+PUBLISHED_MODEL_MAX = 50_000_000
+
 
 def problem(path, data):
     path = PurePosixPath(path)
     if path.parts[0] == GAME_FILES_ROOT:
         if len(data) > 100_000_000:
             return "file exceeds GitHub's 100 MB limit"
+        return None
+    if str(path) == PUBLISHED_MODEL:
+        if len(data) > PUBLISHED_MODEL_MAX or not data.startswith(b"\x08"):
+            return "published agent model must be an ONNX protobuf under 50 MB"
         return None
     if path.parts[0] in FORBIDDEN_ROOTS or path.suffix.lower() in FORBIDDEN_SUFFIXES:
         return "local/binary research artifact"

@@ -9,7 +9,7 @@
 
 import { Battle, Bot } from '../core/src/index.ts';
 import type { GameData } from '../core/src/index.ts';
-import { type CycleInfo, Encoder } from './obs.ts';
+import { type CycleInfo, CycleTracker, Encoder } from './obs.ts';
 
 export type Ctrl = 'py' | 'bot' | 'random' | 'none';
 
@@ -85,8 +85,8 @@ export class RlEnv {
   deckOf: [number, number] = [0, 1];
   bots: [Bot | null, Bot | null] = [null, null];
   readonly acc: [Acc, Acc] = [new Acc(), new Acc()];
-  readonly cycle: [CycleInfo, CycleInfo] = [{ commits: 0 }, { commits: 0 }];
-  private lastQueue: [number[], number[]] = [[], []];
+  private readonly tracker = new CycleTracker();
+  get cycle(): [CycleInfo, CycleInfo] { return this.tracker.cycle; }
   private towerHp: number[] = [0, 0, 0, 0, 0, 0];
   episode = 0;
   seed = 0;
@@ -138,11 +138,10 @@ export class RlEnv {
     this.randState = seed ^ 0x2545f491;
     for (let t = 0; t < 2; t++) {
       this.acc[t].reset();
-      this.cycle[t].commits = 0;
-      this.lastQueue[t] = this.b.players[t].queue.slice();
       this.waiting[t] = false;
       this.started[t] = false;
     }
+    this.tracker.reset(this.b);
     this.readTowers(this.towerHp);
   }
 
@@ -163,17 +162,9 @@ export class RlEnv {
     };
   }
 
-  /** Commits since the last call, from the queue: plays push to its back, refills shift its head. */
+  /** Commits since the last call (plays push to the queue's back, refills shift its head). */
   private trackCycle(): void {
-    for (let t = 0; t < 2; t++) {
-      const q = this.b.players[t].queue;
-      const old = this.lastQueue[t];
-      if (q.length === old.length && q.every((v, i) => v === old[i])) continue;
-      const s = q.length ? old.indexOf(q[0]) : old.length;
-      const kept = s < 0 ? 0 : old.length - s;
-      this.cycle[t].commits += Math.max(0, q.length - kept);
-      this.lastQueue[t] = q.slice();
-    }
+    this.tracker.update(this.b);
   }
 
   /** A py team has a decision now (aligned tick, something playable). */

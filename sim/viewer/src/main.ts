@@ -14,6 +14,7 @@ import { PlaceholderRenderer } from './placeholder.ts';
 import { sound } from './sc/sound.ts';
 import { affordableSoon, dropWaits, MAX_SPELL_PENDING_TIME_S } from './sc/ui_port.ts';
 import { assetFetch } from './sc/asset_fetch.ts';
+import { AgentPlayer } from './agent.ts';
 
 export { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
 
@@ -111,8 +112,10 @@ class App {
   private tickTimes: number[] = [];
   /** scripted AI per team (sim/core bot.ts, not a client feature); null = played by hand */
   private bots: [Bot | null, Bot | null] = [null, null];
-  /** AI level per team: 0 off, 1..3 easy..hard */
+  /** AI level per team: 0 off, 1..3 easy..hard (scripted bot), 4 the trained RL agent */
   aiLevel: [number, number] = [0, 0];
+  /** the trained agent per team (aiLevel 4; train/crl/export.py -> models/agent.onnx) */
+  private agents: [AgentPlayer | null, AgentPlayer | null] = [null, null];
   /** a touch held on a game button of the HUD layer +0x178 / the result screen (not a battle touch) */
   private uiHeld: 'ok' | 'emote' | null = null;
   /** sandbox: the next emote the red side sends (its deck in order, then the text taunts) */
@@ -125,6 +128,7 @@ class App {
    * at their ticks replays the match exactly; hand input and the AI are off meanwhile.
    */
   replay: Replay | null = null;
+  private onAgentLoaded: (() => void) | null = null;
   private replayAt = 0;
   private replaying = false;
 
@@ -140,6 +144,8 @@ class App {
   async init(): Promise<void> {
     document.body.classList.toggle('dev', DEV);
     sound.attach('assets'); // audio/ (bake_audio.py), loaded on the first user gesture
+    // ?vs=agent: red is played by the trained agent
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('vs') === 'agent') this.aiLevel = [0, AGENT_LEVEL];
     const rp = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('replay');
     if (rp) {
       try { this.useReplay(await (await assetFetch(rp)).json() as Replay); } catch (e) { console.warn('replay', rp, e); }
@@ -204,7 +210,18 @@ class App {
 
   /** One Bot per AI side, seeded from the battle seed so a restart replays the same match. */
   private makeBots(): void {
-    this.bots = [0, 1].map((t) => this.aiLevel[t] > 0 ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null) as [Bot | null, Bot | null];
+    this.bots = [0, 1].map((t) => this.aiLevel[t] > 0 && this.aiLevel[t] < AGENT_LEVEL
+      ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null) as [Bot | null, Bot | null];
+    for (const t of [0, 1]) {
+      if (this.aiLevel[t] !== AGENT_LEVEL) { this.agents[t] = null; continue; }
+      let a = this.agents[t];
+      if (!a) {
+        a = new AgentPlayer(t, data);
+        this.agents[t] = a;
+        void a.load(AGENT_MODEL).then(() => this.onAgentLoaded?.());
+      }
+      a.reset(this.battle);
+    }
     // the play check's reactions for a human player only (0xf941ec): the AI sides are not human
     const ui = this.ui;
     if (ui) ui.isHuman = (t) => this.aiLevel[t] === 0;
@@ -254,6 +271,10 @@ class App {
     // a stopped battle does not step: its last tick's events must not be handed to the views again
     if (this.battle.stopped) return;
     this.frame.snapshot(this.battle);
+    for (const a of this.agents) {
+      const d = a?.decide(this.battle);
+      if (a && d) this.playCard(a.team, d.slot, d.x, d.y);
+    }
     const r = this.replay;
     if (r) {
       // the recorded plays of this tick, in their recorded order, through the hand path
@@ -271,6 +292,7 @@ class App {
     }
     const t0 = performance.now();
     this.battle.step();
+    for (const a of this.agents) a?.observe(this.battle);
     this.tickTimes.push(performance.now() - t0);
     if (this.tickTimes.length > 100) this.tickTimes.shift();
     this.world.onEvents?.(this.frame);
@@ -703,17 +725,25 @@ class App {
     snd.classList.toggle('on', sound.enabled);
     snd.onclick = () => { sound.setEnabled(!sound.enabled); snd.classList.toggle('on', sound.enabled); };
     // AI toggles cycle off -> easy -> medium -> hard; a change applies from the next tick
-    const aiNames = ['off', 'easy', 'medium', 'hard'];
+    const aiNames = ['off', 'easy', 'medium', 'hard', 'RL agent'];
+    const labels: (() => void)[] = [];
     for (const [id, t] of [['aiBlue', 0], ['aiRed', 1]] as const) {
       const btn = $<HTMLButtonElement>(id);
-      const label = () => { btn.textContent = `${t === 0 ? 'Blue' : 'Red'} AI: ${aiNames[this.aiLevel[t]]}`; btn.classList.toggle('on', this.aiLevel[t] > 0); };
+      const label = () => {
+        const a = this.agents[t];
+        const state = this.aiLevel[t] === AGENT_LEVEL && a ? (a.error ? ' (failed)' : a.loaded ? '' : ' (loading)') : '';
+        btn.textContent = `${t === 0 ? 'Blue' : 'Red'} AI: ${aiNames[this.aiLevel[t]]}${state}`;
+        btn.classList.toggle('on', this.aiLevel[t] > 0);
+      };
+      labels.push(label);
       label();
       btn.onclick = () => {
-        this.aiLevel[t] = (this.aiLevel[t] + 1) % 4;
-        this.bots[t] = this.aiLevel[t] > 0 ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null;
+        this.aiLevel[t] = (this.aiLevel[t] + 1) % aiNames.length;
+        this.makeBots();
         label();
       };
     }
+    this.onAgentLoaded = () => { for (const l of labels) l(); };
     // the AI never emotes (not a client feature); this sends the red side's emotes in turn for testing
     // (the opponent's taunt event, 0x8d601c type 3 -> 0x8d6820)
     const re = document.getElementById('emoteRed') as HTMLButtonElement | null;
@@ -752,6 +782,9 @@ class App {
     }
   }
 }
+
+const AGENT_LEVEL = 4;
+const AGENT_MODEL = 'models/agent.onnx';
 
 /** A recorded match (sim/rl/env.ts RlEnv.replay()). */
 interface Replay {
