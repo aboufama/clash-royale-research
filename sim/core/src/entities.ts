@@ -129,8 +129,14 @@ export class Unit {
   /** Recent damage keys and their times (health +0x58 / +0x68): a key is ignored for 1000 ms (0xfcaeec). */
   dmgKeys: number[];
   dmgKeyTimes: number[];
-  /** Inferno ramp: ms spent attacking the current target. */
-  rampMs: number;
+  /**
+   * Attack-sequence index (attack +0x20; -1 = none): for mode-3 sequences (Inferno Tower / Dragon) set after
+   * every clock step of a swing to the entry the attack timer is in (0xde0e5c); it stays when the attack
+   * resets until the next swing. Picks the damage (0xde0cec) and the range / sight / clock overrides.
+   */
+  seqIndex: number;
+  /** Target kept through the pending-damage exemption this tick (attack +0x18, 0xfc7e20): the removal notice 0xfc7640 then starts no finish wait. */
+  keepFlag: boolean;
   /** Elixir Collector: generate timer, ms (actor +0x130). */
   manaT: number;
   /**
@@ -141,7 +147,7 @@ export class Unit {
   hideT: number;
   /** Fully hidden, so untargetable: hideT === HideTimeMs (vtf8 0xf85420). */
   hidden: boolean;
-  /** Miner: tunnelling toward (tunnelX, tunnelY) before deploying. */
+  /** Miner: native state 6, tunnelling along its path to the movement destination (tunnelX, tunnelY: m+0x1cc/+0x1d0, the deploy point) before deploying. */
   tunneling: boolean;
   tunnelX: number;
   tunnelY: number;
@@ -271,7 +277,8 @@ export class Unit {
     this.waitTicks = 0;
     this.dmgKeys = [];
     this.dmgKeyTimes = [];
-    this.rampMs = 0;
+    this.seqIndex = -1;
+    this.keepFlag = false;
     this.manaT = 0;
     this.hideT = 0;
     this.hidden = false;
@@ -310,6 +317,17 @@ export class Unit {
 
   get alive(): boolean {
     return this.state !== ST_DEAD;
+  }
+
+  /**
+   * View only (the viewer's Inferno level reads it): the start of the current attack-sequence entry in ms
+   * of attack timer, i.e. the summed durations of the entries before `seqIndex` (0 without one). Not state.
+   */
+  get rampMs(): number {
+    let ms = 0;
+    const seq = this.def.seq;
+    for (let i = 0; i < this.seqIndex && i < seq.length; i++) ms += seq[i].duration;
+    return ms;
   }
 
   /** Charging (movement +0x1e0 >= 10000). */
@@ -464,6 +482,11 @@ export class AreaEffect {
   hitIds: number[];
   born: number;
   alive: boolean;
+  /**
+   * The SpawnAreaEffectObject is still to be created (+0xf8, set by the ctor 0xf79ca0 when the data has
+   * one): the first update creates it (0xf7b254) before its own pulse logic.
+   */
+  spawnPending: boolean;
 
   constructor(id: number, def: AreaEffectDef, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -475,6 +498,7 @@ export class AreaEffect {
     this.hitIds = [];
     this.born = tick;
     this.alive = true;
+    this.spawnPending = def.spawnAreaEffect !== null;
   }
 }
 
@@ -499,12 +523,16 @@ export interface Command {
  *   of an area-effect pulse (0xf7a34c, r = its Pushback).
  * - landing: Actor_setState 0xf7f2c8 left the jump state 5; the view plays LandingEffect (vt+0x80
  *   0x84e784) at the actor's x, y, z.
+ * - kingActivate: the King's activation actions (king_tower.toml: ActionWaitToActivate on
+ *   `king_tower_damaged() || tower_destroyed()`, ActionWithDuration 3300 ms with ACTIVATING, then the
+ *   ActionFilter `is_npc_battle()` -> ActionPlayEffect King_player_activate) reached the effect: recorded
+ *   when the King turns active; `name` = the effect, `id` / `team` / `x` / `y` = the King.
  */
 export interface BattleEvent {
   tick: number;
   type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path'
     | 'areaRing' | 'pushRing' | 'landing' | 'aoePulse' | 'elixir' | 'projEnd' | 'reject'
-    | 'damage' | 'shieldLost' | 'wobble';
+    | 'damage' | 'shieldLost' | 'wobble' | 'kingActivate';
   team: number;
   x: number;
   y: number;
@@ -550,4 +578,13 @@ export interface BattleEvent {
   /** damage / wobble: direction vector (logic units). */
   vx?: number;
   vy?: number;
+  /**
+   * hit / shoot: the attack was cancelled (LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE: the target is beyond range
+   * + 1500, 0xfc619c): no damage or projectile, and the client skips its attack view call (vt+0x90) and the
+   * ATTACKING tag. Absent otherwise. `src` may be -1: an area attack that completes without a target
+   * (0xfc7d98: SelfAsAoeCenter or a non-homing projectile).
+   */
+  cancelled?: boolean;
+  /** hit / shoot: the attacker's attack-sequence index for this attack (attack +0x20; Inferno level 0..2), absent without a sequence. */
+  seq?: number;
 }

@@ -13,11 +13,11 @@
 // replaces 1-4 on every later tick (tiebreakTick) until a tower falls or the towers are level.
 // Each function below says where its behaviour comes from; see docs/FIDELITY.md.
 
-import { Arena, ARENA_H, ARENA_W, CELL, F_BLOCKED, F_OCCLUDER, F_WATER, PATH_CROSS, PATH_WALK } from './arena.ts';
+import { Arena, ARENA_H, ARENA_W, CELL, F_BLOCKED, F_OCCLUDER, F_WATER, PATH_CROSS, PATH_SPAWN, PATH_WALK } from './arena.ts';
 import { SpatialGrid } from './grid.ts';
 import {
   type AreaEffectDef, type BuffDef, Defs, ELIXIR_ONE, type CardDef, type FilterDef, type GameData, type ProjectileDef, TICK_MS,
-  type SummonEntry, type Timeline, type UnitDef,
+  type Timeline, type UnitDef,
 } from './data.ts';
 import {
   AreaEffect, type BattleEvent, BuffInst, type Command, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, type SpellGroup, ST_ACTIVE, ST_DEAD,
@@ -25,7 +25,7 @@ import {
 } from './entities.ts';
 import { clamp, Hasher, idiv, isqrt, NativeRng, Rng } from './math.ts';
 import { formationOffset } from './formation.ts';
-import { angleOf, cos1e6, rotate1024, sin1024, sin1e6 } from './trig.ts';
+import { angleOf, rotate1024, sin1024 } from './trig.ts';
 
 export interface BattleConfig {
   seed?: number;
@@ -111,6 +111,8 @@ export class Battle {
   readonly overtimeTicks: number;
   readonly keepTargetExt: number;
   readonly extraSightCrownTowers: number;
+  /** EXTRA_SIGHT_RANGE_TO_BUILDING (globals +0xd0, 0). */
+  readonly extraSightBuildings: number;
   readonly fixture: boolean;
   readonly boundW: number;
   readonly boundH: number;
@@ -130,6 +132,17 @@ export class Battle {
   /** BattleConfig.postEnd / endScreenDelay. */
   readonly postEnd: boolean;
   readonly endScreenDelay: number;
+  /** ATTACK_FINISH_TIME_MS (globals +0x2b0, 250): the finish wait of 0xfc7e20 / 0xfc7640. */
+  readonly finishTimeMs: number;
+  /** LOGIC_CHARACTER_CONTINUOUS_DAMAGE_ATTACK_CLOSER (+0x410, 500): attack-sequence walkers close in this much (0xfc4afc). */
+  readonly closerRange: number;
+  /** ALLOW_AOE_ATTACKS_WITHOUT_TARGET (+0x2d5): a loaded swing may finish without a target (0xfc7d98). */
+  readonly aoeWithoutTarget: boolean;
+  /** LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE (+0x3bb) and its _RANGE (+0x40c, 1500), 0xfc619c. */
+  readonly cancelFar: boolean;
+  readonly cancelRange: number;
+  /** LOGIC_SPAWN_PATHFIND_REACHED_RADIUS_FROM_SPEED: a tunnelling waypoint is reached within SpawnPathfindSpeed (0xfcef48). */
+  readonly spawnReachFromSpeed: boolean;
 
   tick = 0;
   /**
@@ -168,6 +181,8 @@ export class Battle {
 
   /** King-death wave clock, ctx +0x2c0 (0xd35de4): +50 per wave call. */
   private waveMs = 0;
+  /** ctx +0x2c4 (0xd352f8): a King died while both of its Princess towers stood at full hitpoints. */
+  fullTowersFlag = false;
   private nextId = 5000000;
   private nextProjId = 4000000;
   private nextAeoId = 3000000;
@@ -183,10 +198,11 @@ export class Battle {
   private dmgBuffTime: number[] = [];
   private dmgSrc: number[] = [];
   /**
-   * Queued damage without an owner (damage event +0xc = -1: the tiebreak's queued kill 0xfca24c); all
-   * other damage is the target's opponent's, who gets the kill reward of 0xfca5ec.
+   * The damage's owner (damage event +0xc), who gets the kill reward of 0xfca5ec: the target's opponent
+   * for attacks, spells and effects; -1 (none) for the battle manager's queued kills (0xfca24c with -1);
+   * the victim's own player for a Kamikaze death (0xf83018 passes Actor_getOwner).
    */
-  private dmgNoOwner: boolean[] = [];
+  private dmgOwner: number[] = [];
   /** Damage event flag 8 (+0x20): applied during the tiebreak and after the end (0xfcaeec, 0xfcb29c). */
   private dmgForce: boolean[] = [];
   /** Recorded only: the entry's view effect kind and its source data name (BattleEvent 'damage'). */
@@ -222,6 +238,7 @@ export class Battle {
     this.overtimeTicks = (secs[1]?.lengthSec ?? 0) * 1000 / TICK_MS;
     this.keepTargetExt = typeof G.LOGIC_RANGE_EXTENSION_TO_KEEP_TARGET === 'number' ? G.LOGIC_RANGE_EXTENSION_TO_KEEP_TARGET : 25;
     this.extraSightCrownTowers = typeof G.EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS === 'number' ? G.EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS : 0;
+    this.extraSightBuildings = typeof G.EXTRA_SIGHT_RANGE_TO_BUILDING === 'number' ? G.EXTRA_SIGHT_RANGE_TO_BUILDING : 0;
     this.maxPushback = typeof G.MAX_PUSHBACK_LENGTH === 'number' ? G.MAX_PUSHBACK_LENGTH : 40000;
     this.laneSeqDeploy = G.LOGIC_LANE_ID_BASED_DEPLOY_SEQUENCE !== false;
     this.avoidBuildings = G.KS_POS_TO_TARGET_GROUND_AVOID_BUILDINGS !== false;
@@ -234,6 +251,13 @@ export class Battle {
     this.bestOfGame = cfg.bestOfGame ?? false;
     this.postEnd = cfg.postEnd ?? false;
     this.endScreenDelay = cfg.endScreenDelay ?? 4000;
+    const gnum = (k: string, d: number): number => (typeof G[k] === 'number' ? (G[k] as number) : d);
+    this.finishTimeMs = gnum('ATTACK_FINISH_TIME_MS', 0);
+    this.closerRange = gnum('LOGIC_CHARACTER_CONTINUOUS_DAMAGE_ATTACK_CLOSER', 0);
+    this.aoeWithoutTarget = G.ALLOW_AOE_ATTACKS_WITHOUT_TARGET === true;
+    this.cancelFar = G.LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE === true;
+    this.cancelRange = gnum('LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE_RANGE', 0);
+    this.spawnReachFromSpeed = G.LOGIC_SPAWN_PATHFIND_REACHED_RADIUS_FROM_SPEED === true;
 
     const mk = (team: number): Player => {
       const deckNames = cfg.decks[team];
@@ -598,7 +622,6 @@ export class Battle {
       && this.players[0].crowns === this.players[1].crowns) this.overtime = true;
     this.commitCommands();
     this.worldTick();
-    this.kingWave();
     this.checkEnd();
     this.tick++;
   }
@@ -615,7 +638,6 @@ export class Battle {
     if (this.recordEvents) this.events.length = 0;
     this.commitCommands();
     this.worldTick();
-    this.kingWave();
     this.endMs += 50;
     this.tick++;
   }
@@ -625,13 +647,21 @@ export class Battle {
    * side 1's) 0xd35de4(ctx, EndScreenDelay / 2, King x, y, its team, 0): the wave clock ctx +0x2c0 gains 50,
    * the radius is mapH·500·min(clock, duration) / duration (0 -> 32000 over 2000 ms), and every live actor
    * of that team with a health component within it (0x1294f34: box, then dx² + dy² <= r²) gets a queued
-   * kill (0xfca24c: damage = its HP, no owner, flag 8), in world-list order. Before the end no King is
-   * dead; at the end tick its kills are queued for the next (post-end) flush, so it runs only with
-   * postEnd. Not ported: the "both Princess towers at full HP" flag ctx +0x2c4 of its first call and the
-   * touchdown modes' variant (0xd35630).
+   * kill (0xfca24c: damage = its HP, no owner, flag 8), in world-list order. Before the first wave call
+   * (clock 0) a dead King whose team still has both Princess towers (vt+0x188) alive at full hitpoints
+   * (hp >= max, 0xfcbf74) sets ctx +0x2c4 (`fullTowersFlag`, serialised with the battle by 0xd39c14; no
+   * gameplay reader). Before the end no King is dead; the wave also runs in the battle ticks of a tiebreak
+   * after a double King kill (0x10ca9a0 -> 0xd33f74). Its kills at the end tick are queued for the next
+   * flush, which only a post-end world (postEnd) runs. Not ported: the touchdown modes' variant (0xd35630).
    */
   private kingWave(): void {
-    if (!this.postEnd || this.fixture) return;
+    if (this.fixture) return;
+    if (this.waveMs === 0) {
+      for (const p of this.players) {
+        if (p.king.alive) continue;
+        if (p.princess.every((t) => t.alive && t.hp >= t.maxHp)) { this.fullTowersFlag = true; break; }
+      }
+    }
     for (const p of this.players) {
       const k = p.king;
       if (k.alive) continue;
@@ -654,9 +684,9 @@ export class Battle {
    * no owner (no kill reward) and flag 8, which Damage_apply 0xfcaeec and Health_applyHit 0xfcb29c let
    * through during the tiebreak and after the end.
    */
-  private queueKill(t: Unit, amount: number): void {
+  private queueKill(t: Unit, amount: number, owner = -1): void {
     this.queueDamage(t, amount, -1, 0);
-    this.dmgNoOwner[this.dmgN - 1] = true;
+    this.dmgOwner[this.dmgN - 1] = owner;
     this.dmgForce[this.dmgN - 1] = true;
   }
 
@@ -677,12 +707,15 @@ export class Battle {
     // scripted actions (f89524): JumpHack_Check_Jump_Interval every 50 ms gives a jumping unit the
     // 50 ms JumpHack_Ignore_Pushback_Buff, which lasts until the next tick's buff phase
     for (let i = 0; i < units.length; i++) { const u = units[i]; if (u.def.jumpHack) u.pushImmune = u.jumping && u.state !== ST_DEAD; }
-    for (let i = 0; i < units.length; i++) this.updateActor(units[i]); // actor updates (vt+0x48)
-    this.updateProjectiles();
+    // actor updates (vt+0x48) over the world list, which 0xf8c50c keeps sorted by id: area effects
+    // (ids from 3,000,000), then projectiles (4,000,000), then characters and towers (5,000,000)
     this.updateAreaEffects();
+    this.updateProjectiles();
+    for (let i = 0; i < units.length; i++) this.updateActor(units[i]);
     this.flushDamage(); // world vt+0x90 damage queue flush
     this.projectileMaintenance(); // world vt+0x18 at the end of the tick
     this.removeDead();
+    this.kingWave(); // 0xd352f8, after the world in the battle tick 0xd33f74
   }
 
   /** Advance n ticks (stops at the end of the match, or with postEnd once the post-end world stopped). */
@@ -889,7 +922,7 @@ export class Battle {
           this.setupProjectile(pr, null, kx + (ox >> 2), ky + oy, kr * 3, null, ax, ay);
         }
         pr.delay = delay; // +0x1b4 (Projectile_setup p13)
-        this.projectiles.push(pr);
+        this.addProjectile(pr);
         delay += card.projectileInterval;
         angle += step;
       }
@@ -943,12 +976,20 @@ export class Battle {
       const entry = card.summon.find((e) => e.unit === def) ?? null;
       const deployMs = entry && entry.deployTime >= 0 ? entry.deployTime : def.deployTime;
       if (def.spawnPathfindSpeed > 0 && !this.fixture) {
-        // Miner / drill: tunnel from the King tower, then deploy at the target (D speed; path A).
+        // 0xd423bc creates the member at its formation point (lane from there, deploy x as hint), then
+        // 0xf84f4c starts the tunnel instead of a deploy state: the actor moves to its King tower
+        // (0xd394d4 leader / 0xd3c9f0 King; z = FlyingHeight), the movement destination (m+0x1cc,
+        // m+0x1d0, 0xfd0304) becomes the deploy point and the state 6 (no deploy timer yet).
+        const u = this.createUnit(team, card.name, def, ux, uy, 0, x);
+        if (u.lane < 1) u.lane = lane;
         const king = this.players[team].king;
-        const u = this.createUnit(team, card.name, def, king.x, king.y, Math.round(deployMs / TICK_MS));
+        u.x = king.x;
+        u.y = king.y;
+        u.z = def.flyingHeight;
         u.tunneling = true;
-        u.tunnelX = ux;
-        u.tunnelY = uy;
+        u.tunnelX = x;
+        u.tunnelY = y;
+        if (this.recordEvents) { const e = this.events[this.events.length - 1]; e.x = u.x; e.y = u.y; }
         continue;
       }
       let wait = 0;
@@ -968,41 +1009,6 @@ export class Battle {
       const u = this.createUnit(team, card.name, def, ux, uy, Math.round(wait / TICK_MS) + Math.round(deployMs / TICK_MS), x);
       if (u.lane < 1) u.lane = lane;
       u.waitTicks = Math.round(wait / TICK_MS); // state 11 until the delay ends (0xd423bc)
-    }
-  }
-
-  /**
-   * Spawn a summoned group. The actor joins the live list on the tick after commit and is
-   * active DeployTime later [OBS: 117 commit -> 118 live -> 138 moving]. Group members are
-   * staggered by SummonDeployDelay [OBS: Barbarians 145,147,...]. Formation positions on a
-   * circle of SummonRadius are an approximation (A).
-   */
-  private summon(team: number, card: string, def: UnitDef, count: number, radius: number, delayMs: number, x: number, y: number,
-    entry: SummonEntry | null = null, slot0 = 0, slots = count): void {
-    const r = slots > 1 ? (radius > 0 ? radius : 500) : 0;
-    const deployMs = entry && entry.deployTime >= 0 ? entry.deployTime : def.deployTime;
-    if (def.spawnPathfindSpeed > 0 && !this.fixture) {
-      // Miner / drill: tunnel from the King tower, then deploy at the target (D speed; path A).
-      const king = this.players[team].king;
-      const u = this.createUnit(team, card, def, king.x, king.y, Math.round(deployMs / TICK_MS));
-      u.tunneling = true;
-      u.tunnelX = x;
-      u.tunnelY = y;
-      return;
-    }
-    for (let i = 0; i < count; i++) {
-      let ux = x;
-      let uy = y;
-      if (r > 0) {
-        // start at 180 deg (left) and go around; team 1 mirrored
-        const deg = 180 + Math.floor(((slot0 + i) * 360) / slots);
-        ux = x + idiv(cos1e6(deg) * r, 1000000) * (team === 0 ? 1 : -1);
-        uy = y + idiv(sin1e6(deg) * r, 1000000) * (team === 0 ? 1 : -1);
-        ux = clamp(ux, 0, ARENA_W - 1);
-        uy = clamp(uy, 0, ARENA_H - 1);
-        if (!def.flyingHeight && !this.arena.walkableAt(ux, uy)) { ux = x; uy = y; }
-      }
-      this.createUnit(team, card, def, ux, uy, Math.round(deployMs / TICK_MS) + Math.round((i * delayMs) / TICK_MS));
     }
   }
 
@@ -1185,25 +1191,43 @@ export class Battle {
 
   // ---------------------------------------------------------------- targeting & attack
 
-  /** Legacy filter used by AEO/extra-target code: enemy, alive, targetable, air/ground compatible. */
-  private canAttack(u: Unit, t: Unit): boolean {
-    if (t.team === u.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling) return false;
-    const d = u.def;
-    if (t.isAir ? !d.attacksAir : !d.attacksGround) return false;
-    if (d.targetOnlyBuildings && !t.isBuilding) return false;
-    if (d.targetOnlyTroops && t.isBuilding) return false;
-    return true;
-  }
-
-  /** getRange 0xfc4afc: Range + own CollisionRadius (ADD_CHARACTER_RANGE_TO_RADIUS) [STAT]. */
+  /**
+   * AttackComp_getRange 0xfc4afc [STAT]: Range (the attack-sequence entry's range when it sets one, entry
+   * +0xf8) + own CollisionRadius (ADD_CHARACTER_RANGE_TO_RADIUS), less LOGIC_CHARACTER_CONTINUOUS_DAMAGE_
+   * ATTACK_CLOSER (500) for a character with a movement component and an attack sequence (mode != 0:
+   * Inferno Dragon) while it walks (state 1). (A target of class 3, an area effect, gets 250: targets are
+   * never area effects here. SpecialRange: no supported user.) Character vt+0x128 0xf94364, the approach
+   * distance of the path goal and the waypoint, is this same value.
+   */
   private getRange(u: Unit): number {
-    return u.def.range + u.radius;
+    const d = u.def;
+    let r = d.range;
+    if (u.seqIndex !== -1) {
+      const e = d.seq[u.seqIndex];
+      if (e !== undefined && e.range !== -1) r = e.range;
+    }
+    r += u.radius;
+    if (this.closerRange !== 0 && d.seqMode !== 0 && this.mobile(u) && this.nativeState(u) === 1) r -= this.closerRange;
+    return r;
   }
 
-  /** getMinRange 0xfc4a68: MinimumRange (+ own radius when set) [STAT]. */
+  /** AttackComp_getMinRange 0xfc4a68: MinimumRange (or the sequence entry's +0x100), + own radius when > 0 [STAT]. */
   private getMinRange(u: Unit): number {
-    const m = u.def.minimumRange;
+    let m = u.def.minimumRange;
+    if (u.seqIndex !== -1) {
+      const e = u.def.seq[u.seqIndex];
+      if (e !== undefined && e.minRange !== -1) m = e.minRange;
+    }
     return m > 0 ? m + u.radius : m;
+  }
+
+  /** Actor_getSightRange 0xf85d10: SightRange (or the sequence entry's +0xfc) [STAT]; callers add the own radius. */
+  private sightRange(u: Unit): number {
+    if (u.seqIndex !== -1) {
+      const e = u.def.seq[u.seqIndex];
+      if (e !== undefined && e.sight !== -1) return e.sight;
+    }
+    return u.def.sightRange;
   }
 
   /** AttackComp_inRange 0xfc3f74: dist2 <= (r_t + range + extra)^2, outside min range [STAT]. */
@@ -1235,7 +1259,10 @@ export class Battle {
    * AttackComp_isValidTarget 0xfc4008 -> 0xf94824 (subset for implemented mechanics) [STAT]. Units
    * waiting out a summon delay (state 11) are not targetable (vt148 0xf825e4 -> vtf8 0xf85420).
    * With `checkPending`, an attacker that has a Projectile skips a target whose pending damage
-   * would kill it (0xf94824 tail, see pendingOverkill).
+   * would kill it (0xf94824 tail, see pendingOverkill). An attacker with an attack sequence also
+   * refuses a character that is damage-immune (0xf817b0(t, 1, 0): attached, dashing with
+   * DashImmuneToDamageTime, the +0x1a4 immunity timer or flag +0x170); no supported character is ever
+   * in such a state, so the test is not written out.
    */
   private isValidTarget(u: Unit, t: Unit | null, checkPending: boolean): boolean {
     if (t === null || t === u) return false;
@@ -1379,7 +1406,7 @@ export class Battle {
   private findTarget(u: Unit): void {
     if (u.jumping) return; // states 3 and 5 keep their target (0xfc4c38)
     const d = u.def;
-    const sight = d.sightRange + u.radius;
+    const sight = this.sightRange(u) + u.radius;
     const minR = this.getMinRange(u);
     const exT = this.extraSightCrownTowers;
     const R = exT + sight; // grid query radius
@@ -1561,36 +1588,65 @@ export class Battle {
     u.finishMs = 0;
   }
 
-  /** AttackComp_setTarget 0xfc3cb4 (paths for implemented mechanics) [STAT]. */
+  /**
+   * AttackComp_setTarget 0xfc3cb4 (paths for implemented mechanics) [STAT]. Clears the keep flag (+0x18)
+   * and "attacked it" (+0x19). For a character with an attack sequence (mode != 0) every change resets
+   * the attack, so does a new target out of range; an ordinary character keeps its timer when the target
+   * is dropped (ResetHitTimerWhenNoTarget, LoadFirstHit and LoadAfterRetarget: no supported user) or the
+   * new one is in range. Then a path request unless an attack is finishing (+0x50).
+   */
   private setTarget(u: Unit, t: Unit | null, force: boolean, fromSearch: boolean): void {
     if (u.target === t && !force) return;
     u.target = t;
+    u.keepFlag = false; // +0x18
     u.attackedTarget = false; // +0x19
+    const seq = u.def.seqMode !== 0;
     if (t === null) {
-      // ordinary troop: timer kept (LoadFirstHit/LoadAfterRetarget units not supported yet)
+      if (seq) this.resetAttack(u);
     } else if (!this.pointInRange(t, u.x, u.y, this.getRange(u), this.getMinRange(u), false)) {
       this.resetAttack(u); // new target out of range
+    } else if (seq) {
+      this.resetAttack(u);
     }
-    // new target in range: timer kept [OBS: native Knight retargeted at tick 3, hit at tick 9]
-    u.rampMs = 0;
-    // every target change requests a path (0xfc3cb4 -> 0xfcca18) unless an attack is finishing
+    // ordinary character, new target in range: timer kept [OBS: native Knight retargeted at tick 3, hit at tick 9]
     if (u.finishMs === 0 && this.mobile(u) && u.state !== ST_DEAD) this.requestPath(u);
     void fromSearch;
   }
 
   /**
-   * Attack clock increment: 50 x max(100, strongest haste)/100 x clamp(100 - strongest slow, 0..100)/100
-   * with integer truncation [STAT time_delta_scale; OBS haste 150 -> 75, slow -35 -> 32, both -> 48].
+   * Target-removal notice, the attack component's vt+0x28 0xfc7640 with no replacement [STAT]: the world
+   * maintenance 0xf8c9d8 removes a dead character (crown towers are never removed, tower vt+0x18 0xfa1d94)
+   * and announces it to every actor (world vt+0x38 0xf969c4 -> 0xf8c8c8 -> actor vt+0x38: characters and
+   * towers 0xf81da4 -> 0xf8931c -> each component's vt+0x28). An attacker whose target it was drops it
+   * (+0x18 cleared); unless that target was kept through the pending-damage exemption this tick (+0x18
+   * set), an ordinary character (no LoadAfterRetarget / LoadFirstHit) with the attack timer > 0, HitSpeed
+   * > 1, ATTACK_FINISH_TIME_MS > 0, no out-and-back projectile in flight (+0x58) and no
+   * OverrideAttackFinishTime starts the finish wait (+0x50 = 1): 0xfc7e20 then searches no new target
+   * until it has waited ATTACK_FINISH_TIME_MS, and resets the attack. The attack timer is not touched.
    */
-  private clockDelta(u: Unit): number {
-    if (u.buffs.length === 0) return TICK_MS;
+  private targetRemoved(a: Unit): void {
+    const kept = a.keepFlag;
+    a.target = null;
+    a.keepFlag = false;
+    if (kept) return;
+    const d = a.def;
+    if (a.atkTimer > 0 && d.hitSpeed > 1 && this.finishTimeMs > 0 && a.axe === null && !d.overrideFinish) a.finishMs = 1;
+  }
+
+  /**
+   * Buff_timeScale 0xfc27b8 of `v` (the attack clock step): v x max(100, strongest haste)/100 x
+   * clamp(100 - strongest slow, 0..100)/100 with integer truncation [STAT; OBS haste 150 -> 75, slow -35 -> 32,
+   * both -> 48].
+   */
+  private clockDelta(u: Unit, v = TICK_MS): number {
+    if (u.buffs.length === 0) return v;
     let haste = 100;
     let slow = 0;
     for (const b of u.buffs) {
       const m = b.def.hitSpeedMul;
       if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
     }
-    return idiv(idiv(TICK_MS * haste, 100) * clamp(100 + slow, 0, 100), 100);
+    return idiv(idiv(v * haste, 100) * clamp(100 + slow, 0, 100), 100);
   }
 
   /** Movement speed vtb8 0xf82a18 with buffScale 0xfc26d4 and charge multiplier [STAT]. */
@@ -1610,11 +1666,20 @@ export class Battle {
     return v;
   }
 
-  /** AttackComp_advanceClock 0xfc90b0 [STAT]. */
+  /**
+   * AttackComp_advanceClock 0xfc90b0 [STAT]. The base step is 50, or half the attack-sequence entry's
+   * clock percent (+0xe8; 100 for VariableDamage entries) while the sequence index is set, then
+   * Buff_timeScale.
+   */
   private advanceClock(u: Unit): void {
     // once the battle is over (0xd4220c) the clock and the loaded flag are zeroed every update: no hit
     if (this.result !== null) { u.atkTimer = 0; u.loaded = false; return; }
-    const dt = this.clockDelta(u);
+    let base = TICK_MS;
+    if (u.seqIndex !== -1) {
+      const c = u.def.seq[u.seqIndex].clock;
+      base = (c < 0 ? c + 1 : c) >> 1;
+    }
+    const dt = this.clockDelta(u, base);
     if (dt <= 0) { u.loaded = false; return; }
     const HS = u.def.hitSpeed;
     let t = u.atkTimer;
@@ -1642,7 +1707,44 @@ export class Battle {
     }
   }
 
-  /** AttackComp_update 0xfc7e20 (ordinary attack path) [STAT]. Runs for every actor before movement. */
+  /** 0xde0e5c [STAT]: the sequence position whose entry the timer is in (durations in index order), else the last. */
+  private seqIndexAt(d: UnitDef, timer: number): number {
+    const seq = d.seq;
+    for (let i = 0; i < seq.length; i++) {
+      if (timer < seq[i].duration) return i;
+      timer -= seq[i].duration;
+    }
+    return seq.length - 1;
+  }
+
+  /**
+   * 0xfc7d98 [STAT]: true when a loaded swing cannot finish without a target. With
+   * ALLOW_AOE_ATTACKS_WITHOUT_TARGET it can for a SelfAsAoeCenter character and for one with a projectile
+   * that does not home.
+   */
+  private needsTarget(u: Unit): boolean {
+    if (!this.aoeWithoutTarget) return true;
+    const d = u.def;
+    if (d.selfAsAoeCenter) return false;
+    if (d.projectile !== null && !d.projectile.homing) return false;
+    return true;
+  }
+
+  /**
+   * AttackComp_update 0xfc7e20 (paths for supported characters) [STAT]. Runs for every actor before
+   * movement: countdowns; the out-and-back wait; the keep test (range + 25 for characters, + 500 for a
+   * ranged one mid-swing; the pending-damage exemption sets the keep flag +0x18); otherwise the search
+   * phase: a character with an attack sequence drops a valid target that left its range while the timer
+   * runs and starts the finish wait (+0x50 = 1), and a search runs while the retarget cooldown and the
+   * finish wait are 0. With no target and no loaded swing that could finish without one (0xfc7d98), a
+   * running finish wait counts up to AttackFinishTime (OverrideAttackFinishTime) or ATTACK_FINISH_TIME_MS
+   * and then resets the attack (the actor stays in its attack state until the next update); otherwise the
+   * attack resets and the actor resumes its default state. Else the swing: in range or a swing in progress
+   * (hit-started flag, COMBAT_CMP_USE_HIT_STARTED) and not knocked back -> clock step, the sequence index
+   * (modes 2/3: 0xde0e5c), and on a HitSpeed boundary with a target (or loaded without needing one) the
+   * hit: execute, then MultipleTargets - 1 extra executes (0xfc458c picks; AllTargetsHit: the current
+   * target again when none is found).
+   */
   private attackUpdate(u: Unit): void {
     if (u.state !== ST_ACTIVE || u.tunneling) return;
     if (u.tower === TOWER_KING && u.kingState !== KING_ACTIVE) return;
@@ -1675,35 +1777,42 @@ export class Battle {
     }
     // keep a valid target in range; a unit that already attacked it and has
     // KeepTargetWithPendingDamage keeps it ignoring the pending damage (CURRENT_TARGET_IGNORES_PENDING_DAMAGE)
+    u.keepFlag = false;
     let kept = false;
     if (tg && keep) {
-      kept = this.isValidTarget(u, tg, true)
-        || (u.attackedTarget && d.keepTargetWithPendingDamage && this.currentIgnoresPending && this.isValidTarget(u, tg, false));
+      kept = this.isValidTarget(u, tg, true);
+      if (!kept && u.attackedTarget && d.keepTargetWithPendingDamage && this.currentIgnoresPending) {
+        kept = this.isValidTarget(u, tg, false);
+        u.keepFlag = kept;
+      }
     }
     if (!kept) {
+      // LAB_00fc8454: a sequence character loses a valid target that left its range mid-attack
+      if (d.seqMode !== 0 && tg && this.isValidTarget(u, tg, true) && !this.inRange(u, tg, 0) && u.atkTimer > 0) {
+        this.setTarget(u, null, false, false);
+        u.finishMs = 1;
+      }
       if (u.retargetCd === 0 && u.finishMs === 0) this.findTarget(u);
       if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
     }
     if (u.jumping) { this.resetAttack(u); u.locked = false; return; } // states 3/5: no attack
     const t = u.target;
-    if (!t && !u.loaded) {
+    if (!t && (!u.loaded || this.needsTarget(u))) {
       if (u.finishMs > 0) {
         u.finishMs += 50;
-        if (u.finishMs < 250) return; // ATTACK_FINISH_TIME_MS
-        this.resetAttack(u);
-        u.locked = false;
+        if (u.finishMs < (d.overrideFinish ? d.attackFinishTime : this.finishTimeMs)) return;
+        this.resetAttack(u); // LAB_00fc866c: no resumeDefaultState, the attack state stays this tick
         return;
       }
-      this.resetAttack(u);
+      this.resetAttack(u); // LAB_00fc8b54: reset and resume the default state
       u.locked = false;
       return;
     }
     const HS = d.hitSpeed;
     const t0 = u.atkTimer;
     const inR = t ? this.inRange(u, t, 0) : false;
-    const hitStarted = u.atkTimer % HS > 50;
-    // no swing while knocked back (m+0x1fc); otherwise in range or mid-swing
-    const doSwing = !u.kbActive && (inR || hitStarted);
+    // no swing while knocked back (m+0x1fc / m+0x1f8); otherwise in range or mid-swing (+0x3d)
+    const doSwing = !u.kbActive && u.slideN <= 0 && (inR || u.hitStarted);
     if (!doSwing) {
       // not swinging: the attack resets and the unit resumes walking [STAT 0xfc7e20 LAB_00fc8b54]
       this.resetAttack(u);
@@ -1713,40 +1822,103 @@ export class Battle {
     u.locked = true;
     const q0 = Math.floor(t0 / HS);
     if (t) { u.dirX = t.x - u.x; u.dirY = t.y - u.y; }
-    const before = u.atkTimer;
     this.advanceClock(u);
-    if (d.variableDamage && t) u.rampMs += u.atkTimer - before;
     const q1 = Math.floor(u.atkTimer / HS);
     u.hitStarted = u.atkTimer % HS > 50;
-    const doHit = q0 < q1 && (t !== null || u.loaded);
+    if ((d.seqMode & ~1) === 2) u.seqIndex = this.seqIndexAt(d, u.atkTimer);
+    const doHit = q0 < q1 && (t !== null || (u.loaded && !this.needsTarget(u)));
     if (!doHit) return;
     u.hitStarted = false;
     u.loaded = false;
-    this.execute(u, t);
+    const n = d.multipleTargets; // (sequence override +0x118: -1 for VariableDamage entries)
+    this.execute(u, t, n < 2 ? -1 : 0);
+    for (let i = 0; i < n - 1; i++) {
+      let pick = this.nextMultiTarget(u, i);
+      // no extra target: AllTargetsHit hits the current target again, else only the view's attack call
+      if (pick === null && d.allTargetsHit) pick = u.target;
+      if (pick !== null) this.execute(u, pick, i + 1);
+    }
   }
 
-  /** AttackComp_execute 0xfc619c + meleeHit 0xfc7080 (implemented paths) [STAT]. */
-  private execute(u: Unit, t: Unit | null): void {
+  /**
+   * Extra target of a MultipleTargets attack, 0xfc458c(c, slot, no shared list) [STAT] (UniqueMultipleTargets
+   * and RememberMultipleTargets: no supported user): candidates of the spatial-grid query (0xf9afc8, plain
+   * circle 0xf95434, radius = sight + own radius + max(EXTRA_SIGHT_RANGE_TO_CROWN_TOWERS,
+   * EXTRA_SIGHT_RANGE_TO_BUILDING), 0xfc4430) around the attacker in grid order, skipping the current
+   * target and (slot >= 1) the pick of the slot before; each must pass isValidTarget with the pending
+   * check (the buff invisibility counter +0x34: no supported buff), lie outside the minimum range (compared
+   * as (minRange − its radius)²) and within its radius + sight + (crown tower: the crown-tower extra;
+   * building: the building extra), with SightClip / SightClipSide as in findTarget; the nearest by plain
+   * dist2 wins, ties keep the earlier (target priority 0xf9469c is 0 for every supported attacker). The
+   * pick must then pass isValidTarget again and be in attack range (Actor_isPointInRange with the range
+   * and minimum range).
+   */
+  private nextMultiTarget(u: Unit, slot: number): Unit | null {
+    const d = u.def;
+    const sight = this.sightRange(u) + u.radius;
+    const minR = this.getMinRange(u);
+    const exB = this.extraSightBuildings;
+    const exT = this.extraSightCrownTowers;
+    const qr = sight + (exT > exB ? exT : exB);
+    const prev = slot >= 1 ? this.nextMultiTarget(u, slot - 1) : null;
+    const list = this.gridQuery(u.x, u.y, qr, u).slice();
+    let best: Unit | null = null;
+    let bestD = 0x7fffffff;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (t === prev || t === u.target || !this.isValidTarget(u, t, true)) continue;
+      const dx = t.x - u.x;
+      const dy = t.y - u.y;
+      const d2 = dx * dx + dy * dy;
+      if (minR >= 1) {
+        const m = minR - t.radius;
+        if (d2 < m * m) continue;
+      }
+      const lim = t.radius + sight + (t.tower !== TOWER_NONE ? exT : t.isBuilding ? exB : 0);
+      if (d2 > lim * lim) continue;
+      const clip = d.sightClip;
+      if (clip >= 1 && !u.isBuilding) {
+        const L = Math.max(0, lim - clip);
+        if (u.team === 0 ? dy < -L : dy > L) continue;
+      }
+      const side = d.sightClipSide;
+      if (side > 0 && Math.abs(dx) > Math.max(0, lim - side)) continue;
+      if (d2 < bestD) { best = t; bestD = d2; }
+    }
+    if (best === null || !this.isValidTarget(u, best, true)) return null;
+    return this.pointInRange(best, u.x, u.y, this.getRange(u), this.getMinRange(u), false) ? best : null;
+  }
+
+  /**
+   * AttackComp_execute 0xfc619c + meleeHit 0xfc7080 (implemented paths) [STAT]. `slot` is the multi-target
+   * index (-1 for a single-target attack). LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE cancels the hit of a
+   * non-building whose target is beyond range + 1500. Damage: the attack-sequence entry's (0xde0cec) when
+   * the sequence has 2+ entries, else Damage (DamageSpecial for a charged melee hit). Melee: single target
+   * (BuffOnDamage with it) or the splash around the target snapshot / self (SelfAsAoeCenter), also without
+   * a target; ranged: the projectile toward the snapshot (also without a target). A Kamikaze character
+   * then dies (0xf83018), cancelled or not.
+   */
+  private execute(u: Unit, t: Unit | null, slot: number): void {
     const d = u.def;
     u.attackedTarget = true; // +0x19
     u.lastHitTick = this.tick;
-    // LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE: target beyond range + 1500 -> no damage
-    const cancelled = !u.isBuilding && t !== null && !this.pointInRange(t, u.x, u.y, 1500 + this.getRange(u), 0, false);
+    const cancelled = this.cancelFar && !u.isBuilding && t !== null
+      && !this.pointInRange(t, u.x, u.y, this.cancelRange + this.getRange(u), 0, false);
     u.load = d.loadTime; // !LoadFirstHit
-    if (this.recordEvents && t) {
-      this.events.push({ tick: this.tick, type: d.projectile ? 'shoot' : 'hit', team: u.team, x: t.x, y: t.y, name: d.name, id: u.id,
-        src: t.id, fx: u.charge >= 10000 ? 1 : 0 });
+    const seq = d.seq.length >= 2 ? d.seq[u.seqIndex < 0 ? 0 : u.seqIndex] : null;
+    if (this.recordEvents) {
+      const ev: BattleEvent = { tick: this.tick, type: d.projectile ? 'shoot' : 'hit', team: u.team, x: t ? t.x : u.tsx, y: t ? t.y : u.tsy,
+        name: d.name, id: u.id, src: t ? t.id : -1, fx: u.charge >= 10000 ? 1 : 0 };
+      if (cancelled) ev.cancelled = true;
+      if (seq !== null) ev.seq = u.seqIndex;
+      this.events.push(ev);
     }
-    if (!cancelled && t) {
+    if (!cancelled) {
       if (d.projectile) {
         this.fireProjectile(u, t, d.projectile);
       } else {
-        let dmg = u.charge >= 10000 && d.damageSpecial > 0 ? d.damageSpecial : d.damage;
-        if (d.variableDamage) {
-          // Inferno ramp: Damage, VariableDamage2, VariableDamage3 after VariableDamageTime1/2 (D)
-          const [t1, t2] = d.variableDamageTime;
-          dmg = u.rampMs < t1 ? d.variableDamage[0] : u.rampMs < t1 + t2 ? d.variableDamage[1] : d.variableDamage[2];
-        }
+        let dmg = seq !== null ? seq.damage : d.damage;
+        if (u.charge >= 10000 && d.damageSpecial > 0) dmg = d.damageSpecial;
         if (d.areaDamageRadius > 0) {
           const cx = d.selfAsAoeCenter ? u.x : u.tsx;
           const cy = d.selfAsAoeCenter ? u.y : u.tsy;
@@ -1758,42 +1930,32 @@ export class Battle {
             const flags = this.defs.data.units[d.name]?.DisableMeleeAeoDamageEffect === true ? 1 : 0;
             this.areaDamageRings(u.team, cx, cy, d.areaDamageRadius, 0, flags, null, 0, u.x, u.y, u.id, d.name);
           }
-        } else {
+        } else if (t !== null) {
           // BuffOnDamage lands with the damage (flush callback 0xfd09ac)
           this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id,
             u.charge >= 10000 ? 3 : 2, d.name, u.tsx - u.x, u.tsy - u.y);
           this.viewHit(t, u.tsx - u.x, u.tsy - u.y);
-          if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
         }
       }
     }
     if (u.charge >= 10000) u.charge = 0; // charge spent by the hit
-    if (d.kamikaze) {
-      u.hp = 0;
-      u.state = ST_DEAD;
-    }
+    if (d.kamikaze) this.kamikazeDie(u);
+    void slot; // the multi-projectile side angle (slot·90 − 45): no supported multi-target attacker has a projectile
   }
 
-  /** Electro Wizard: also hit the nearest other enemies in range, up to MultipleTargets (D; order A). */
-  private extraTargets(u: Unit, first: Unit, dmg: number): void {
-    const d = u.def;
-    const units = this.units;
-    const picked: Unit[] = [first];
-    while (picked.length < d.multipleTargets) {
-      let best: Unit | null = null;
-      let bestD = 0;
-      for (let i = 0; i < units.length; i++) {
-        const t = units[i];
-        if (picked.includes(t) || !this.canAttack(u, t) || !this.inRange(u, t, 0)) continue;
-        const dx = t.x - u.x;
-        const dy = t.y - u.y;
-        const d2 = dx * dx + dy * dy;
-        if (best === null || d2 < bestD) { best = t; bestD = d2; }
-      }
-      if (best === null) break;
-      picked.push(best);
-      this.queueDamage(best, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id, 2, d.name);
-    }
+  /**
+   * Kamikaze death 0xf83018, at the end of every AttackComp_execute of a Kamikaze character, cancelled or
+   * not [STAT]: actor +0x171 = 1 (read only with KamikazeTime > 0 or clone death spawns); with KamikazeTime
+   * 0 (every supported user) the buffs carrying a DeathSpawn are removed (0xfc259c) and a Shield buff
+   * absorbs 99999 (0xfc2100), neither with a supported user, then a kill is queued on its own health
+   * (0xfca24c: damage = its hitpoints now, owner = its own player, flag 8). The flush of this tick applies
+   * it and runs the death 0xf83990 (death spawn: Battle Ram's Barbarians; DeathAreaEffect; `death` event).
+   * Until then the character stays in the world (attackable, colliding). No health component: removed
+   * without a death (+0x173; no supported user).
+   */
+  private kamikazeDie(u: Unit): void {
+    if (u.maxHp <= 0) return;
+    this.queueKill(u, u.hp, u.team);
   }
 
   /**
@@ -1803,9 +1965,9 @@ export class Battle {
    * starts ProjectileStartRadius from the shooter toward the aim, plus ProjectileYOffset (negated
    * for team 1), at the shooter's height + ProjectileStartZ, then Projectile_setup. An
    * out-and-back projectile (PingpongVisualTime) is linked to the shooter's attack (0xfc7914) and
-   * steps by the shooter's buff time scale of 50 ms (0xfc27b8).
+   * steps by the shooter's buff time scale of 50 ms (0xfc27b8). Then World_addActor (addProjectile).
    */
-  private fireProjectile(u: Unit, t: Unit, def: ProjectileDef): void {
+  private fireProjectile(u: Unit, t: Unit | null, def: ProjectileDef): void {
     const ax = u.tsx;
     const ay = u.tsy;
     const dx = ax - u.x;
@@ -1830,7 +1992,20 @@ export class Battle {
       u.axeWait = def.pingpongTime;
       pr.pingStep = this.clockDelta(u);
     }
-    this.projectiles.push(pr);
+    this.addProjectile(pr);
+  }
+
+  /**
+   * World_addActor for a projectile (0xf8c2a8 -> 0xf8c50c, first insert): it waits in the pending list
+   * until the end-of-tick maintenance, and its vt+0x28 0xf934bc runs now: a piercing projectile without
+   * PingpongVisualTime (or a deflected one) runs the collision step 0xf8f2d0 at its position with
+   * ProjectileRadius + ProjectileStartExtraRadius, so it can hit at its spawn point in the tick it is
+   * created (damage in this tick's flush) [STAT].
+   */
+  private addProjectile(p: Projectile): void {
+    this.projectiles.push(p);
+    const def = p.def;
+    if (def.pierce && def.pingpongTime <= 0) this.projCollide(p, p.x, p.y, def.startExtraRadius);
   }
 
   /**
@@ -1962,6 +2137,7 @@ export class Battle {
     this.dmgSrc[i] = srcId;
     this.dmgFx[i] = fx;
     this.dmgFxSrc[i] = fxSrc;
+    this.dmgOwner[i] = 1 - t.team;
   }
 
   /**
@@ -2053,7 +2229,7 @@ export class Battle {
     else u.pendingDur = (u.pendingDur > 50 ? u.pendingDur : 50) - 50;
     // death-spawn immunity (0xf800bc): +0x178 += 50, cleared once past ATTACK_FINISH_TIME_MS (250)
     if (u.spawnImmune && (u.spawnImmuneMs += 50) > 250) u.spawnImmune = false;
-    if (u.tunneling) { this.tunnel(u); return; }
+    if (u.tunneling && !this.tunnelEnd(u)) return;
     if (u.state === ST_DEPLOYING) {
       if (u.deployTicks > 0) u.deployTicks--;
       if (u.deployTicks === 0) {
@@ -2069,8 +2245,12 @@ export class Battle {
       return;
     }
     if (u.tower === TOWER_KING && u.kingState === KING_ACTIVATING) {
-      // 3300 ms ACTIVATING action [DATA]; with LoadTime gives first shot 621 -> 697 [OBS].
-      if (--u.kingTicks <= 0) u.kingState = KING_ACTIVE;
+      // 3300 ms ACTIVATING action [DATA]; with LoadTime gives first shot 621 -> 697 [OBS]. Its NextAction,
+      // the ActionFilter is_npc_battle() (false here), plays King_player_activate (king_tower.toml).
+      if (--u.kingTicks <= 0) {
+        u.kingState = KING_ACTIVE;
+        if (this.recordEvents) this.events.push({ tick: this.tick, type: 'kingActivate', team: u.team, x: u.x, y: u.y, name: 'King_player_activate', id: u.id });
+      }
       return;
     }
     if (u.def.spawn) this.updateSpawner(u);
@@ -2081,10 +2261,13 @@ export class Battle {
   /**
    * End of the character update, 0xf7fee4 [STAT] (frozen path): while the buff time scale of 50 ms
    * is 0 (a −100 HitSpeedMultiplier: Freeze, Zap and Electro stuns) and no buff carries a
-   * Projectile, the target is dropped (setTarget(null): the attack timer and the swing in progress
-   * are kept, ResetHitTimerWhenNoTarget defaults to false) and the attack component is disabled
-   * (component mask bit 0, COMBAT_DISABLED) until a character update ends unfrozen. The update of
-   * the tick a stun lands still runs, with a zero clock step.
+   * Projectile, the target is dropped (setTarget(null): an ordinary character keeps the attack timer
+   * and the swing in progress, ResetHitTimerWhenNoTarget defaults to false; an attack-sequence
+   * character such as the Inferno Tower resets its attack, 0xfc3cb4) and the attack component is
+   * disabled (component mask bit 0, COMBAT_DISABLED) until a character update ends unfrozen. A stun
+   * applied in the flush (BuffOnDamage, TargetBuff) still lets the next tick's attack update run with a
+   * zero clock step; one an area effect applies in its update (Zap, Freeze) is seen by the same tick's
+   * character update, area effects updating first.
    */
   private combatGate(u: Unit): void {
     if (u.buffs.length !== 0 && this.clockDelta(u) === 0) {
@@ -2135,9 +2318,9 @@ export class Battle {
     return idiv(clamp(100 + slow, 0, 100) * haste, 100);
   }
 
-  /** Native actor state for the movement predicates (actor+0x11c): 4 deploying, 2 attacking, 1 walking. */
+  /** Native actor state for the movement predicates (actor+0x11c): 6 tunnelling, 4 deploying, 5 jumping, 2 attacking, 1 walking. */
   private nativeState(u: Unit): number {
-    return u.state === ST_DEPLOYING ? 4 : u.jumping ? 5 : u.locked ? 2 : 1;
+    return u.tunneling ? 6 : u.state === ST_DEPLOYING ? 4 : u.jumping ? 5 : u.locked ? 2 : 1;
   }
 
   /** Has a movement component (Speed > 0 characters). */
@@ -2146,24 +2329,26 @@ export class Battle {
   }
 
   /**
-   * MovementComp_update 0xfcc578 [STAT]: knockback phase; path request while walking (0xfcca18);
-   * avoidance sidestep (0xfce42c) and its decay; collision push (0xfce900); speed (vtb8, 0 unless
-   * walking) with stop-and-go (StopMovementAfterMS/WaitMS); path waypoints in sub-steps of at most
-   * 250 units, each through geometricStep; without a path one step toward getWaypoint (0xfcedb0).
+   * MovementComp_update 0xfcc578 [STAT]: knockback phase; path request while walking or tunnelling
+   * (vtc0 0xf82c94: states 1, 6, 7; 0xfcca18); avoidance sidestep (0xfce42c, vtd0) and its decay;
+   * collision push (0xfce900, vtd8: not in state 6); speed (vtb8 0xf82a18: walking speed, the raw
+   * SpawnPathfindSpeed in state 6, else 0) with stop-and-go (StopMovementAfterMS/WaitMS); path
+   * waypoints in sub-steps of at most 250 units, each through geometricStep with facing (vtc8:
+   * states 1 and 6 here); without a path one step toward getWaypoint (0xfcedb0).
    */
   private movementUpdate(u: Unit): void {
-    if (u.state === ST_DEAD || u.tunneling || !this.mobile(u)) return;
+    if (u.state === ST_DEAD || !this.mobile(u)) return;
     if (u.slideN > 0) { this.slideStep(u); return; }
     if (u.kbActive) { this.knockbackStep(u); return; }
     const st = this.nativeState(u);
     if (st === 5) { this.jumpStep(u); return; }
-    if (st === 1) this.requestPath(u);
-    if (st !== 2) this.avoidSidestep(u); // vtd0: not in states 0,2,3,5..8,10,12,13
+    if (st === 1 || st === 6) this.requestPath(u);
+    if (st !== 2 && st !== 6) this.avoidSidestep(u); // vtd0: not in states 0,2,3,5..8,10,12,13
     const s = u.sidestep;
     u.sidestep = s < 1 ? (s > -11 ? 0 : s + 10) : (s < 11 ? 0 : s - 10);
-    this.collidePush(u); // vtd8: every state here
-    let speed = st === 1 ? this.moveSpeed(u) : 0;
-    const facing = st === 1; // vtc8
+    if (st !== 6) this.collidePush(u); // vtd8: not in states 6, 8, 12, 13
+    let speed = st === 1 ? this.moveSpeed(u) : st === 6 ? u.def.spawnPathfindSpeed : 0;
+    const facing = st === 1 || st === 6; // vtc8
     u.moving = false;
     if (speed > 0) {
       // stop-and-go walking clock (movement +0x1f0) [STAT]
@@ -2325,18 +2510,24 @@ export class Battle {
    * coordinates, as natively); keep the current path while its goal cell is unchanged, unless the
    * friendly occlusion changed (ground units); flyers get the goal cell alone; ground units run
    * A* (keeping the old path when the occlusion change touches neither path), then the path flag
-   * 0xfcf680 and advancePath 0xfcddb8. Without a target the default lane goal (0xd43a4c) is not
-   * ported: the path is kept (A).
+   * 0xfcf680 and advancePath 0xfcddb8. A set movement destination (m+0x1cc/m+0x1d0 >= 0: the
+   * tunnel's deploy point) gives the goal cell (x/500, y/500) instead, with no path flag. Without a
+   * target the default lane goal (0xd43a4c) is not ported: the path is kept (A).
    */
   private requestPath(u: Unit): void {
     const t = u.target;
-    if (!t) return;
+    if (!t && !u.tunneling) return;
     const A = this.arena;
     const W = A.w;
     let gx: number;
     let gy: number;
-    const g = this.goalCell(u, t, this.getRange(u));
-    if (g >= 0) { gx = g >> 16; gy = g & 0xffff; } else { gx = t.x; gy = t.y; }
+    if (u.tunneling) {
+      gx = trunc(u.tunnelX / CELL);
+      gy = trunc(u.tunnelY / CELL);
+    } else {
+      const g = this.goalCell(u, t!, this.getRange(u));
+      if (g >= 0) { gx = g >> 16; gy = g & 0xffff; } else { gx = t!.x; gy = t!.y; }
+    }
     const ground = !u.isAir;
     let fresh = true;
     if (u.pathIdx < u.path.length) {
@@ -2360,13 +2551,18 @@ export class Battle {
         u.path = oldPath;
         u.pathIdx = oldIdx;
       }
-      u.pathBack = this.pathBackwards(u, t);
+      u.pathBack = t ? this.pathBackwards(u, t) : false;
     }
     if (u.pathIdx < u.path.length) this.advancePath(u);
   }
 
+  /**
+   * Cost class for Path_cellCost 0x11d9304: water is passable for Hovering (vt+0x118) or JumpEnabled
+   * characters; state 6 (tunnelling) takes the default cost on every land cell (no roads, no dynamic
+   * occlusion).
+   */
   private pathClass(u: Unit): number {
-    return u.def.jumpEnabled || u.def.hovering ? PATH_CROSS : PATH_WALK;
+    return (u.def.jumpEnabled || u.def.hovering ? PATH_CROSS : PATH_WALK) | (u.tunneling ? PATH_SPAWN : 0);
   }
 
   /**
@@ -2533,7 +2729,7 @@ export class Battle {
    * Movement_geometricStep 0xfcef48 [STAT]: velocity quantised to 1/256 with step <= 250; facing set
    * to the step direction (length 256); sidestep rotation; plus the averaged collision push (capped at
    * length 150); then Arena_collision. Returns "reached": remaining distance along the waypoint
-   * direction < 1001. Charge accrues step*1000/ChargeRange while walking; otherwise it resets.
+   * direction < 1001 (state 6: <= SpawnPathfindSpeed). Charge accrues step*1000/ChargeRange while walking; otherwise it resets.
    */
   private geometricStep(u: Unit, tx: number, ty: number, stepIn: number, setFacing: boolean, flag5: boolean): boolean {
     const dx0 = tx - u.x;
@@ -2590,7 +2786,8 @@ export class Battle {
         u.chargeHit = true;
       }
     }
-    return remaining < 1001;
+    // LOGIC_SPAWN_PATHFIND_REACHED_RADIUS_FROM_SPEED: in state 6 a waypoint is reached within SpawnPathfindSpeed
+    return remaining < (u.tunneling && this.spawnReachFromSpeed ? u.def.spawnPathfindSpeed + 1 : 1001);
   }
 
   /**
@@ -2599,7 +2796,7 @@ export class Battle {
    * bounds the same way the grid edge does.
    */
   private arenaCollide(u: Unit, vx: number, vy: number, block: boolean): void {
-    if (!block && u.state === ST_DEPLOYING && !u.isAir) block = true;
+    if (!block && u.state === ST_DEPLOYING && !u.tunneling && !u.isAir) block = true; // state 4 only
     this.arena.collide(u.x, u.y, vx, vy, block, this.colOut);
     u.x = this.colOut.x;
     u.y = this.colOut.y;
@@ -2898,20 +3095,33 @@ export class Battle {
     return bx | (by << 16);
   }
 
-  /** Tunnel at SpawnPathfindSpeed in a straight line, then start deploying (A: straight path). */
-  private tunnel(u: Unit): void {
-    const dx = u.tunnelX - u.x;
-    const dy = u.tunnelY - u.y;
-    const d = isqrt(dx * dx + dy * dy);
-    const sp = u.def.spawnPathfindSpeed;
-    if (d <= sp) {
-      u.x = u.tunnelX;
-      u.y = u.tunnelY;
-      u.tunneling = false;
-      return;
+  /**
+   * End of the tunnel, at the top of the character update 0xf800bc [STAT]: in state 6 with the path
+   * used up (m+0x30 < 1; no NO_MOVE or captured tag, which a tunnelling actor cannot receive) the
+   * actor snaps to its destination (m+0x1cc, m+0x1d0) at z = FlyingHeight, the destination is cleared
+   * (0xfd0310) and it deploys: DeployTime 0 -> state 1, else state 4 (Actor_setState 0xf7f2c8: deploy
+   * timer = DeployTime) facing forward, (0, 256) for the side at low y and (0, -256) for the other
+   * (0xf9414c). The rest of the update runs on, so the deploy timer drops by 50 at once. The view hears
+   * of it through vt+0x170. SpawnPathfindMorph (0xf812e4: Goblin Drill) and OnDeployPathfindingStopAction
+   * have no supported user. Returns false while the actor is still tunnelling.
+   */
+  private tunnelEnd(u: Unit): boolean {
+    if (u.pathIdx < u.path.length) return false;
+    u.x = u.tunnelX;
+    u.y = u.tunnelY;
+    u.z = u.def.flyingHeight;
+    u.tunneling = false;
+    const ticks = Math.round(u.def.deployTime / TICK_MS);
+    if (ticks <= 0) {
+      u.state = ST_ACTIVE;
+    } else {
+      u.state = ST_DEPLOYING;
+      u.deployTicks = ticks;
+      u.deployTotal = ticks;
+      u.dirX = 0;
+      u.dirY = u.team === 0 ? 256 : -256;
     }
-    u.x += idiv(dx * sp, d);
-    u.y += idiv(dy * sp, d);
+    return true;
   }
 
   /**
@@ -3099,12 +3309,16 @@ export class Battle {
     }
   }
 
-  /** Area effect objects join the world list at the end of the tick; first update next tick. */
+  /**
+   * Area effect objects join the world list at the end of the tick; first update next tick. A
+   * SpawnAreaEffectObject is not created here: the constructor (0xf79ca0) sets the pending flag +0xf8
+   * and the parent's first update (0xf7a34c -> 0xf7b254) creates the child at the parent's position,
+   * which joins the world at the end of that tick.
+   */
   private spawnAreaEffect(team: number, def: AreaEffectDef, x: number, y: number): void {
     const a = new AreaEffect(this.nextAeoId++, def, team, x, y, this.tick);
     this.newAeos.push(a);
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'aoe', team, x, y, name: def.name, id: a.id });
-    if (def.spawnAreaEffect) this.spawnAreaEffect(team, def.spawnAreaEffect, x, y);
   }
 
   private newAeos: AreaEffect[] = [];
@@ -3126,15 +3340,10 @@ export class Battle {
   }
 
   /**
-   * Area effects hit at HitSpeedOffset, then every HitSpeed while age <= LifeDuration (a single
-   * hit when HitSpeed is 0). Targets: actors matching the Filter whose circle meets the radius;
-   * HitBiggestTargets takes the MaximumTargets highest-HP ones, OneHitPerTarget never repeats.
-   * Hit schedule chosen to give Lightning 3 strikes (A on exact timing).
-   */
-  /**
-   * AreaEffect_update 0xf7a34c [STAT]: life -= 50 per update; a pulse when the elapsed updates
+   * AreaEffect_update 0xf7a34c [STAT]: first the pending SpawnAreaEffectObject (0xf7b254); life -= 50
+   * per update; a pulse when the elapsed updates
    * (LifeDuration - lifeBefore)/50 equal HitSpeedOffset/50, or exceed it by a multiple of HitSpeed/50
-   * (HitSpeed >= 50). Targets: circle overlap with the filter, stable-sorted by distance, then by
+   * (HitSpeed >= 50). Targets: grid query (0xf9a594) with the filter, stable-sorted by distance, then by
    * hitpoints + shield (HitBiggestTargets), at most MaximumTargets newly hit; already-hit targets
    * (OneHitPerTarget) are skipped. Per target: pushback (mobile units), damage, buff for BuffTime
    * (capped at life + HitSpeed with CapBuffTimeToAreaEffectTime), per-target projectile. The object
@@ -3146,6 +3355,10 @@ export class Battle {
     for (let i = 0; i < as.length; i++) {
       const a = as[i];
       const def = a.def;
+      if (a.spawnPending) {
+        a.spawnPending = false;
+        this.spawnAreaEffect(a.team, def.spawnAreaEffect!, a.x, a.y);
+      }
       const before = a.life;
       a.life -= TICK_MS;
       const el = idiv(def.lifeDuration - before, TICK_MS);
@@ -3164,27 +3377,16 @@ export class Battle {
 
   private aeoHit(a: AreaEffect): void {
     const def = a.def;
-    const units = this.units;
     const targets = this.scratch2;
     targets.length = 0;
     const R = def.radius;
-    for (let i = 0; i < units.length; i++) {
-      const t = units[i];
-      if (t.radius <= 0 && t.tower === TOWER_NONE) continue; // only actors in the spatial grid
-      if (!this.filterMatch(def.filter, a.team, def.onlyEnemies, t)) continue;
-      // Actor_circleOverlapSq 0xf95084: strict circle test; buildings by their square's closest point
-      if (t.isBuilding) {
-        const r0 = t.radius;
-        const ex = clamp(a.x, t.x - r0, t.x + r0) - a.x;
-        const ey = clamp(a.y, t.y - r0, t.y + r0) - a.y;
-        if (ex > R || ex < -R || ey > R || ey < -R || ex * ex + ey * ey >= R * R) continue;
-      } else {
-        const dx = t.x - a.x;
-        const dy = t.y - a.y;
-        const r = R + t.radius;
-        if (dx * dx + dy * dy >= r * r) continue;
-      }
-      targets.push(t);
+    // candidates 0xf9a594 -> 0xf9a064: the spatial grid's cells (x - R .. x + R) >> 10 column by
+    // column, each cell's actors in list order, once each, that pass Actor_circleOverlapSq 0xf95084
+    // (strict; buildings by their square's closest point) and the Filter (0xe31fc8)
+    const cand = this.gridQueryBox(a.x, a.y, R, 0);
+    for (let i = 0; i < cand.length; i++) {
+      const t = cand[i];
+      if (this.filterMatch(def.filter, a.team, def.onlyEnemies, t)) targets.push(t);
     }
     if (targets.length > 1) {
       // stable sorts (0xf7bbec by distance, 0xf7cebc by hitpoints + shield, biggest first)
@@ -3219,7 +3421,7 @@ export class Battle {
         pr.tx = t.x;
         pr.ty = t.y;
         pr.spell = def.name;
-        this.projectiles.push(pr);
+        this.addProjectile(pr);
       }
       left--;
     }
@@ -3335,15 +3537,16 @@ export class Battle {
 
   /**
    * Collision step 0xf8f2d0 [STAT] of a piercing projectile at (x, y): the spatial-grid query
-   * 0xf9b008 with ProjectileRadius (cells of that radius on both axes) and ProjectileRadiusY: a
+   * 0xf9b008 with ProjectileRadius + `extra` (cells of that radius on both axes; `extra` is
+   * ProjectileStartExtraRadius for the spawn-point step of 0xf934bc, else 0) and ProjectileRadiusY: a
    * circle (buildings by their square, 0xf95084) without RadiusY, else a box of half-sizes
    * (R, RY) (0xf95488; buildings 0xf9564c), in grid order; each candidate is tried by 0xf8ff74 until
    * one asks to stop. (Area effects that deflect projectiles: no supported card has one.)
    */
-  private projCollide(p: Projectile, x: number, y: number): void {
+  private projCollide(p: Projectile, x: number, y: number, extra = 0): void {
     const def = p.def;
     if (def.pierceRadius < 1) return;
-    const list = this.gridQueryBox(x, y, def.pierceRadius, def.pierceRadiusY);
+    const list = this.gridQueryBox(x, y, def.pierceRadius + extra, def.pierceRadiusY);
     for (let i = 0; i < list.length; i++) if (this.projHit(p, list[i], x, y)) break;
     list.length = 0;
   }
@@ -3355,8 +3558,10 @@ export class Battle {
    * joins the hit list and the damage (crown-tower value for crown towers) is queued with the
    * projectile's key; a unit with movement is knocked back from the projectile's position (or
    * along its flight with DoDirectionalPushback, 0xfcfe18); TargetBuff lands at once (0xf8f890).
-   * With CheckCollisions the flight ends at the first target alive before the hit. Hidden and
-   * deploying actors are not exempt (0xf82e68 is called without its state checks).
+   * With CheckCollisions the flight ends at the first target alive before the hit. Hidden,
+   * deploying and tunnelling (state 6, Miner) actors are not exempt: 0xf82e68 is called without its
+   * state checks and only tests NO_CHECKCOLLISIONS / attached, and a tunnelling character stays in the
+   * spatial grid (Grid_insert 0xf9ada0 only needs a collision radius).
    */
   private projHit(p: Projectile, a: Unit, qx: number, qy: number): boolean {
     const def = p.def;
@@ -3365,7 +3570,6 @@ export class Battle {
     if (a.isAir ? !def.aoeToAir : !def.aoeToGround) return false;
     if (a.jumping && !def.aoeToAir) return false;
     if (a.maxHp <= 0 || a.state === ST_DEAD) return false;
-    if (a.tunneling) return false; // the engine's Miner tunnel (A: native state 6 is not modelled)
     p.hitIds.push(a.id);
     const hp = a.hp;
     this.viewHit(a, a.x - qx, a.y - qy);
@@ -3575,7 +3779,7 @@ export class Battle {
       this.setupProjectile(c, null, p.x, p.y, p.aimZ, null, ax, ay);
       c.chainLeft = p.chainLeft - 1;
       c.axisDir = p.axisDir;
-      this.projectiles.push(c);
+      this.addProjectile(c);
     }
   }
 
@@ -3693,7 +3897,7 @@ export class Battle {
       }
       if (t.hp <= 0) {
         this.kill(t);
-        this.killReward(t, this.dmgNoOwner[i] ? -1 : 1 - t.team);
+        this.killReward(t, this.dmgOwner[i]);
       }
       if (this.recordEvents) {
         this.events.push({ tick: this.tick, type: 'damage', team: t.team, x: t.x, y: t.y, name: this.dmgFxSrc[i], id: t.id,
@@ -3705,7 +3909,7 @@ export class Battle {
     }
     // release references
     for (let i = 0; i < this.dmgN; i++) {
-      this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; this.dmgNoOwner[i] = false; this.dmgForce[i] = false;
+      this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; this.dmgForce[i] = false;
     }
     this.dmgN = 0;
   }
@@ -3757,8 +3961,24 @@ export class Battle {
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'elixir', team: owner, x: t.x, y: t.y, name: t.def.name, id: t.id, amount, side: owner });
   }
 
+  /**
+   * End-of-tick world maintenance 0xf8c9d8 for characters [STAT]: dead characters leave the world list
+   * (crown towers stay as ruins: tower vt+0x18 0xfa1d94 is false), each removal is announced to every
+   * actor (pending adds first, then the list; 0xf8c8c8) — an attacker whose target it was runs 0xfc7640
+   * (targetRemoved) — and then the actors created this tick join the list (0xf8c3b8).
+   */
   private removeDead(): void {
     const units = this.units;
+    for (let i = 0; i < this.newUnits.length; i++) {
+      const a = this.newUnits[i];
+      const t = a.target;
+      if (t !== null && t.state === ST_DEAD && t.tower === TOWER_NONE) this.targetRemoved(a);
+    }
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i];
+      const t = a.target;
+      if (t !== null && t.state === ST_DEAD && t.tower === TOWER_NONE) this.targetRemoved(a);
+    }
     let w = 0;
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
@@ -3779,20 +3999,23 @@ export class Battle {
   // ---------------------------------------------------------------- end of match
 
   /**
-   * End check at the end of a world tick. A King at 0 HP ends the match at once [STAT runner
-   * audit]. Time is up (0xd360a8 / timeline 0xd5665c) at the end of regulation when the crowns
-   * differ, during overtime as soon as they differ, and at the end of overtime. Then the battle
-   * manager (0x10ca9a0) skips the end check while the tiebreak gate holds (equal crowns, NoDraws)
-   * and runs the tiebreak from the next tick on; otherwise the end check 0x10cb17c -> 0xd3e360 ends
-   * the match with the crown winner (equal crowns: a draw, -1).
+   * End check at the end of a world tick. Time is up (0xd360a8 / timeline 0xd5665c) once a King is
+   * dead [STAT runner audit], at the end of regulation when the crowns differ, during overtime as soon
+   * as they differ, and at the end of overtime. Then the battle manager (0x10ca9a0) skips the end check
+   * while the tiebreak gate holds (equal crowns, NoDraws: also both Kings killed in the same tick) and
+   * runs the tiebreak from the next tick on; otherwise the end check 0x10cb17c -> 0xd3e360 ends the
+   * match with the crown winner (equal crowns: a draw, -1). A King kill gives 3 crowns, so a single one
+   * wins.
    */
   private checkEnd(): void {
     if (this.fixture) return;
     const [p0, p1] = this.players;
     if (!p0.king.alive || !p1.king.alive) {
-      const w = !p0.king.alive && !p1.king.alive ? -1 : !p0.king.alive ? 1 : 0;
-      this.result = { winner: w, reason: 'king', tick: this.tick };
-      this.markEnded();
+      if (this.tiebreakGate()) {
+        this.timeUp = true;
+        return;
+      }
+      this.endMatch('king');
       return;
     }
     const t = this.tick + 1; // ticks elapsed after this one
@@ -3958,7 +4181,9 @@ export class Battle {
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.kbActive ? u.kbStep : -1000);
       h.add(u.spawnTimer); h.add(u.spawnGroup); h.add(u.spawnRot); h.add(u.charge); h.add(u.load); h.add(u.retargetCd);
       h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
-      h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaT); h.add(u.hideT); h.add(u.tunneling ? 1 : 0);
+      h.add(u.lifeTicks); h.add(u.decayed); h.add(u.seqIndex); h.add(u.manaT); h.add(u.hideT); h.add(u.tunneling ? 1 : 0);
+      h.add(u.keepFlag ? 1 : 0);
+      if (u.tunneling) { h.add(u.tunnelX); h.add(u.tunnelY); }
       h.add(u.pending); h.add(u.pendingDur); h.add(u.waitTicks); h.add(u.dmgKeys.length);
       h.add(u.prio); h.add(u.axeMs); h.add(u.axeWait); h.add(u.axe ? u.axe.id : -1); h.add(u.pushImmune ? 1 : 0);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
@@ -3970,8 +4195,9 @@ export class Battle {
     }
     for (const c of this.commands) { h.add(c.team); h.add(c.x); h.add(c.y); h.add(c.submitTick); }
     for (const s of this.rng.state()) h.add(s);
-    // post-end clocks, once the post-end world has ticked (at the end tick they follow from the state above)
-    if (this.endMs > 1) { h.add(this.endMs); h.add(this.waveMs); }
+    // post-end clocks, once the post-end world (or a double-kill tiebreak) has ticked (at the end tick they
+    // follow from the state above)
+    if (this.endMs > 1 || (this.endMs === 0 && this.waveMs > 0)) { h.add(this.endMs); h.add(this.waveMs); h.add(this.fullTowersFlag ? 1 : 0); }
     return h.hex();
   }
 }

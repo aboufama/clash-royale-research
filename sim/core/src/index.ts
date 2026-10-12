@@ -2,7 +2,7 @@
 export { Battle, COMMAND_DELAY_TICKS } from './battle.ts';
 export type { BattleConfig, BattleResult, Player, PlayError } from './battle.ts';
 export { Arena, ARENA_H, ARENA_W, CELL, GRID_H, GRID_W, RIVER_Y0, RIVER_Y1 } from './arena.ts';
-export { Defs, M1_CARDS, scaleStat, supportedCards, TICK_MS, ELIXIR_ONE } from './data.ts';
+export { Defs, M1_CARDS, scaleStat, scaleTower, supportedCards, TICK_MS, ELIXIR_ONE, walkSpeed } from './data.ts';
 export type { AreaEffectDef, BuffDef, CardDef, FilterDef, GameData, ProjectileDef, UnitDef } from './data.ts';
 export {
   AreaEffect, BuffInst, KING_ACTIVATING, KING_ACTIVE, KING_INACTIVE, Projectile, ST_ACTIVE, ST_DEAD, ST_DEPLOYING, TOWER_KING,

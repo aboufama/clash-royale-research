@@ -60,11 +60,87 @@ export function normaliseMass(mass: number, radius: number): number {
   return m;
 }
 
-/** Scale a level-1 stat: floor(base * M[L-1-rel] / 100) (docs/DATA_FIELDS.md §2). */
+/**
+ * Walking speed (+0x410, read by vtb8 0xf82a18) as the character loader 0xdde618 leaves it [STAT
+ * @0xddf844]: with StopMovementAfterMS s > 0 (+0x328) and WaitMS w (+0x32c) it is
+ * Speed · ((s + w) · 1000 / s) / 1000, both divisions truncated, so the stop-and-go average stays near
+ * the data Speed (Giant 45 -> 52, Golem 45 -> 54); +0x414 keeps the data value.
+ */
+export function walkSpeed(r: Rec): number {
+  const v = num(r, 'Speed');
+  const s = num(r, 'StopMovementAfterMS');
+  if (s <= 0) return v;
+  const k = Math.trunc(((s + num(r, 'WaitMS')) * 1000) / s);
+  return Math.trunc((k * v) / 1000);
+}
+
+/**
+ * Card stat scaling, Tables_scaleByLevel 0xe7e418 for kinds 1 (damage) / 2 (hitpoints) with a rarity
+ * [STAT]: the actor level of a card at level L is n = L − 1 − RelativeLevel; n < 1 gives the base; else
+ * m = the rarity's PowerLevelMultiplier[n − 1] (0xe612f4) while n − 1 is inside its table, beyond it 100
+ * grown n times by v + v/10 (truncated), and the stat is (m · base) / 100 truncated. The tables of all
+ * rarities are prefixes of Common's (rarities.csv), the only one exported (`powerMultiplier` = [100, ...]);
+ * a rarity's own table is shorter (Rare 17, Epic 14, Legendary 11, Champion / Experimental 9 entries) and
+ * the client iterates past it, which differs from Common's entries (450 vs 449 at n = 16) only from card
+ * level 21 (Rare) up; no card goes above level 16.
+ */
 export function scaleStat(data: GameData, base: number, level: number, rarity: string | null): number {
   const rel = rarity && data.rarities[rarity] ? data.rarities[rarity].RelativeLevel : 0;
-  const idx = Math.max(0, Math.min(data.powerMultiplier.length - 1, level - 1 - rel));
-  return Math.floor((base * data.powerMultiplier[idx]) / 100);
+  const n = level - 1 - rel;
+  if (n < 1) return base;
+  const table = data.powerMultiplier; // table[n] = PowerLevelMultiplier[n - 1]
+  let m: number;
+  if (n < table.length) m = table[n];
+  else {
+    m = 100;
+    for (let i = 0; i < n; i++) m = Math.trunc(m / 10) + m;
+  }
+  return Math.trunc((m * base) / 100);
+}
+
+/**
+ * Crown-tower scaling, Tables_scaleByLevel 0xe7e418 for kinds 3 (King damage), 4 (King hitpoints),
+ * 5 (Princess tower damage), 6 (Princess tower hitpoints) [STAT]: the tower's actor level n = L − 1
+ * iterations from m = 100, iteration i growing by the kind's *_INCREASE_PERCENT_PER_{KING,TOWER}_LEVEL,
+ * its _AT_TOURNAMENTCAP value at i = TOWER_SCALING_START_EXP_LEVEL − 1 and its _AFTER_TOURNAMENTCAP value
+ * from TOWER_SCALING_START_EXP_LEVEL on (the tower data's Common rarity shifts the start by 0):
+ * m = ((p + 100) · m) / 100, or (p + 100) · (m / 100) from 100000 on; the stat is (m · base) / 100.
+ * Projectiles with a DamageScalingMode (KingTower 1, PrincessTower 2, loader 0xe5b14c) scale their
+ * damage with kind 2·mode + 1 (0xe5ae54).
+ */
+export function scaleTower(data: GameData, base: number, level: number, kind: 3 | 4 | 5 | 6): number {
+  const G = data.globals;
+  const g = (k: string): number => (typeof G[k] === 'number' ? (G[k] as number) : 0);
+  const what = kind === 3 || kind === 5 ? 'DAMAGE' : 'HITPOINT';
+  const who = kind === 3 || kind === 4 ? 'KING' : 'TOWER';
+  const pBase = g(`${what}_INCREASE_PERCENT_PER_${who}_LEVEL`);
+  const pAfter = g(`${what}_INCREASE_PERCENT_PER_${who}_LEVEL_AFTER_TOURNAMENTCAP`);
+  const pAt = g(`${what}_INCREASE_PERCENT_PER_${who}_LEVEL_AT_TOURNAMENTCAP`);
+  const start = g('TOWER_SCALING_START_EXP_LEVEL');
+  let m = 100;
+  for (let i = 0; i < level - 1; i++) {
+    const p = i === start - 1 ? pAt : i >= start ? pAfter : pBase;
+    m = m > 99999 ? (p + 100) * Math.trunc(m / 100) : Math.trunc(((p + 100) * m) / 100);
+  }
+  return Math.trunc((m * base) / 100);
+}
+
+/**
+ * The attack sequence the character loader 0xdde618 builds when the data has no AttackSequenceList [STAT]:
+ * entry 1 (VariableDamageTime1, Damage) always; with VariableDamageTime1 >= 1 entry 2 (VariableDamageTime2,
+ * VariableDamage2) and mode 3; with VariableDamageTime2 >= 1 also entry 3 (no time, VariableDamage3). The
+ * loader reads absent times as 0. Characters with an AttackSequence / AttackSequenceList column are not
+ * supported (those columns are not in UNIT_FIELDS_OK).
+ */
+function attackSequence(r: Rec, scale: (v: number) => number, baseDamage: number): { seqMode: number; seq: AttackSeqEntry[] } {
+  const entry = (damage: number, duration: number): AttackSeqEntry => ({ damage: scale(damage), duration, clock: 100, range: -1, sight: -1, minRange: -1 });
+  const t1 = num(r, 'VariableDamageTime1');
+  const seq = [entry(baseDamage, t1)];
+  if (t1 < 1) return { seqMode: 0, seq };
+  const t2 = num(r, 'VariableDamageTime2');
+  seq.push(entry(num(r, 'VariableDamage2'), t2));
+  if (t2 >= 1) seq.push(entry(num(r, 'VariableDamage3'), 0));
+  return { seqMode: 3, seq };
 }
 
 /** Damage may be a number, {BaseDamage, TowerDamage}, or the name of a DAMAGE_TYPE. */
@@ -142,6 +218,32 @@ export interface ProjectileDef {
   /** MaximumTargets of the splash (+0x174; < 1 = all) and DoDirectionalPushback (+0x2d8). */
   maxTargets: number;
   directionalPushback: boolean;
+  /**
+   * ProjectileStartExtraRadius (+0x210): a piercing projectile without PingpongVisualTime runs its
+   * collision step once where it is added to the world (projectile vt+0x28 0xf934bc), with
+   * ProjectileRadius + this radius (Magic Archer's arrow 400).
+   */
+  startExtraRadius: number;
+}
+
+/**
+ * One attack-sequence entry (LogicAttackSequenceData, ctor 0xdc9f34). The character loader 0xdde618 builds
+ * the entries of a character without an AttackSequenceList from its VariableDamage columns: entry 1 lasts
+ * VariableDamageTime1 with Damage, entry 2 VariableDamageTime2 with VariableDamage2, entry 3 has no
+ * duration and VariableDamage3; mode 3 (by timer) once VariableDamageTime1 >= 1, a 2-entry sequence when
+ * VariableDamageTime2 < 1.
+ */
+export interface AttackSeqEntry {
+  /** Damage (+0x90), scaled like the character's Damage (0xde0cec: kind 1). */
+  damage: number;
+  /** Time (+0xa0, ms) the timer spends in this entry (0xde0e5c). */
+  duration: number;
+  /** Clock percent (+0xe8, ctor 100): the attack clock steps by clock / 2 per tick (0xfc90b0). */
+  clock: number;
+  /** Range (+0xf8), sight range (+0xfc) and minimum range (+0x100) overrides; -1 = the character's. */
+  range: number;
+  sight: number;
+  minRange: number;
 }
 
 /** Object filter (game_object_filters.toml): which actors an area effect touches. */
@@ -224,7 +326,8 @@ export interface UnitDef {
   /** SightClip / SightClipSide: how far behind / sideways a unit looks for targets. */
   sightClip: number;
   sightClipSide: number;
-  speed: number; // game units per tick
+  /** Walking speed in game units per tick, as the loader leaves it (walkSpeed: stop-and-go units faster). */
+  speed: number;
   collisionRadius: number;
   mass: number;
   deployTime: number; // ms
@@ -278,13 +381,29 @@ export interface UnitDef {
   manaCollect: number;
   manaPeriod: number;
   manaOnDeath: number;
-  /** Inferno ramp: damage stages and stage lengths (ms). */
+  /** VariableDamage columns as scaled stages (bot and viewer; the engine runs `seq`) and their times (loader default 0). */
   variableDamage: [number, number, number] | null;
   variableDamageTime: [number, number];
+  /**
+   * Attack sequence (CharacterData +0x2a8 entries, +0x3c8 index list, +0x3d4 count, +0x3d8 mode): mode 3
+   * (the entry picked by the attack timer, 0xde0e5c) for VariableDamage characters (Inferno Tower and
+   * Dragon), else mode 0 with at most one entry, which the attack paths ignore.
+   */
+  seqMode: number;
+  seq: AttackSeqEntry[];
   /** Extra targets per attack and buff on damage (Electro Wizard). */
   multipleTargets: number;
+  /** AllTargetsHit (+0x3a2): an extra target slot without a target hits the current target again (0xfc7e20). */
+  allTargetsHit: boolean;
   buffOnDamage: BuffDef | null;
   buffOnDamageTime: number;
+  /**
+   * OverrideAttackFinishTime (+0x6b8) / AttackFinishTime (+0x6b4): the finish wait of 0xfc7e20 is
+   * AttackFinishTime instead of ATTACK_FINISH_TIME_MS, and the target-removal notice 0xfc7640 does not
+   * start it (Valkyrie, Bowler, Electro Wizard, Electro Dragon).
+   */
+  overrideFinish: boolean;
+  attackFinishTime: number;
   /** Tesla: hides underground when idle. */
   hides: boolean;
   hideTime: number;
@@ -368,6 +487,14 @@ export interface CardDef {
 }
 
 // Fields whose mechanics the engine implements (others make a unit "unsupported").
+/**
+ * Character columns a supported card may carry. Most are read into UnitDef; these are accepted but only
+ * the view uses them (no reader in the ported logic): AttackShakeTime and TryToFinishAttackAnimation /
+ * ...BeforeNextAttack (read by the animation code 0x840d44), VisualHitSpeed (stored in the attack-sequence
+ * entry +0xa4 with its effects), AttackDashTime (0xfc7e20 calls the view's attack start vt+0x40 that much
+ * before the hit, with an Actor_faceActor that repeats the facing faceTarget set the same update).
+ * AllTargetsHit, AttackFinishTime and OverrideAttackFinishTime are read (UnitDef).
+ */
 const UNIT_FIELDS_OK = new Set([
   'Name', 'Rarity', '_kind', 'Hitpoints', 'Damage', 'HitSpeed', 'LoadTime', 'Range', 'MinimumRange', 'SightRange',
   'Speed', 'CollisionRadius', 'Mass', 'DeployTime', 'DeployDelay', 'AttacksGround', 'AttacksAir',
@@ -387,6 +514,11 @@ const UNIT_FIELDS_OK = new Set([
 ]);
 /** Starting actions the engine implements (JumpHack: pushback immunity while jumping, see UnitDef.jumpHack). */
 const IGNORABLE_ACTIONS = new Set(['JumpHack_Check_Jump_Interval']);
+/**
+ * Projectile columns a supported card may carry. View-only (the loader 0xe5b14c stores them, no reader
+ * in the ported logic): ShakesTargets, AlwaysResetAnimation. ProjectileStartExtraRadius and
+ * DamageScalingMode are read (ProjectileDef.startExtraRadius, the tower scaling kind).
+ */
 const PROJECTILE_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Speed', 'Damage', 'Radius', 'Homing', 'AoeToAir', 'AoeToGround', 'OnlyEnemies', 'Gravity',
   'CrownTowerDamagePercent', 'DeflectBehaviour', 'DeflectRadius', 'Pushback', 'PushbackAll', 'DamageScalingMode',
@@ -511,9 +643,8 @@ export class Defs {
       pushback: num(r, 'Pushback'),
       pushbackAll: bool(r, 'PushbackAll'),
       relativePushback: bool(r, 'RelativePushback'),
-      // Lightning sets neither flag yet strikes each target: per-target projectiles assumed when the
-      // object has a projectile and a target cap but no damage of its own (A, see FIDELITY)
-      targetProjectiles: bool(r, 'TargetProjectiles') || (!!projName && num(r, 'MaximumTargets') > 0 && dmg.base === 0),
+      // AreaEffectData loader 0xdc2e74 reads TargetProjectiles with default 1 (+0xbd)
+      targetProjectiles: r.TargetProjectiles !== false,
       projectileStartHeight: num(r, 'ProjectileStartHeight'),
       unsupported,
     };
@@ -531,11 +662,14 @@ export class Defs {
     const dmg = damageOf(r, this.data.damageTypes);
     const rarity = str(r, 'Rarity');
     const tb = str(r, 'TargetBuff');
+    // DamageScalingMode (loader 0xe5b14c: KingTower 1, PrincessTower 2) picks the scaling kind 2·mode + 1 (0xe5ae54)
+    const mode = r.DamageScalingMode === 'KingTower' ? 1 : r.DamageScalingMode === 'PrincessTower' ? 2 : 0;
+    const scale = (v: number): number => (mode === 0 ? scaleStat(this.data, v, level, rarity) : scaleTower(this.data, v, level, mode === 1 ? 3 : 5));
     const def: ProjectileDef = {
       name,
       speed: num(r, 'Speed'),
-      damage: scaleStat(this.data, dmg.base, level, rarity),
-      towerDamage: dmg.tower >= 0 ? scaleStat(this.data, dmg.tower, level, rarity) : -1,
+      damage: scale(dmg.base),
+      towerDamage: dmg.tower >= 0 ? scale(dmg.tower) : -1,
       crownTowerDamagePercent: num(r, 'CrownTowerDamagePercent'),
       radius: num(r, 'Radius'),
       homing: bool(r, 'Homing'),
@@ -575,6 +709,7 @@ export class Defs {
       chainIsNew: bool(r, 'ChainIsNewProjectile'),
       maxTargets: num(r, 'MaximumTargets'),
       directionalPushback: bool(r, 'DoDirectionalPushback'),
+      startExtraRadius: num(r, 'ProjectileStartExtraRadius'),
     };
     this.projCache.set(key, def);
     // loader 0xe5a538 [STAT]: SpawnCharacterCount is max(v, 1) with a SpawnCharacter, else 0;
@@ -659,7 +794,7 @@ export class Defs {
       sightRange: num(r, 'SightRange'),
       sightClip: num(r, 'SightClip'),
       sightClipSide: num(r, 'SightClipSide'),
-      speed: num(r, 'Speed'),
+      speed: walkSpeed(r),
       collisionRadius: num(r, 'CollisionRadius'),
       mass: normaliseMass(num(r, 'Mass'), num(r, 'CollisionRadius')),
       deployTime: num(r, 'DeployTime'),
@@ -699,8 +834,12 @@ export class Defs {
       variableDamage: r.VariableDamage2 !== undefined
         ? [scaleStat(this.data, dmg.base, level, rarity), scaleStat(this.data, num(r, 'VariableDamage2'), level, rarity), scaleStat(this.data, num(r, 'VariableDamage3'), level, rarity)]
         : null,
-      variableDamageTime: [num(r, 'VariableDamageTime1', 2000), num(r, 'VariableDamageTime2', 2000)],
+      variableDamageTime: [num(r, 'VariableDamageTime1'), num(r, 'VariableDamageTime2')],
+      ...attackSequence(r, (v) => scaleStat(this.data, v, level, rarity), dmg.base),
       multipleTargets: num(r, 'MultipleTargets', 1),
+      allTargetsHit: bool(r, 'AllTargetsHit'),
+      overrideFinish: bool(r, 'OverrideAttackFinishTime'),
+      attackFinishTime: num(r, 'AttackFinishTime'),
       buffOnDamage: str(r, 'BuffOnDamage') ? this.buff(str(r, 'BuffOnDamage')!, level) : null,
       buffOnDamageTime: num(r, 'BuffOnDamageTime'),
       hides: bool(r, 'HidesWhenNotAttacking'),
@@ -722,21 +861,26 @@ export class Defs {
     return def;
   }
 
-  /** Tower definition from tower scaling (towers do not use card multipliers). */
+  /**
+   * Crown-tower definition at tower level `level`: the King's hitpoints scale with kind 4 (IsSummoner) and a
+   * Princess tower's with kind 6 (IsSummonerTower) (0xde0110), the projectiles' damage by their
+   * DamageScalingMode (KingProjectile: KingTower, kind 3; TowerPrincessProjectile: PrincessTower, kind 5),
+   * all through scaleTower (0xe7e418) [STAT].
+   */
   tower(kind: 'king' | 'princess', level: number): UnitDef {
     const key = `#tower-${kind}@${level}`;
     const hit = this.unitCache.get(key);
     if (hit) return hit;
     const name = kind === 'king' ? 'KingTower' : 'PrincessTower';
     const r = this.data.units[name];
-    const scale = kind === 'king' ? this.data.towerScaling.king_tower : this.data.towerScaling.princess_tower;
     const projName = str(r, 'Projectile')!;
     const p = this.data.projectiles[projName];
-    const li = Math.max(0, Math.min(scale.Hitpoints.length - 1, level - 1));
+    const pmode = p.DamageScalingMode === 'KingTower' ? 3 : p.DamageScalingMode === 'PrincessTower' ? 5 : 0;
+    if (pmode === 0) throw new Error(`${projName} has no tower DamageScalingMode`);
     const projectile: ProjectileDef = {
       name: projName,
       speed: num(p, 'Speed'),
-      damage: scale.Damage[li],
+      damage: scaleTower(this.data, damageOf(p, this.data.damageTypes).base, level, pmode),
       towerDamage: -1,
       crownTowerDamagePercent: 0,
       radius: 0,
@@ -775,13 +919,14 @@ export class Defs {
       chainIsNew: false,
       maxTargets: 0,
       directionalPushback: false,
+      startExtraRadius: 0,
     };
     const def: UnitDef = {
       name,
       kind: 'building',
       rarity: null,
       level,
-      hitpoints: scale.Hitpoints[li],
+      hitpoints: scaleTower(this.data, num(r, 'Hitpoints'), level, kind === 'king' ? 4 : 6),
       shieldHitpoints: 0,
       damage: 0,
       crownTowerDamagePercent: 0,
@@ -834,9 +979,14 @@ export class Defs {
       manaOnDeath: 0,
       variableDamage: null,
       variableDamageTime: [0, 0],
+      seqMode: 0,
+      seq: [],
       multipleTargets: 1,
+      allTargetsHit: false,
       buffOnDamage: null,
       buffOnDamageTime: 0,
+      overrideFinish: false,
+      attackFinishTime: 0,
       hides: false,
       hideTime: 0,
       upTime: 0,

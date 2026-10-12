@@ -30,9 +30,12 @@
 //     back to y0 at 0.12 s); after the last crown and 1 s more (+0x1cc) the root plays
 //     score_end..result_end; once it stops there the winner's winner_txt plays and becomes visible and
 //     the winner's panel plays winner_start..winner_end.
-// Not ported: the confetti effects of 0x8c08b0 (win_battle_confetti_blue(_top) through two effect
-// layers), sounds and music (Pre_result, Post_result_loop, crown sounds), the OK button's press
-// feedback (0x8a1c08); trophies, rewards and clan badges have no sandbox data.
+//   - the OK button (0x8bc248 -> 0x8a1c08(screen, "ok_btn_single", 1)) is a game button wrapped in the
+//     button_timeline template (sc/ui_button.ts): Down while a touch holds it, Clicked on release, the click
+//     sound; the confetti of 0x8c08b0 (sc/confetti.ts) starts with the setup for a win or a loss, its two
+//     layers updated by the screen update (0x8c1b9c -> 0x856f28); the sounds and music are sc/sound.ts's
+//     ScreenSounds.
+// Not ported: trophies, rewards and clan badges have no sandbox data.
 
 import type { ScLibrary } from './library.ts';
 import type { Col, Mat } from './math.ts';
@@ -40,6 +43,8 @@ import { matMul, WHITE } from './math.ts';
 import { type DrawCtx, McNode } from './movieclip.ts';
 import type { ScRenderer } from './renderer.ts';
 import { BattleIntro, type IntroArt, introHudVisible } from './intro.ts';
+import type { Confetti } from './confetti.ts';
+import { GameButton } from './ui_button.ts';
 
 const f32 = Math.fround;
 
@@ -105,8 +110,10 @@ export class ResultScreen {
   private pos: [number, number] = [0, 0];
   /** time since creation (+0x1c8) */
   time = 0;
+  /** the OK button's game button (0x8a1c08 -> 0x894c54 with the button_timeline template), or null */
+  readonly okButton: GameButton | null;
 
-  constructor(lib: ScLibrary, art: ResultArt, info: ResultInfo) {
+  constructor(lib: ScLibrary, art: ResultArt, info: ResultInfo, ui?: ScLibrary | null) {
     const root = McNode.of(lib, art.export);
     if (!root) throw new Error(`result: no export ${art.export}`);
     this.root = root;
@@ -117,6 +124,7 @@ export class ResultScreen {
       if (k) k.visible = false;
     }
     this.ok = root.index('ok_btn_single');
+    this.okButton = this.ok >= 0 ? new GameButton(ui) : null;
     this.dimmer = root.index('dimmer_stretch');
     // 0x8be288
     const p2 = root.child('player_02'), p1 = root.child('player_01');
@@ -263,9 +271,14 @@ export class ResultScreen {
     }
   }
 
-  /** Render-time advance of the clip tree (0x123f55c). */
+  /** Render-time advance of the clip tree (0x123f55c) and the OK button's template. */
   advance(dt: number): void {
     this.root.advance(dt);
+    const b = this.okButton;
+    if (b) {
+      b.advance(dt);
+      this.root.slot(this.ok).inner = b.matrix();
+    }
   }
 
   private layout(stageW: number, stageH: number): void {
@@ -340,6 +353,47 @@ export class ResultScreen {
     const b = this.okBounds();
     return !!b && x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
   }
+
+  /**
+   * 0x8c3350: the centre of taunt_enemy / taunt_player (found by name, else the text field of that name) in
+   * stage px, where the emote bubbles move once the screen is 2.2 s old (0x8e8c38).
+   */
+  tauntArea(enemy: boolean): [number, number] | null {
+    const name = enemy ? 'taunt_enemy' : 'taunt_player';
+    const root = this.root, ci = root.index(name);
+    const sm = ci >= 0 ? root.slotMatrix(ci) : null;
+    if (!sm) return null;
+    const m = matMul([1, 0, 0, 1, this.pos[0], this.pos[1]], sm);
+    const node = root.kids[ci];
+    const ti = node ? node.index(name) : -1;
+    const tm = node && ti >= 0 ? node.slotMatrix(ti) : null;
+    const tf = node && ti >= 0 ? node.lib.textFields.get(node.clip.children[ti]) : undefined;
+    if (!node || !tm || !tf) return [m[4], m[5]];
+    const mm = matMul(m, tm), r = tf.rect;
+    const xs = [r[0], r[2]].flatMap((x) => [r[1], r[3]].map((y) => mm[0] * x + mm[2] * y + mm[4]));
+    const ys = [r[0], r[2]].flatMap((x) => [r[1], r[3]].map((y) => mm[1] * x + mm[3] * y + mm[5]));
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    return [x0 + (x1 - x0) * 0.5, y0 + (y1 - y0) * 0.5];
+  }
+
+  /** A touch began at stage (x, y): on the OK button it is held (state Down, vt+0x110). */
+  pressOk(x: number, y: number): boolean {
+    const b = this.okButton;
+    if (!b || !this.hitOk(x, y)) return false;
+    b.press();
+    return true;
+  }
+
+  /** The held touch moved to stage (x, y) (vt+0x148 / vt+0x150). */
+  moveOk(x: number, y: number): void {
+    this.okButton?.move(this.hitOk(x, y));
+  }
+
+  /** The held touch ended at stage (x, y): true when it clicked the OK button (vt+0x120). */
+  releaseOk(x: number, y: number): boolean {
+    const b = this.okButton;
+    return !!b && b.held && b.release(this.hitOk(x, y));
+  }
 }
 
 /** Result kind for the HUD's player from the engine result (winner team, -1 draw). */
@@ -351,7 +405,7 @@ export function resultKind(winner: number, team: number): ResultKind {
 // The battle screen's part of both (0xbe1d3c, 0xbdfa8c, 0xbe0100), for sim/viewer/src/battle_ui.ts.
 
 interface ScreensArt {
-  manifest: { hud: { texts?: Record<string, string> } & { intro?: IntroArt; result?: ResultArt } };
+  manifest: { hud: { sc?: string; texts?: Record<string, string> } & { intro?: IntroArt; result?: ResultArt } };
   libs: { get(name: string): ScLibrary | undefined };
 }
 
@@ -374,6 +428,10 @@ export class BattleScreens {
   private readonly hudFlag = { on: false }; // battle screen +0x468
   /** a player queued a card play this battle (King tower +0x318 >= 1, 0xd3cb70) */
   private cardPlayed = false;
+  /** the result screen's confetti layers (0x8c08b0, +0x300 / +0x308), made with it for a win or a loss */
+  confetti: Confetti | null = null;
+  /** makes the confetti of 0x8c08b0 (`loss`: the EnemyVersion pair 40 px higher); set by the owner */
+  makeConfetti: ((loss: boolean) => Confetti | null) | null = null;
 
   /** New battle: the screen setup 0xbde180 makes the intro again. */
   reset(): void {
@@ -383,6 +441,7 @@ export class BattleScreens {
     this.introDue = true;
     this.hudFlag.on = false;
     this.cardPlayed = false;
+    this.confetti = null;
   }
 
   /** Engine events of a tick: a committed play counts as the King tower's queued play (0xf9ea68). */
@@ -417,8 +476,11 @@ export class BattleScreens {
     const v = introHudVisible(this.hudFlag, this.intro);
     if (v !== null) this.hudShown = v;
     // the screen's own update (0x8c1b9c) runs earlier in 0xbe1d3c than its creation, so a new screen
-    // is first updated by the next battle screen update
-    this.result?.update(dt);
+    // is first updated by the next battle screen update; it ends with its confetti layers (0x856f28)
+    if (this.result) {
+      this.result.update(dt);
+      this.confetti?.update(dt);
+    }
     // the end screen: logic ms since the end reach EndScreenDelay (0xd3581c), then 0xbe0100
     if (b.result && !this.result && hud.result) {
       // the end tick (result.tick) finishes at (tick + 1) * 50 ms; each later tick adds 50 ms to +0x198
@@ -429,10 +491,13 @@ export class BattleScreens {
         // the crowns the end stored with the result (0xd3e360), not ones the post-end world added
         const crowns = b.endCrowns ?? b.players.map((p) => p.crowns);
         const own = crowns[team] ?? 0, opp = crowns[1 - team] ?? 0;
+        const kind = resultKind(b.result.winner, team);
         this.result = new ResultScreen(lib, hud.result, {
-          kind: resultKind(b.result.winner, team), ownCrowns: own, oppCrowns: opp,
+          kind, ownCrowns: own, oppCrowns: opp,
           ownName: texts.TID_YOU ?? '', oppName: opponentName, noClan: texts.TID_NO_CLAN ?? '',
-        });
+        }, hud.sc ? art.libs.get(hud.sc) : null);
+        // 0x8bf730 -> 0x8c08b0(screen, 0) for a win, (screen, 1) for a loss, none for a draw
+        this.confetti = kind !== 3 ? this.makeConfetti?.(kind === 2) ?? null : null;
       }
     }
     // the render advances the clip trees (0x123f55c)
@@ -458,8 +523,43 @@ export class BattleScreens {
     this.result?.draw(r, L.stageW, L.stageH, ctx);
   }
 
+  /**
+   * The confetti layers in stage px: 'under' = +0x300 at the end of the HUD layer +0x160 (before the intro and
+   * the result screen), 'over' = +0x308 in the game layer +0x178 (above the popup manager).
+   */
+  drawConfetti(r: ScRenderer, L: ScreensLayout, dpr: number, which: 'under' | 'over'): void {
+    if (!this.confetti) return;
+    const k = L.k * dpr;
+    r.setView(k, 0, 0, k, 0, 0);
+    this.confetti.draw(r, which);
+  }
+
+  /** A touch began on the stage: the intro (a stage-wide object, its dimmer covers the stage) gets it (vt+0x110). */
+  introTouchDown(): void {
+    this.intro?.touchDown();
+  }
+
+  /** That touch ended (vt+0x120). */
+  introTouchUp(): void {
+    this.intro?.touchUp();
+  }
+
   /** A click at board CSS px (x, y) hit the result screen's OK button. */
   okAt(x: number, y: number, L: ScreensLayout): boolean {
     return !!this.result && this.result.hitOk(x / L.k, y / L.k);
+  }
+
+  /** Touch began at board CSS px: the OK button is held (Down) when hit. */
+  okPress(x: number, y: number, L: ScreensLayout): boolean {
+    return !!this.result && this.result.pressOk(x / L.k, y / L.k);
+  }
+
+  okMove(x: number, y: number, L: ScreensLayout): void {
+    this.result?.moveOk(x / L.k, y / L.k);
+  }
+
+  /** Touch ended at board CSS px: true when it clicked the OK button. */
+  okRelease(x: number, y: number, L: ScreensLayout): boolean {
+    return !!this.result && this.result.releaseOk(x / L.k, y / L.k);
   }
 }

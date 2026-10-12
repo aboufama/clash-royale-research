@@ -114,9 +114,16 @@ CHAR_EFFECT_FIELDS = ("SpawnEffect", "DeathEffect", "AttackStartEffect", "Damage
                       "ReflectedAttackEffect", "ReflectedAttackTargetedEffect", "BuffWhenNotAttackingEffect",
                       # read by the views too (sc/char_effects.ts, docs/EFFECTS.md); no supported card sets them
                       "TakeDamageEffect", "TargetedHitEffectSpecial", "AttackStartEffectSpecial", "AttackStartEffect3")
-# Effects the client plays by a static name (Tables +0xec0 "Damage": World_areaDamage 0xf97be8, fallback
-# damage effect of characters, spells and spawned projectiles; sc/char_effects.ts).
-GLOBAL_EFFECTS = ("Damage",)
+# Effects the client plays by a static name (static Strings 0x1a5e468.. built at 0xe66800, looked up with
+# 0xe19214; each EnemyVersion follows through Baker.effect): "Damage" (Tables +0xec0: World_areaDamage
+# 0xf97be8, fallback damage effect of characters, spells and spawned projectiles); "GenericDie" (death
+# 0xf83990 / 0xf8d5bc via view vt+0xc0, not for crown towers); the crowd reactions of a location with
+# CrowdEffects: "CrowdTowerTakeDamage" (Health_applyHit 0xfcb29c @0xfcbaa8), "CrowdDieBigUnit" (0xf83990
+# @0xf844a8), "CrowdSummonBigUnit" (Deploy_summon 0xd423bc @0xd42b34); the King tower's activation
+# (king_tower.toml ActionPlayEffect "King_player_activate"); "GetMana" (Tables +0xec8, view vt+0x100
+# 0x84f444 with the "+%d" text). sc/char_effects.ts, docs/EFFECTS.md.
+GLOBAL_EFFECTS = ("Damage", "GenericDie", "CrowdTowerTakeDamage", "CrowdDieBigUnit", "CrowdSummonBigUnit",
+                  "King_player_activate", "GetMana")
 CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim", "DeathSpawnDeployBaseAnim")
 PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect",
                       "OverrideShooterProjectileEffect", "ChainedHitEndEffect")
@@ -167,6 +174,25 @@ INTRO_EXPORTS = ("battle_intro_banners", "battle_banner", "banner_bg_default_gre
 # End-of-battle result screen (0xbe0100 -> 0x8bc564; 0x8bcab8 picks pvp_battle_end_new for a 1v1 battle)
 RESULT_SC = "sc/ui_battle_end.sc"
 RESULT_EXPORT = "pvp_battle_end_new"
+# The result screen's confetti (0x8bf730 -> 0x8c08b0: win_battle_confetti_blue under the screen and _top above
+# it, 0x1a5e858 / 0x1a5e868; their EnemyVersion red pair for a loss) and the GameButtons' click sound (client
+# tables +0x9c0, 0x1a5ed78; 0x894c54 / 0x894dfc). sim/viewer/src/sc/result.ts, sc/emotes.ts.
+RESULT_EFFECTS = ("win_battle_confetti_blue", "win_battle_confetti_blue_top")
+BUTTON_CLICK_SOUND = "soundbanks/ui_menu_general/ui_menu_general_buttonclick_2"
+# Emotes (sim/viewer/src/sc/emotes.ts): HUD_taunt's menu 0x8e9284 (taunt_selector_new, emote_menu_* items,
+# the button template button_timeline of 0x1273538), the bubbles 0x8e8f0c / 0x8e89d0 (sticker / speech bubbles)
+# from sc/ui.sc; the default-owned emotes of csv_logic/emotes.csv (their pack's emoteN / iconN exports and SfxFile
+# .ogg, played through event:/Main/Trigger/SFX_trigger/Play_emote by 0x8892cc) and the menu's text taunts
+# (csv_logic/taunts.csv rows with TauntMenu and IsTextEmote, 0x8ea21c).
+EMOTE_UI_EXPORTS = (
+    "taunt_selector_new", "emote_menu_sticker_btn", "emote_menu_empty_slot", "emote_downloading", "button_timeline",
+    "sticker_bubble_player_master", "sticker_bubble_player2_master", "sticker_bubble_opponent_master",
+    "sticker_bubble_opponent2_master", "speech_bubble_player_master", "speech_bubble_player2_master",
+    "speech_bubble_opponent_master", "speech_bubble_opponent2_master",
+)
+EMOTE_TEXTS = ("TID_TAUNT_LIMIT_FULL", "TID_NO_TAUNT_DUE_TO_MUTE", "TID_EMOTE_MISSING",
+               # the battle screen's touch end 0xbe1120: a tap on the arena with no card selected (main.ts)
+               "TID_NO_SPELL_SELECTED_TAP")
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
              "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
@@ -615,8 +641,10 @@ class Baker:
         if e is None:
             self.missing_effects.add(name)
             return
+        # PivotClip (data +0xb8) and ParentLookAtOffsetRadius (+0xb0 -> effect +0x1c): the component offset
+        # of 0x82bf10 @0x82c2ac (sc/effects.ts)
         out = {k: e[k] for k in ("Loop", "FollowParent", "Scale", "ShakeScreen", "ForcedLength", "EnemyVersion",
-                                 "PivotClip", "ShakeMaxIntensity") if k in e}
+                                 "PivotClip", "ShakeMaxIntensity", "ParentLookAtOffsetRadius") if k in e}
         self.m_effects[name] = out
         # sound components (tools/audio): each component's Sound starts with the component (age >= Time,
         # 0x82bf10), visual or not; KillLoopingSoundsOnEnd (data +0xae) keys them off when it stops
@@ -671,17 +699,18 @@ class Baker:
         if em is None:
             self.warnings.append(f"emitter {name!r} not found")
             return
-        out = {k: v for k, v in em.items() if k not in ("ParticleResource", "ParticleExportName", "TrailSWF")}
+        # TrailMaxPoints / TrailDuration / TrailSWF / TrailExportName are only named by the emitter schema
+        # 0xe572b4 (0xe578e0..0xe57964): no getter reads them (the emitter getters 0xe56ccc..0xe57208 look
+        # fields up by name through 0xe0c420 / 0xe0c4a0 / 0xe0ca24), so the client draws no trails and none
+        # are baked (docs/EFFECTS.md)
+        out = {k: v for k, v in em.items() if k not in ("ParticleResource", "ParticleExportName", "TrailSWF",
+                                                        "TrailExportName", "TrailMaxPoints", "TrailDuration")}
         parts = []
         for rel, exp in zip(em.get("ParticleResource", []), em.get("ParticleExportName", [])):
             lib = self.want(rel, exp)
             if lib:
                 parts.append({"sc": lib, "export": exp, **self.clip_info(rel, exp)})
         out["particles"] = parts
-        if em.get("TrailSWF") and em.get("TrailExportName"):
-            lib = self.want(em["TrailSWF"], em["TrailExportName"])
-            if lib:
-                out["trail"] = {"sc": lib, "export": em["TrailExportName"]}
         self.m_emitters[name] = out
         if em.get("EnemyVersion"):
             self.emitter(em["EnemyVersion"])
@@ -803,7 +832,9 @@ class Baker:
                   # client-action health bar (healthbars.toml parts, view 0x8405c4 / 0x853574)
                   "OnStartingClientActions", "NewHealthBarOffsetX", "NewHealthBarOffsetXBlue", "NewHealthBarOffsetXRed",
                   # targeted effects' source offset (0xde1220) and the fallback damage effect flag (+0x138)
-                  "TargetEffectY", "UseFallbackDamageEffect"):
+                  "TargetEffectY", "UseFallbackDamageEffect",
+                  # crowd reactions (0xde1350, +0x7f8) and GenericDie's IsSummonerTower test (0xde02c4, +0x571)
+                  "CrowdEffects", "IsSummonerTower"):
             if k in row:
                 entry[k[0].lower() + k[1:]] = row[k]
         if not entry.get("healthBar"):
@@ -945,8 +976,9 @@ class Baker:
             return
         d: dict = {}
         self.m_buffs[name] = d
+        # AudioPitchModifier (+0xfc, default 0): the AttackStartEffect sound pitch product 0xfc24e0
         for k in ("SpeedMultiplier", "HitSpeedMultiplier", "SpawnSpeedMultiplier", "DamagePerSecond", "HitFrequency",
-                  "HealPerSecond", "DamageReduction", "Invisible", "EnableStacking"):
+                  "HealPerSecond", "DamageReduction", "Invisible", "EnableStacking", "AudioPitchModifier"):
             if k in row:
                 d[k[0].lower() + k[1:]] = row[k]
         if row.get("FilterExportName"):
@@ -1007,6 +1039,10 @@ class Baker:
                   "Tower_destroyed_water1", "Tower_destroyed_water2", "StarTower_base_neutral", "StarTower_top_neutral"):
             self.want(bt, e)
         for row, d in ((king, k), (prin, p)):
+            # crowd reactions (CharacterData +0x7f8: the Princess tower's CrowdDieBigUnit, 0xf83990)
+            for f in ("CrowdEffects", "IsSummonerTower", "IsSummoner"):
+                if row.get(f):
+                    d[f[0].lower() + f[1:]] = row[f]
             fx = {}
             for f in ("DeathEffect", "DamageEffect", "ProjectileEffect", "SpawnEffect"):
                 if row.get(f):
@@ -1090,6 +1126,8 @@ class Baker:
             "shadow": {k: loc.get(k, 0) for k in ("ShadowR", "ShadowG", "ShadowB", "ShadowA", "ShadowOffsetX",
                                                    "ShadowOffsetY")},
             "shadowBlurDistance": client_global("SHADOW_BLUR_DISTANCE", 170),
+            # LocationData CrowdEffects (column index 0x1986d8c, read by 0xe48cd4): the crowd reactions
+            "crowdEffects": bool(loc.get("CrowdEffects")),
         }
         if loc.get("CloudExportName"):
             cl = self.want(loc.get("CloudFileName", "sc/effects.sc"), loc["CloudExportName"])
@@ -1170,6 +1208,9 @@ class Baker:
         if res:
             loc = load_json("locations").get(self.args.location) or {}
             out["result"] = {"sc": res, "export": RESULT_EXPORT, "endScreenDelay": int(loc.get("EndScreenDelay") or 0)}
+        emotes = self.emote_art()
+        if emotes:
+            out["emotes"] = emotes
         # radius indicator texture of the spell drag (0xcf0464 loads image/range.png: a 2x32 white ramp)
         if apk.exists("image/range.png"):
             OUT.mkdir(parents=True, exist_ok=True)
@@ -1229,6 +1270,51 @@ class Baker:
             if acts:
                 out["healthBarParts"][h.group(1)]["clientActions"] = re.findall(r'"([^"]*)"', acts.group(1))
         return out
+
+    # -- emotes (sim/viewer/src/sc/emotes.ts) -----------------------------------------------------
+    def emote_art(self) -> dict | None:
+        """HUD_taunt's menu, bubbles and the default-owned emotes / menu text taunts, with their sfx copied."""
+        ui = "sc/ui.sc"
+        lib = None
+        for e in EMOTE_UI_EXPORTS:
+            lib = self.want(ui, e) or lib
+        if lib is None:
+            return None
+        rows = lambda rel: list(csv.DictReader(io.StringIO((RAW / rel).read_text(encoding="utf-8"))))[1:]  # noqa: E731
+        emotes = []
+        # a fresh account owns the DefaultOwned rows (no player profile in the sandbox: approximation)
+        for r in rows("csv_logic/emotes.csv"):
+            if r.get("DefaultOwned") != "True" or r.get("Available") != "True" or not r.get("ScFile"):
+                continue
+            lo = int(r.get("IndexLo") or 0)
+            clip, icon = f"emote{lo + 1}", f"icon{lo + 1}"  # 0x8897a4 / 0x88938c: "emote%d" / "icon%d" of IndexLo + 1
+            pack = self.want(r["ScFile"], clip)
+            if not pack or not self.want(r["ScFile"], icon):
+                continue
+            d = {"name": r["Name"], "hi": int(r.get("IndexHi") or 0), "lo": lo, "sc": pack, "clip": clip, "icon": icon,
+                 "crystal": r.get("UseCrystalBackground") == "True", "frames": self.clip_info(r["ScFile"], clip)["frames"]}
+            sfx = r.get("SfxFile") or ""
+            # decoded audio follows --no-audio (the Pages bake keeps audio off the public site)
+            if sfx and self.args.audio and apk.exists(sfx):
+                (OUT / "emotes").mkdir(parents=True, exist_ok=True)
+                (OUT / "emotes" / Path(sfx).name).write_bytes(apk.read(sfx))
+                d["sfx"] = f"emotes/{Path(sfx).name}"
+            emotes.append(d)
+        taunts = []
+        for i, r in enumerate(rows("csv_logic/taunts.csv")):
+            if r.get("TauntMenu", "").upper() == "TRUE" and r.get("IsTextEmote", "").upper() == "TRUE" and r.get("BtnExportName"):
+                taunts.append({"index": i, "name": r["Name"], "tid": r.get("TID") or "", "btn": r["BtnExportName"],
+                               "sound": r.get("Sound") or None})
+        want_texts = set(EMOTE_TEXTS) | {t["tid"] for t in taunts}
+        texts = {}
+        for r in rows("csv_client/texts.csv"):
+            if r.get("Name") in want_texts:
+                texts[r["Name"]] = r.get("EN", "")
+        self.effect_sounds.add(BUTTON_CLICK_SOUND)  # baked by tools/audio with the effects' sounds
+        g = lambda n, d: client_global(n, d)  # noqa: E731
+        return {"ui": lib, "emotes": emotes, "taunts": taunts, "texts": texts, "clickSound": BUTTON_CLICK_SOUND,
+                "globals": {"showTime": g("SHOW_TAUNT_TIME_SEC", 4), "cooldown10": g("TAUNT_COOLDOWN_10TH_OF_SECONDS", 20),
+                            "limit": g("TAUNT_LIMIT", 100), "soundCooldown": g("TAUNT_SOUND_COOLDOWN", 3000)}}
 
     # -- main ------------------------------------------------------------------------------------
     def run(self):
@@ -1290,6 +1376,8 @@ class Baker:
         extra_fx = list(GLOBAL_EFFECTS) + [s for s in (a.effects or "").split(",") if s.strip()]
         for e in extra_fx:
             self.effect(e.strip())
+        for e in RESULT_EFFECTS:  # the result screen's confetti (0x8c08b0); effect() adds their EnemyVersion pair
+            self.effect(e)
 
         # -- write libraries -------------------------------------------------------------------
         sc_dir = OUT / "sc"
