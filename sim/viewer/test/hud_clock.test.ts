@@ -36,6 +36,7 @@ test('0x8d38c4: after a King kill the clock keeps counting through the end delay
   const b = battle();
   b.tick = 2000; // 80 s left after this tick
   b.players[1].king.state = ST_DEAD;
+  b.players[0].crowns = 3; // what the King's death gives; equal crowns would take the tiebreak gate
   (b as unknown as { checkEnd(): void }).checkEnd();
   b.tick++;
   assert.equal(b.result?.reason, 'king');

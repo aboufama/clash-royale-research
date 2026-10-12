@@ -3,6 +3,48 @@
 Newest first. Each entry gives the decision, why it was made, and what would
 change it.
 
+## 2026-10-12 — Engine port 4: removal notices, Kamikaze, attack sequences, Miner, world order
+
+- **Decision:** port, from `work/native/decomp_eng4/`, the target-removal notice
+  (0xf8c9d8 → 0xfc7640: finish wait +0x50, 250 ms without a search), the
+  Kamikaze self-kill as a queued kill (0xf83018 → 0xfca24c), MultipleTargets
+  with AllTargetsHit (0xfc458c), the Inferno attack sequence (loader 0xdde618,
+  0xde0e5c, 0xfc90b0, 0xfc3cb4, 0xfc4afc), the projectile start collision at
+  World_addActor with ProjectileStartExtraRadius (0xf934bc), the Miner's state 6
+  (0xf84f4c, 0xfcca18, 0x11d9304, 0xfcef48, 0xf800bc), the world list's actor
+  order (area effects, projectiles, characters), area-effect candidates in grid
+  order (0xf9a594), the child area effect on the parent's first update
+  (0xf7b254), the double King kill through the tiebreak gate, crown-tower and
+  card scaling through 0xe7e418, and the loader's raised walking speed of
+  stop-and-go characters (0xdde618 @0xddf844; found while reading the loader,
+  not on the original list). The King-death wave is no longer gated by
+  `postEnd`: it runs at the end of every battle tick as 0xd33f74 does; without
+  `postEnd` its end-tick kills stay queued and its clocks are not hashed, so
+  those states are unchanged.
+- **Why:** these replace D/A rows whose behaviour the decompile contradicts:
+  "retarget keeps the clock" (an observation that holds only for an in-range
+  retarget), an instant Kamikaze death that let attackers retarget in the same
+  attack phase, straight-line tunnelling, the A list order. The native trace
+  fixtures (400-tick fixture, King retarget, A*) still match: none of them
+  removes a dead target during an attack or contains a Kamikaze, a sequence,
+  a Miner or a stop-and-go unit.
+- **State hashes:** every hash changes, because the unit layout changed
+  (`seqIndex` replaces the old `rampMs`, `keepFlag` added, a tunnelling unit adds
+  its destination, the double-kill tiebreak hashes the wave clock and
+  `fullTowersFlag`). Behaviour changes too, so replays of matches diverge: in 12
+  recorded bot-vs-bot matches replayed on both engines the first divergence was a
+  removal notice (target dropped with the finish wait instead of a same-tick
+  retarget: 8 matches), a Kamikaze (Ice Spirits) dying in the flush, a Bowler
+  ball hitting on creation, the Golem's raised speed and the Inferno Dragon's
+  shorter range while walking; with the same plays the winner differed in 3 of
+  the 12. Bot strength is about the same (`bench/bot.ts 40`).
+- **Owner smell test wanted:** a log or bowling ball (piercing projectile) hits
+  a tunnelling Miner (0xf82e68 has no state-6 exemption); the Miner tunnels via a
+  bridge (state-6 path costs treat water as blocked for it).
+- **Would change if:** a native trace shows a same-tick retarget after a kill, or
+  a straight tunnel; or 0xe31fc8 (area-effect filter) turns out to accept a
+  tunnelling Miner.
+
 ## 2026-10-12 — The world after the end: an opt-in post-end phase of `step()`
 
 - **Decision:** `BattleConfig.postEnd` (default false) lets `Battle.step()` keep
