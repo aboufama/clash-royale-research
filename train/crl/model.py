@@ -98,9 +98,19 @@ class Encoder(nn.Module):
         return x
 
     trim_tokens = True  # off for ONNX export: fixed shapes (trimming reads the batch on the host)
+    # block sizes chosen by the caller ({"unit": n, "proj": n, ...}): CUDA-graph inference picks a capture
+    # by the slots the batch uses, computed on the host, so no device read is needed
+    fixed_trim: dict | None = None
 
     def forward(self, x: dict[str, torch.Tensor]):
-        if self.trim_tokens:
+        if self.fixed_trim is not None:
+            x = dict(x)
+            for key, (f, i) in (("unit", ("unit_f", "unit_id")), ("proj", ("proj_f", "proj_id")), ("aoe", ("aoe_f", "aoe_id")),
+                                ("pend", ("pend_f", "pend_id")), ("priv_pend", ("priv_pend_f", "priv_pend_id"))):
+                n = self.fixed_trim.get(key)
+                if n is not None:
+                    x[f], x[i] = x[f][:, :n], x[i][:, :n]
+        elif self.trim_tokens:
             x = self.trim(x)
         dev = x["glob"].device
         B = x["glob"].shape[0]

@@ -206,30 +206,68 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
     return {k: float(torch.stack(v).float().mean()) for k, v in logs.items()}
 
 
-class GraphedInfer:
-    """Inference through CUDA graphs captured at a few batch sizes: one replay instead of ~1000 kernel
-    launches per call (the launches, not the arithmetic, dominated a frame's inference). Rows are padded
-    to the next captured size; padded rows have no legal action and are dropped. Weights are updated in
-    place (load_state_dict copies into the captured parameters), so the graphs stay valid."""
+_SLOT_COLS: dict[int, tuple[np.ndarray, int]] = {}
 
-    def __init__(self, actor, critic, floats: int, mask_bytes: int, device: torch.device, sizes=(64, 128, 256, 512, 1024, 2048)):
-        self.actor, self.critic, self.sizes = actor, critic, sizes
+
+def slot_need(obs: np.ndarray, spec: dict, rows: np.ndarray | None = None) -> tuple[int, int]:
+    """Unit and projectile slots used by any of `rows` of `obs` (slots fill from 0), read on the host from
+    the id columns only."""
+    key = id(spec)
+    if key not in _SLOT_COLS:
+        L, S = spec["layout"], spec["sizes"]
+        su, sp = S["F_UNIT"] + S["ID_UNIT"], S["F_PROJ"] + S["ID_PROJ"]
+        cols = np.array([L["units"] + i * su + S["F_UNIT"] for i in range(S["MAX_UNITS"])]
+                        + [L["proj"] + i * sp + S["F_PROJ"] for i in range(S["MAX_PROJ"])])
+        _SLOT_COLS[key] = (cols, S["MAX_UNITS"])
+    cols, nu_max = _SLOT_COLS[key]
+    ids = obs[np.ix_(rows, cols)] if rows is not None else obs[:, cols]
+    if ids.shape[0] == 0:
+        return 1, 1
+    used = np.nonzero((ids > 0).any(0))[0]
+    u, p = used[used < nu_max], used[used >= nu_max] - nu_max
+    return (int(u[-1]) + 1 if len(u) else 1), (int(p[-1]) + 1 if len(p) else 1)
+
+
+class GraphedInfer:
+    """Inference through CUDA graphs captured at a few batch sizes and entity-slot counts: one replay
+    instead of ~1000 kernel launches per call, over only the unit / projectile slots the batch uses
+    (chosen on the host by `slot_need`). Rows are padded to the next captured size; padded rows have no
+    legal action and are dropped. Weights are updated in place (load_state_dict copies into the
+    captured parameters), so the graphs stay valid."""
+
+    UNIT_BUCKETS = (24, 40, 64)
+    PROJ_BUCKETS = (8, 16, 32)
+
+    def __init__(self, actor, critic, floats: int, mask_bytes: int, device: torch.device, sizes=(64, 128, 256, 512, 1024, 2048),
+                 spec: dict | None = None):
+        self.actor, self.critic, self.sizes, self.spec = actor, critic, sizes, spec
         self.graphs = {}
         autocast = make_autocast(device)
+        pool = torch.cuda.graph_pool_handle()
+        ub = self.UNIT_BUCKETS if spec else (None,)
+        pb = self.PROJ_BUCKETS if spec else (None,)
+        nets = [m for m in (actor, critic) if m is not None]
         for B in sizes:
             obs = torch.zeros(B, floats, device=device)
             masks = torch.zeros(B, mask_bytes, dtype=torch.uint8, device=device)
             masks[:, 0] = 1
-            stream = torch.cuda.Stream()
-            stream.wait_stream(torch.cuda.current_stream())
-            with torch.cuda.stream(stream), torch.no_grad(), autocast():
-                for _ in range(2):
-                    self._run(obs, masks)
-            torch.cuda.current_stream().wait_stream(stream)
-            g = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g), torch.no_grad(), autocast():
-                out = self._run(obs, masks)
-            self.graphs[B] = (g, obs, masks, out)
+            for nu in ub:
+                for npj in pb:
+                    trim = {"unit": nu, "proj": npj} if spec else None
+                    for m in nets:
+                        m.enc.fixed_trim = trim
+                    stream = torch.cuda.Stream()
+                    stream.wait_stream(torch.cuda.current_stream())
+                    with torch.cuda.stream(stream), torch.no_grad(), autocast():
+                        for _ in range(2):
+                            self._run(obs, masks)
+                    torch.cuda.current_stream().wait_stream(stream)
+                    g = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(g, pool=pool), torch.no_grad(), autocast():
+                        out = self._run(obs, masks)
+                    self.graphs[(B, nu, npj)] = (g, obs, masks, out)
+        for m in nets:
+            m.enc.fixed_trim = None
 
     def _run(self, obs, masks):
         a = self.actor.act_packed(obs, masks)
@@ -237,13 +275,22 @@ class GraphedInfer:
             return a
         return torch.cat([a, self.critic(obs).float().unsqueeze(1)], 1)
 
-    def __call__(self, obs: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
+    def __call__(self, obs: torch.Tensor, masks: torch.Tensor, obs_np: np.ndarray | None = None,
+                 rows: np.ndarray | None = None) -> torch.Tensor:
+        """`obs_np` / `rows`: the frame's host observations and the rows in `obs` (for the slot counts)."""
         n = obs.shape[0]
         B = next((b for b in self.sizes if b >= n), None)
         if B is None:  # larger than every capture: split
             half = n // 2
-            return torch.cat([self(obs[:half], masks[:half]), self(obs[half:], masks[half:])])
-        g, so, sm, out = self.graphs[B]
+            hr = None if rows is None else rows[:half]
+            tr = None if rows is None else rows[half:]
+            return torch.cat([self(obs[:half], masks[:half], obs_np, hr), self(obs[half:], masks[half:], obs_np, tr)])
+        nu = npj = None
+        if self.spec is not None:
+            need_u, need_p = slot_need(obs_np, self.spec, rows) if obs_np is not None else (64, 32)
+            nu = next(b for b in self.UNIT_BUCKETS if b >= min(need_u, self.UNIT_BUCKETS[-1]))
+            npj = next(b for b in self.PROJ_BUCKETS if b >= min(need_p, self.PROJ_BUCKETS[-1]))
+        g, so, sm, out = self.graphs[(B, nu, npj)]
         so[:n].copy_(obs)
         sm[:n].copy_(masks)
         if n < B:
@@ -347,7 +394,7 @@ def main(argv=None):
     run_actor, run_critic = actor, critic
     autocast = make_autocast(device)
     use_graphs = device.type == "cuda" and not args.no_cuda_graphs
-    infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device) if use_graphs else None
+    infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device, spec=spec) if use_graphs else None
     opp_graphs: dict[int, GraphedInfer] = {}
 
     league.resample(actor, device)
@@ -423,7 +470,7 @@ def main(argv=None):
             if learn.any():
                 li_rows = np.nonzero(learn)[0]
                 lt = torch.from_numpy(li_rows).to(device)
-                packed = infer(obs_t[lt], masks_t[lt]) if infer is not None else \
+                packed = infer(obs_t[lt], masks_t[lt], frame.obs, li_rows) if infer is not None else \
                     torch.cat([run_actor.act_packed(obs_t[lt], masks_t[lt]), run_critic(obs_t[lt]).float().unsqueeze(1)], 1)
                 packed = packed.cpu().numpy()  # the one host sync for the learner's rows
                 s_np, t_np = packed[:, 0].astype(np.int64), packed[:, 1].astype(np.int64)

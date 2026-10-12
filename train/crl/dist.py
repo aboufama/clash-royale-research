@@ -133,7 +133,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
     actor.load_state_dict(a_state)
     critic.load_state_dict(c_state)
     use_graphs = device.type == "cuda" and not args.no_cuda_graphs
-    infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device) if use_graphs else None
+    infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device, spec=spec) if use_graphs else None
     autocast = make_autocast(device)
     opponents: dict[int, tuple] = {}  # sid -> (model, graphs or None)
     active: list[int] = []
@@ -153,6 +153,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
         m.enc.trim_tokens = False
         for p_ in m.parameters():
             p_.requires_grad_(False)
+        # opponents rotate: untrimmed graphs (4 captures, not 36) keep loading one quick
         g = GraphedInfer(m, None, pool.floats, pool.mask_bytes, device, sizes=(64, 128, 256, 512)) if use_graphs else None
         return m, g
 
@@ -216,7 +217,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
             if learn.any():
                 li_rows = np.nonzero(learn)[0]
                 lt = torch.from_numpy(li_rows).to(device)
-                packed = infer(obs_t[lt], masks_t[lt]) if infer is not None else \
+                packed = infer(obs_t[lt], masks_t[lt], frame.obs, li_rows) if infer is not None else \
                     torch.cat([actor.act_packed(obs_t[lt], masks_t[lt]), critic(obs_t[lt]).float().unsqueeze(1)], 1)
                 packed = packed.cpu().numpy()
                 s_np, t_np = packed[:, 0].astype(np.int64), packed[:, 1].astype(np.int64)
@@ -395,7 +396,8 @@ def main(args) -> None:
             update += 1
             if update % args.snapshot_every == 0:
                 league.add(template, update)
-            send_opponents()
+            if update % 5 == 0:  # rotate the league opponents now and then (each new one costs graph captures)
+                send_opponents()
             dt = time.time() - t_last
             t_last = time.time()
             summary = stats.summary()
