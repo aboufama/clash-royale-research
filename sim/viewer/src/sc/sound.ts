@@ -27,13 +27,16 @@
 // The FMOD event model comes from the banks (tools/audio/fmod_bank.py, read against libfmodstudio's
 // loader): timeline instruments at 48 kHz frame positions, multi-instrument playlists, instrument
 // volume (dB) / pitch (semitones) / loop count / trigger delay / probability, random modulators,
-// event max instances / stealing / cooldown, loop transitions, command instruments (stop event).
+// event max instances / stealing / cooldown, loop transitions, command instruments (stop event), and
+// the instance limits of the mixer buses on each event's routing chain (P: busAdmits / busSteals; how
+// the battle tracks hand over, bus:/Music/Arena holding one instance and stealing the oldest).
 // Approximations (A, docs/FIDELITY.md): random modulator ranges (volume: 0..-amount dB; pitch:
-// +-amount/2 st), playlist modes (2 shuffle, 1 weighted random, 0/3 sequential), stealing (0/1/2 stop
-// the oldest instance), keyOff (looping voices stop looping), FMOD's 64-voice cap (new voices are
-// dropped past it); bus effects, VCAs, snapshots, AHDSR / LFO modulators and parameters are not
-// applied. The audio clock is the wall clock like FMOD's; a faster simulation speed plays the
-// battle's events faster and the events' own limits (max instances, cooldown) thin them out.
+// +-amount/2 st), playlist modes (2 shuffle, 1 weighted random, 0/3 sequential), event stealing (0/1/2
+// stop the oldest instance), keyOff (looping voices stop looping), FMOD's 64-voice cap (new voices are
+// dropped past it); bus volumes and effects (compressors and EQ fed by sidechains), VCAs, snapshots,
+// AHDSR / LFO modulators and parameters are not applied. The audio clock is the wall clock like FMOD's;
+// a faster simulation speed plays the battle's events faster and the events' own limits (max
+// instances, cooldown) thin them out.
 
 import { assetFetch } from './asset_fetch.ts';
 
@@ -68,6 +71,8 @@ export interface SoundEventDef {
   loop?: [number, number]; // timeline loop [destination, transition] (48 kHz frames)
   len: number;
   inst: SoundNode[];
+  /** the instance-limited buses of the event's routing chain, bottom-up: [bus path, max instances, stealing] */
+  bus?: [string, number, number][];
 }
 
 export interface SoundDoc {
@@ -168,6 +173,38 @@ export function admit(def: Pick<SoundEventDef, 'max' | 'steal' | 'cooldown'>, no
     return { ok: false, steal: null };
   }
   return { ok: true, steal: null };
+}
+
+/** A mixer bus's instance limit as baked: [bus path, max instances (BUS +0xcc), stealing (BUS +0xd0)]. */
+export type BusLimit = readonly [string, number, number];
+
+/**
+ * Bus instance limiting, admission (libfmodstudio 0x13a460, called by the instance start 0x145040 through
+ * 0x144ca8): walking up the routing chain, the first bus already holding max instances decides: stealing
+ * 0 (none) refuses the new instance; 1 (virtualize) and 2 (oldest) admit it; 3 (furthest) / 4 (quietest)
+ * compare distance (+0x2f4) / audibility (0x147088) with the listed instances, which these 2D sounds share,
+ * so they admit too (no limited bus of this build uses 3 or 4). A chain without a full bus admits.
+ * `live(bus)` = the live instances registered with the bus, oldest first.
+ */
+export function busAdmits(buses: readonly BusLimit[] | undefined, live: (bus: string) => readonly number[]): boolean {
+  for (const [bus, max, mode] of buses ?? []) if (live(bus).length >= max) return mode !== 0;
+  return true;
+}
+
+/**
+ * Bus instance limiting, registration (0x13a570): each limited bus of the chain, bottom-up, that is full
+ * stops one instance first (0x14524c mode 1, the steal: 0x145a50 ends it at the next DSP block without its
+ * AHDSR release) and then lists the new one at its end (0x13a6a4). Stealing 2 takes the list's first entry,
+ * the oldest; 3 / 4 the furthest / quietest (all alike here: the oldest, A); 0 / 1 none. A stolen instance
+ * leaves every bus (0x13a6f0). Returns the instances to stop.
+ */
+export function busSteals(buses: readonly BusLimit[] | undefined, live: (bus: string) => readonly number[]): number[] {
+  const out: number[] = [];
+  for (const [bus, max, mode] of buses ?? []) {
+    const l = live(bus).filter((id) => !out.includes(id));
+    if (mode >= 2 && l.length > 0 && l.length >= max) out.push(l[0]);
+  }
+  return out;
 }
 
 /**
@@ -342,6 +379,13 @@ export class SoundSystem {
     return out;
   }
 
+  /** Live instances registered with a limited bus, oldest first (the Map keeps start order). */
+  private liveOnBus = (bus: string): number[] => {
+    const out: number[] = [];
+    for (const [id, i] of this.insts) if (i.def.bus?.some((b) => b[0] === bus)) out.push(id);
+    return out;
+  };
+
   private voiceCount(): number {
     let n = 0;
     for (const i of this.insts.values()) for (const v of i.voices) if (!v.ended) n++;
@@ -364,9 +408,14 @@ export class SoundSystem {
     if (!(pitch > 0)) { this.record(key, kind, 0, false, 'pitch 0'); return 0; }
     const now = this.ctx.currentTime;
     const live = this.liveOf(key);
+    // 0x144ca8: the event's own cooldown and instance limit, then the buses' (0x13a460)
     const a = admit(def, now, this.lastStart.get(key), live);
     if (!a.ok) { this.record(key, kind, 0, false, def.cooldown && live.length < def.max ? 'cooldown' : 'max instances'); return 0; }
+    if (!busAdmits(def.bus, this.liveOnBus)) { this.record(key, kind, 0, false, 'bus max instances'); return 0; }
+    // 0x145040: the event-level steal (0x153aa8), then each full limited bus steals (0x13a570), both
+    // ending the victim at once (FMOD: at the next DSP block, without AHDSR release)
     if (a.steal !== null) this.stop(a.steal, true);
+    for (const v of busSteals(def.bus, this.liveOnBus)) this.stop(v, true);
     this.lastStart.set(key, now);
     const id = this.nextId++;
     const inst: Inst = { id, key, def, start: now, voices: [], pending: [], music: kind === 'music', waiting: 0 };
@@ -623,7 +672,8 @@ export function battleClockSounds(b: { tick: number; overtime: boolean; regulati
  * The battle screen's sound logic:
  *  - 0xbdf1b0 (every battle screen update, and once from the setup 0xbde180 with prev = 99999999):
  *    while the battle runs and outside overtime, the first MUSIC_START_TIMES threshold crossed starts
- *    MUSICS_PVP[i] (0xcbc880, without stopping the previous music); the first SOUND_START_TIMES
+ *    MUSICS_PVP[i] (0xcbc880, without stopping the previous music: bus:/Music/Arena's instance limit
+ *    steals it); the first SOUND_START_TIMES
  *    threshold crossed plays the location's Sound (i = 0, 0xe48c74) or SOUNDS_PVP[i - 1] (0xcba648),
  *    skipping thresholds above 10 in overtime;
  *  - 0x8d38c4 (HUD time update): overtime starting plays extra_time_jingle and the location's
@@ -687,11 +737,12 @@ export class BattleSounds {
     }
     if (ready && this.want && this.want !== this.started && !s.ended) {
       this.started = this.want;
-      // one battle track at a time: 0xcbc880 itself never stops the previous music, and every music event
-      // loops (its timeline jumps back to the start), so in the client the handover happens in FMOD's mixer
-      // (bus / snapshot / sidechain, not decoded); what a player hears is the 2-minute track giving way to
-      // the 60 s loop, that to the 30 s loop, and the battle music to sudden death (A: mechanism)
-      sound.stopMusic();
+      // 0xcbc880 starts the next track without stopping the current one (every music event loops); the
+      // handover is the mixer's: all four battle events route through bus:/Music/Arena, which holds one
+      // instance and steals the oldest (BUS +0xcc 1, +0xd0 2), so starting the 60 s loop, the 30 s loop or
+      // sudden death cuts the previous track at the next DSP block (SoundSystem.play -> busSteals). A
+      // sounds.json older than v 2 has no bus data: stop the current music here instead (A).
+      if ((doc.v ?? 1) < 2) sound.stopMusic();
       sound.playMusic(this.want);
     }
   }

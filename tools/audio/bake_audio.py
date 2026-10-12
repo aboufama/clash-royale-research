@@ -15,7 +15,10 @@ How the client names a sound (libg 160402020):
   * music rows (csv_client/music.csv: Name, BankName, EventName) are played by 0xcbc880, which loads
     the bank and plays EventName the same way, remembering the instance as the current music.
 The strings bank (clashroyale.strings.bank) maps the path to the event GUID; the event's own bank
-holds its timeline, instruments and the FSB5 samples (tools/audio/fmod_bank.py).
+holds its timeline, instruments and the FSB5 samples (tools/audio/fmod_bank.py); the master bank
+(clashroyale.bank) holds the mixer, whose instance-limited buses on each event's routing chain are
+baked with the event (bus:/Music/Arena: one instance, stealing the oldest, is how the battle tracks
+hand over).
 """
 from __future__ import annotations
 
@@ -149,6 +152,21 @@ class Resolver:
             for e in (v or {}).get("events", []):
                 self.res[f"{path}/{e['n']}"] = (fname, e["p"])
 
+    def master(self) -> fmod_bank.Bank:
+        """The master bank (clashroyale.bank): the project's mixer (group / return / master buses, effects, VCAs)."""
+        return self.bank("soundbanks/clashroyale.bank")
+
+    def bus_limits(self, fname: str, ev: dict) -> list[list]:
+        """The instance-limited buses on an event's routing chain, bottom-up: [bus path, max, stealing].
+
+        The event's input bus (EVTB +0x40, an IBUS of its own bank) outputs to a mixer group of the master
+        bank, whose outputs lead to bus:/. Starting an instance registers it with every limited bus on that
+        chain (0x145040 -> 0x13a570), after the admission test 0x13a460 (both read the BUS model's +0xcc
+        max instances and +0xd0 stealing)."""
+        buses = {**self.master().buses, **self.bank(fname).buses}
+        return [[self.inv.get(b["guid"], b["guid"]), b["maxInstances"], b["stealing"]]
+                for b in fmod_bank.bus_chain(buses, ev["inputBus"]) if b["maxInstances"] != fmod_bank.INT_MAX]
+
     def bank(self, fname: str) -> fmod_bank.Bank:
         if fname not in self.banks:
             with tempfile.NamedTemporaryFile(suffix=".bank") as t:
@@ -276,6 +294,9 @@ class AudioBaker:
              "inst": insts, "len": end}
         if ev["cooldown"]:
             d["cooldown"] = _r(ev["cooldown"], 4)
+        limits = self.r.bus_limits(fname, ev)
+        if limits:
+            d["bus"] = limits
         # a transition back to an earlier destination marker (FMOD's loop region / transition marker)
         marks = {m["guid"]: m for m in tl["markers"]}
         for tr in tl["transitions"]:
@@ -344,7 +365,8 @@ def bake(out: Path, effect_sounds: set[str], cast: dict[str, str], rarities: set
              "ambient": a.resource(loc.get("AmbientSound", ""))}
     for k, v in RESULT_MUSIC.items():
         music[k] = a.music(v)
-    doc = {"v": 1, "generatedBy": "tools/audio/bake_audio.py", "files": a.files, "events": a.events,
+    # v 2: events carry the instance-limited buses of their routing chain ("bus")
+    doc = {"v": 2, "generatedBy": "tools/audio/bake_audio.py", "files": a.files, "events": a.events,
            "ui": ui, "effects": {k: v for k, v in fx.items() if v}, "cast": {k: v for k, v in casts.items() if v},
            "time": {"times": sound_times, "sounds": time_sounds}, "music": music,
            "missing": sorted(a.missing)}

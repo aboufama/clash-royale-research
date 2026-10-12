@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import { Battle } from '../../core/src/index.ts';
 import { loadGameData } from '../../core/src/node.ts';
 import {
-  admit, battleClockSounds, BattleSounds, dbToGain, drawPitch, drawVolume, HandSounds, Playlist, ScreenSounds,
-  semitonesToRate, type SoundDoc, type SoundEventDef, sound, SoundRng, thresholdIndex, timerSounds,
+  admit, battleClockSounds, BattleSounds, busAdmits, busSteals, dbToGain, drawPitch, drawVolume, HandSounds, Playlist,
+  ScreenSounds, semitonesToRate, type SoundDoc, type SoundEventDef, sound, SoundRng, thresholdIndex, timerSounds,
 } from '../src/sc/sound.ts';
 
 const TIMES = [180, 60, 30, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
@@ -68,6 +68,77 @@ test('event admission: cooldown, max instances, stealing', () => {
   assert.deepEqual(admit({ max: 2, steal: 0 }, 1, 0.9, [4, 5]), { ok: true, steal: 4 });
   assert.deepEqual(admit({ max: 8, steal: 0, cooldown: 0.2 }, 1, 0.9, []), { ok: false, steal: null });
   assert.deepEqual(admit({ max: 8, steal: 0, cooldown: 0.2 }, 1.25, 1, []), { ok: true, steal: null });
+});
+
+test('bus instance limits: admission (0x13a460) and registration with stealing (0x13a570)', () => {
+  const lists: Record<string, number[]> = { 'bus:/A': [3, 7], 'bus:/B': [7], 'bus:/N': [5] };
+  const live = (b: string) => lists[b] ?? [];
+  assert.equal(busAdmits(undefined, live), true);
+  assert.equal(busAdmits([['bus:/A', 3, 0]], live), true); // not full
+  assert.equal(busAdmits([['bus:/N', 1, 0]], live), false); // full, stealing none: refused
+  assert.equal(busAdmits([['bus:/N', 1, 2]], live), true);
+  assert.equal(busAdmits([['bus:/A', 2, 2], ['bus:/N', 1, 0]], live), true); // the first full bus decides
+  assert.deepEqual(busSteals(undefined, live), []);
+  assert.deepEqual(busSteals([['bus:/A', 2, 2]], live), [3]); // the oldest
+  assert.deepEqual(busSteals([['bus:/A', 3, 2]], live), []); // room left
+  assert.deepEqual(busSteals([['bus:/A', 2, 1]], live), []); // virtualize: no steal
+  assert.deepEqual(busSteals([['bus:/A', 2, 0]], live), []);
+  // a stolen instance leaves every bus: B's steal makes room on A
+  assert.deepEqual(busSteals([['bus:/B', 1, 2], ['bus:/A', 2, 2]], live), [7]);
+  assert.deepEqual(busSteals([['bus:/A', 2, 2], ['bus:/B', 1, 2]], live), [3, 7]);
+});
+
+test('a full bus with stealing none refuses a new instance; with stealing oldest it ends the oldest', () => {
+  const doc = fixture();
+  doc.v = 2;
+  doc.events['vo:a'] = ev('vo:a', { bus: [['bus:/VO', 1, 0]] });
+  doc.events['vo:b'] = ev('vo:b', { bus: [['bus:/VO', 1, 0]] });
+  doc.events['m:a'] = ev('m:a', { bus: [['bus:/M/sub', 2, 2], ['bus:/M', 1, 2]] });
+  doc.events['m:b'] = ev('m:b', { bus: [['bus:/M', 1, 2]] });
+  fresh(doc);
+  const a = sound.play('vo:a');
+  assert.ok(a);
+  assert.equal(sound.play('vo:b'), 0);
+  assert.equal(sound.log.at(-1)?.why, 'bus max instances');
+  const m1 = sound.play('m:a');
+  const m2 = sound.play('m:b');
+  assert.ok(m1 && m2 && sound.isPlaying(m2) && !sound.isPlaying(m1));
+  assert.ok(sound.isPlaying(a), 'other buses are untouched');
+});
+
+test('the battle tracks hand over through bus:/Music/Arena: one instance, the oldest stolen', () => {
+  const doc = fixture();
+  doc.v = 2;
+  const arena: [string, number, number][] = [['bus:/Music/Arena', 1, 2]];
+  for (const k of [...doc.music.battle, doc.music.extraTime]) doc.events[k!] = ev(k!, { bus: arena });
+  fresh(doc);
+  const bs = new BattleSounds();
+  bs.reset();
+  const live = () => sound.log.filter((e) => e.ok && e.kind === 'music').map((e) => [e.name, sound.isPlaying(e.id)]);
+  for (let s = 180; s >= 0; s--) {
+    clock.currentTime = 180 - s;
+    bs.update({ secs: s, overtime: false, ended: false, timeRanOut: false });
+    if (s === 61) assert.deepEqual(live(), [['music:Battle', true]]);
+    if (s === 60) assert.deepEqual(live(), [['music:Battle', false], ['music:60s', true]]);
+    if (s === 30) assert.deepEqual(live(), [['music:Battle', false], ['music:60s', false], ['music:30s', true]]);
+  }
+  clock.currentTime = 181;
+  bs.update({ secs: 120, overtime: true, ended: false, timeRanOut: false });
+  assert.deepEqual(live(), [['music:Battle', false], ['music:60s', false], ['music:30s', false], ['music:Sudden', true]]);
+  const sudden = sound.musicId;
+  assert.ok(sudden && sound.musicPlaying());
+  // the result jingles route elsewhere (bus:/Music/Jingle, no limit): Pre_result does not steal
+  assert.ok(sound.play('music:Pre', 1, 'music') && sound.isPlaying(sudden));
+});
+
+test('a sounds.json without bus data (v 1) still plays one battle track at a time', () => {
+  fresh();
+  const bs = new BattleSounds();
+  bs.reset();
+  bs.update({ secs: 180, overtime: false, ended: false, timeRanOut: false });
+  bs.update({ secs: 60, overtime: false, ended: false, timeRanOut: false });
+  const m = sound.log.filter((e) => e.ok && e.kind === 'music');
+  assert.deepEqual(m.map((e) => [e.name, sound.isPlaying(e.id)]), [['music:Battle', false], ['music:60s', true]]);
 });
 
 test('playlists: shuffle without repeats within a round or across rounds, sequential, weighted', () => {

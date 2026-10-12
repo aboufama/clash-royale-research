@@ -331,19 +331,28 @@ change it.
     60sec_loop, 30sec_loop and Sudden_death rows already come from the
     standard theme's bank, and Pre_result's stop commands name its events.
     The override is `MUSIC_OVERRIDES` in `tools/audio/bake_audio.py`.
-  - Starting a battle track stops the previous one with a short fade.
-    0xbdf1b0 starts the next track with 0xcbc880, which does not stop the
-    previous music, and every music event loops. Played literally, the
-    tracks layered, which is not what a player hears. The client's handover
-    must happen in FMOD's mixer (bus, snapshot or sidechain), which is not
-    decoded. Marked A in FIDELITY.
+  - One battle track at a time, as the mixer does it. 0xbdf1b0 starts the
+    next track with 0xcbc880, which does not stop the previous music, and
+    every music event loops; played literally, the tracks layered. The first
+    fix stopped the previous track with a short fade (A). Decoding the master
+    bank's mixer (`tools/audio/fmod_bank.py`, layouts from libfmodstudio's
+    loader 0x1aefc8 and friends) showed the real handover: all four battle
+    events route through bus:/Music/Arena, which holds one event instance and
+    steals the oldest (BUS max instances 1, stealing 2; libfmodstudio's
+    instance start 0x145040 → 0x13a460 / 0x13a570 → steal 0x145a50: the old
+    track ends at the next DSP block, no release). No snapshot, parameter or
+    sidechain is involved, and the client sets none in battle. The bake now
+    gives every event the limited buses of its routing chain (sounds.json
+    v 2) and SoundSystem.play applies them to all events (P); a v 1 bake
+    keeps the stop-and-fade fallback.
 - **Publishing:** the owner approved putting the decoded audio on the public
   Pages site with the art (2026-10-12), an explicit exception to the AGENTS.md
   rule for this demo; the Pages workflow bakes with audio. `--no-audio` stays
   available for bakes that must not include it. The CI check on `game-files/`
   in a public repository is unchanged.
-- **Would change if:** the owner wants the seasonal track back, the mixer
-  (bus / snapshot / sidechain) is decoded and gives the exact handover, Safari
+- **Would change if:** the owner wants the seasonal track back, the bus
+  volumes and sidechain compressors / EQ modulators on bus:/Music/Arena
+  (decoded, not applied) are ported, Safari
   support matters (it may not decode Ogg Vorbis: a bake-time re-encode to AAC
   would need a codec), or a later build changes the bank format version (0x8e).
 

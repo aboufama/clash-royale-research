@@ -4,13 +4,17 @@
 Reads the parts of the event model the viewer plays: events, their timelines, instruments
 (waveform, multi, silence, command, event), instrument properties, random/AHDSR modulators,
 loop transitions and the waveform -> FSB5 subsound table, plus the strings bank (path -> GUID).
+The mixer too: buses (input / group / return / event master / port: output, fader volume, effect
+chain, VCAs, instance limit and stealing), built-in effects with their parameter values, sidechain
+effects, VCAs, snapshots (what they set) and parameters (name, range, flags).
 
 The chunk layouts were read off libfmodstudio.so's bank loader (the APK's own FMOD build), see
 docs/DECISIONS.md: every body is a fixed sequence of typed reads gated by the bank version.
 Arrays are a varint16 header (count << 1 | sameSize) followed by u16 element sizes (once when
 sameSize, else before every element). GUIDs are 16 bytes (Data1 u32, Data2 u16, Data3 u16, 8 bytes).
+Addresses below are libfmodstudio.so's with Ghidra's image base 0x100000 (file offset + 0x100000).
 
-  python3 tools/audio/fmod_bank.py <bank> [strings.bank]     # dump the events as JSON
+  python3 tools/audio/fmod_bank.py <bank> [strings.bank]     # dump the events and the mixer as JSON
 """
 from __future__ import annotations
 
@@ -124,7 +128,7 @@ def parse_evtb(b: bytes) -> dict:
     """EVTB (0x1b1590)."""
     r = Rd(b)
     e = {"guid": r.guid()}
-    r.guid()  # +0x60
+    e["snapshot"] = r.guid()  # +0x60: a snapshot event's SNAB (zero for other events)
     e["timeline"] = r.guid()  # +0x30
     e["inputBus"] = r.guid()  # +0x40
     e["masterTrack"] = r.guid()  # +0x50
@@ -226,6 +230,154 @@ def parse_modb(b: bytes) -> dict:
     return m
 
 
+# -- mixer ------------------------------------------------------------------------------------
+# Bus records (LIST IBUS/GBUS/RBUS/MBUS/PORT) all go through 0x1aefc8 (the wrappers 0x1aefb0 IBUS,
+# 0x1af918 GBUS, 0x1afb34 RBUS, 0x1aff74 MBUS, 0x1afd50 PORT): a body chunk (IBSB/GBSB/RBSB/MBSB/PRTB)
+# with the bus GUID and its output, then the shared BUS chunk, then PRPS.
+
+INT_MAX = 0x7FFFFFFF
+BUS_KINDS = {"IBSS": ("IBUS", "IBSB", "input"), "GBSS": ("GBUS", "GBSB", "group"), "RBSS": ("RBUS", "RBSB", "return"),
+             "MBSS": ("MBUS", "MBSB", "master"), "PRTS": ("PORT", "PRTB", "port")}
+
+
+def parse_bus_head(b: bytes) -> dict:
+    """xBSB (0x1aefc8): bus GUID (+0x10), then the output element 0x1af1b0 at +0x48: output bus GUID,
+    channel format (0x1af220, +8) and a u32 (+0xc)."""
+    r = Rd(b)
+    h = {"guid": r.guid(), "output": ZERO}
+    if r.p + 2 <= len(b):
+        sz = r.u16()
+        sub = Rd(b[r.p:r.p + sz])
+        h["output"] = sub.guid()
+        h["outFormat"] = sub.u32()
+    return h
+
+
+def parse_bus(b: bytes) -> dict:
+    """BUS (0x1aefc8, bank version >= 0x8c): the bus model's mixing properties.
+
+    +0xc4 flags (u32), +0xc0 channel format (0x1af220), +0x80 and +0x90 effect GUID arrays (0x1af3bc, in
+    signal order; +0x80 ahead of the fader, +0x90 after it, judging by bus:/Reverb's SFX reverb in +0x80
+    and the buses' panners in +0x90), the fader element 0x1af290 (+0x30 volume dB, +0x34, then +0x38 the
+    VCAs controlling the bus, 0x1af49c), +0xcc max instances and +0xd0 stealing (0x1aed84; read by the
+    instance limiter 0x13a460 / 0x13a570: INT_MAX = no limit; 0 none, 1 virtualize, 2 oldest,
+    3 furthest, 4 quietest), +0xa0 / +0xb0 u32 arrays (0x1af584: a channel format per +0x80 / +0x90
+    effect), +0xc8 (0x1aed84, v >= 0x6f) and +0xd4 (0x1af648, v >= 0x8c)."""
+    r = Rd(b)
+    o: dict = {"flags": r.u32(), "format": r.u32()}
+    o["preEffects"] = r.array(lambda x: x.guid())
+    o["effects"] = r.array(lambda x: x.guid())
+    sz = r.u16()
+    fader = Rd(b[r.p:r.p + sz])
+    r.p += sz
+    o["volume"] = fader.f32()
+    o["f34"] = fader.f32()
+    o["vcas"] = r.array(lambda x: x.guid())
+    o["maxInstances"] = r.i32()
+    o["stealing"] = r.u32()
+    o["preEffectFormats"] = r.array(lambda x: x.u32())
+    o["effectFormats"] = r.array(lambda x: x.u32())
+    o["c8"] = r.i32()
+    o["d4"] = r.u32()
+    return o
+
+
+def parse_pmef(b: bytes) -> list:
+    """PMEF (0x1a7710): u32 count (< 0x400), then per parameter a u32 type (0x1a9910) and its value
+    (0x1a744c: 0 float, 1 int, 2 bool u8, 3 data = varint size + bytes), then a u8 (+0x5c, v >= 0x6e)."""
+    r = Rd(b)
+    out = []
+    for _ in range(min(r.u32(), 0x400)):
+        t = r.u32()
+        if t == 0:
+            out.append(round(r.f32(), 6))
+        elif t == 1:
+            out.append(r.i32())
+        elif t == 2:
+            out.append(bool(r.u8()))
+        else:
+            n = r.varint()
+            out.append(r.b[r.p:r.p + n].hex())
+            r.p += n
+    if r.p < len(b):
+        r.u8()  # +0x5c
+    return out
+
+
+def parse_befb(b: bytes) -> dict:
+    """BEFB (0x1b024c): effect GUID (+0x10), DSP type (0x1b0380, FMOD_DSP_TYPE, matching the parameter
+    counts: 18 compressor, 19 SFX reverb, 27 pan, 28 three-EQ, 36 multiband EQ), a u8 (+0x40, v >= 0x3d)."""
+    r = Rd(b)
+    return {"guid": r.guid(), "type": r.u32(), "u40": r.u8() if r.p < len(b) else 0}
+
+
+def parse_scef(b: bytes) -> dict:
+    """SCEF (0x1b0cd4, a sidechain effect inside LIST SCFF): GUID (+0x10), u8 (+0x6c), the effects it
+    feeds as a sidechain input (+0x48, e.g. compressors with USESIDECHAIN), the sidechain modulators it
+    drives (+0x58, 0x1a9568, v >= 0x53), a float (+0x68, v >= 0x88)."""
+    r = Rd(b)
+    s = {"guid": r.guid(), "u6c": r.u8()}
+    s["targets"] = r.array(lambda x: x.guid())
+    s["modulators"] = r.array(lambda x: x.guid())
+    s["f68"] = r.f32() if r.p + 4 <= len(b) else 0.0
+    return s
+
+
+def parse_vcab(b: bytes) -> dict:
+    """VCAB (0x1b1064): VCA GUID (+0x10), what it controls (+0x58: buses / VCAs, 0x1b10d8), its fader
+    element (0x1af290: volume dB, +0x34, parent VCAs)."""
+    r = Rd(b)
+    v = {"guid": r.guid(), "controls": r.array(lambda x: x.guid())}
+    sz = r.u16()
+    fader = Rd(b[r.p:r.p + sz])
+    r.p += sz
+    v["volume"] = fader.f32()
+    v["parents"] = r.array(lambda x: x.guid())
+    return v
+
+
+def parse_snab(b: bytes) -> dict:
+    """SNAB (0x1b85b8): snapshot GUID (+0x10), u32 (+0x44), the properties it sets (+0x30, 0x1b86c0 ->
+    0x1a8240: property key, target bus / effect GUID, property index, value), u8 (+0x48), i32 (+0x4c,
+    -1..6, 0x1b88e4), intensity % (+0x40, v >= 0x33)."""
+    r = Rd(b)
+    s = {"guid": r.guid(), "u44": r.u32()}
+
+    def ent(x: Rd) -> dict:
+        return {"key": x.u32(), "target": x.guid(), "index": x.u32(), "value": round(x.f32(), 4)}
+
+    s["entries"] = r.array(ent)
+    s["u48"] = r.u8()
+    s["u4c"] = r.i32()
+    s["intensity"] = r.f32()
+    return s
+
+
+def parse_prmb(b: bytes) -> dict:
+    """PRMB (0x1b4458): parameter GUID (+0x10), flags (+0x34, v >= 0x70: bit 0 global, bit 3 discrete),
+    type (+0x30), name (0x1b0858), min (+0x38), max (+0x3c), default (+0x4c), +0x40, +0x44, +0x48."""
+    r = Rd(b)
+    p = {"guid": r.guid(), "flags": r.u32(), "type": r.u32()}
+    n = r.u16()
+    p["name"] = b[r.p:r.p + n].decode("utf-8", "replace").rstrip("\0")
+    r.p += n
+    p["min"], p["max"], p["default"], p["f40"], p["f44"] = (round(r.f32(), 4) for _ in range(5))
+    p["f48"] = round(r.f32(), 4)
+    if r.p + 2 <= len(b):
+        p["labels"] = r.array(lambda x: x.b.hex())  # +0x60 (0x1b4794, v >= 0x8b): empty in this build
+    return p
+
+
+def bus_chain(buses: dict, start: str) -> list[dict]:
+    """The buses a signal passes from `start` up to the master bus (each bus's `output`)."""
+    out, seen, g = [], set(), start
+    while g in buses and g not in seen:
+        seen.add(g)
+        out.append(buses[g])
+        g = buses[g]["output"]
+    return out
+
+
 @dataclass
 class Bank:
     path: str
@@ -235,6 +387,62 @@ class Bank:
     waveforms: dict = field(default_factory=dict)  # guid -> subsound index
     modulators: list = field(default_factory=list)
     strings: dict = field(default_factory=dict)
+    version: int = 0
+    buses: dict = field(default_factory=dict)  # guid -> {kind, guid, output, volume, effects, maxInstances, ...}
+    effects: dict = field(default_factory=dict)  # guid -> builtin {type, params} | sidechain {targets, ...}
+    vcas: dict = field(default_factory=dict)
+    snapshots: dict = field(default_factory=dict)  # SNAB guid -> {entries}
+    parameters: dict = field(default_factory=dict)
+
+
+def parse_mixer(proj: Node, bank: Bank) -> None:
+    """Buses, effects, VCAs, snapshots and parameters (layouts for bank version >= 0x8c, as this build's)."""
+    if bank.version and bank.version < 0x8C:
+        return
+    for lst, (item, body, kind) in BUS_KINDS.items():
+        ln = proj.get(lst)
+        for it in (ln.all(item) if ln else []):
+            hb, bb = it.get(body), it.get("BUS ")
+            if hb is None or bb is None:
+                continue
+            bus = {"kind": kind, **parse_bus_head(hb.data), **parse_bus(bb.data)}
+            bank.buses[bus["guid"]] = bus
+    lst = proj.get("BEFX")
+    for it in (lst.all("BEFF") if lst else []):
+        e = {"kind": "builtin", **parse_befb(it.get("BEFB").data)}
+        pm = it.get("PMEF")
+        e["params"] = parse_pmef(pm.data) if pm is not None else []
+        bank.effects[e["guid"]] = e
+    lst = proj.get("SCFX")
+    for it in (lst.all("SCFF") if lst else []):
+        sc = it.get("SCEF")
+        if sc is not None:
+            e = {"kind": "sidechain", **parse_scef(sc.data)}
+            bank.effects[e["guid"]] = e
+    for lst_id, item, body, kind in (("PEFX", "PEFF", "PEFB", "plugin"), ("SEFX", "SEFF", "SEFB", "send")):
+        lst = proj.get(lst_id)
+        for it in (lst.all(item) if lst else []):  # none in this build's banks: kept raw
+            bb = it.get(body)
+            if bb is not None:
+                bank.effects[guid(bb.data)] = {"kind": kind, "guid": guid(bb.data), "raw": bb.data.hex()}
+    lst = proj.get("VCAS")
+    for it in (lst.all("VCA ") if lst else []):
+        vb = it.get("VCAB")
+        if vb is not None:
+            v = parse_vcab(vb.data)
+            bank.vcas[v["guid"]] = v
+    lst = proj.get("SNAS")
+    for it in (lst.all("SNAP") if lst else []):
+        sb = it.get("SNAB")
+        if sb is not None:
+            s = parse_snab(sb.data)
+            bank.snapshots[s["guid"]] = s
+    lst = proj.get("PRMS")
+    for it in (lst.all("PARM") if lst else []):
+        pb = it.get("PRMB")
+        if pb is not None:
+            p = parse_prmb(pb.data)
+            bank.parameters[p["guid"]] = p
 
 
 def parse_bank(path: str | Path) -> Bank:
@@ -242,8 +450,12 @@ def parse_bank(path: str | Path) -> Bank:
     top = riff(d, 0, len(d))[0]
     proj = top.get("PROJ")
     bank = Bank(str(path))
+    fmt = top.get("FMT ")
+    if fmt is not None and len(fmt.data) >= 4:
+        bank.version = struct.unpack_from("<I", fmt.data, 0)[0]
     if proj is None:
         return bank
+    parse_mixer(proj, bank)
     evts = proj.get("EVTS")
     for ev in (evts.all("EVNT") if evts else []):
         e = parse_evtb(ev.get("EVTB").data)
@@ -288,6 +500,8 @@ def parse_bank(path: str | Path) -> Bank:
                 ent["value"] = r.f32()
             elif kind == "event":
                 ent["raw"] = bb.data.hex()
+                if len(bb.data) >= 32:
+                    ent["event"] = guid(bb.data, 16)  # the event (or snapshot event) it starts
             bank.instruments[g] = ent
     wavs = proj.get("WAVS")
     for w in (wavs.all("WAV ") if wavs else []):
@@ -349,11 +563,14 @@ def parse_strings(path: str | Path) -> dict[str, str]:
 
 if __name__ == "__main__":
     b = parse_bank(sys.argv[1])
-    res = {"events": b.events, "timelines": b.timelines, "instruments": b.instruments,
-           "waveforms": b.waveforms, "modulators": b.modulators}
+    res = {"version": b.version, "events": b.events, "timelines": b.timelines, "instruments": b.instruments,
+           "waveforms": b.waveforms, "modulators": b.modulators, "buses": b.buses, "effects": b.effects,
+           "vcas": b.vcas, "snapshots": b.snapshots, "parameters": b.parameters}
     if len(sys.argv) > 2:
         st = parse_strings(sys.argv[2])
         inv = {v: k for k, v in st.items()}
         for g, e in b.events.items():
+            e["path"] = inv.get(g)
+        for g, e in list(b.buses.items()) + list(b.vcas.items()):
             e["path"] = inv.get(g)
     print(json.dumps(res, indent=1))
