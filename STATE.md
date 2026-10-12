@@ -127,37 +127,37 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). See
 [train/README.md](train/README.md) and DECISIONS "Self-play RL setup".
 
-**Live run.** RunPod pod `crl-1`, an H100 80GB with 28 vCPUs (about 24-core quota) at
-$3.99/hr. Run directory `/workspace/crl/runs/exp1`.
-- **Driving it:** `train/runpod/launch.py status|log|ls|fetch|stop|start|terminate` with
-  `RUNPOD_API_KEY` set. The pod id and its control token are in `work/runpod/pods.json`
+**Live run.** RunPod pod `crl-2`, 2× H100 80GB with 52 vCPUs (about 44-core quota) at $7.98/hr.
+Run directory `/workspace/crl/runs/exp1`. CUDA MPS runs on the pod; restart it after a CUDA fault.
+- **Driving it:** `train/runpod/launch.py --pod crl-2 status|log|ls|fetch|upload|stop|start|terminate`
+  with `RUNPOD_API_KEY` set. The pod id and its control token are in `work/runpod/pods.json`
   (ignored, this container only).
-- **Current flags:** `--collectors 2 --workers 20 --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048 --lr 4e-4`.
-- **Opponents:** pure self-play, against the current policy and a PFSP league of snapshots. The
-  scripted bot is a benchmark only: the learner plays it in 10 % of episodes and those games are
-  never stored. Before update 200, 5–25 % of training games were against the bot.
-- **Throughput:** about 7.5k decisions/s. It took these fixes to get there:
-  - learner process plus CUDA MPS;
-  - CUDA-graph inference;
-  - no host syncs in inference;
-  - narrow tile head and token trimming in the learner.
-- **Restarts:** stop, push, start with the same `--run`. It resumes from `latest.pt`, which is
-  written every 10 updates.
+- **Current flags:** `--mirror --collectors 2 --workers 38 --envs 96 --active-opponents 2 --bot-prob 0.1
+  --epochs 1 --minibatch 2048 --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --learner-values`.
+- **Throughput:** about 16–18k decisions/s. Collectors 0 and 1 run inference on GPU 0. The learner
+  and the value pass run on GPU 1.
+  - **Fixes that got it there:** learner process; MPS; CUDA-graph inference trimmed to the entity
+    slots in use; no host syncs; worker pipes 1 MB with 20 µs waits; learner-side values.
+  - **Known failure:** a third collector on the learner's GPU crashed under MPS ("unspecified launch
+    failure").
+- **Opponents:** pure self-play, mirror match on the default blue deck, against the current policy
+  and a PFSP league of snapshots. The scripted bot is a benchmark only: the learner plays it in 10 %
+  of episodes and those games are never stored. Before update 200 the matchup was deck 0 vs deck 1,
+  and 5–25 % of training games were against the bot.
+- **Restarts:** stop, push, start with the same `--run`. It resumes from `latest.pt`, written every
+  10 updates. A local backup copy lives in the scratchpad.
 
-**Progress.**
-- **Update 175 (11.8M decisions):** it beats its older snapshots 75–100% of the time. Against
-  the hard bot (level 3) it wins 0–33% per update.
-- **The owner's bar:** at least 2 crowns without losing a tower against the hard bot, most or
-  all of the time. That is the owner's own result. The trainer logs it as `dominant_vs_bot`. At
-  update 174 it was 0, with 0.15–0.37 crowns taken and about 0.95 lost per game.
-- **Budget:** about $17 left on the account at 22:00 UTC, so the pod stops around 02:00 UTC
-  unless the owner tops up.
+**Progress against the hard bot** (benchmark only; mirror and pure self-play since update 210):
+- **Wins:** 6 % at updates 220–259, 19 % at 320–379, 23–30 % at 380–430.
+- **Crowns per game:** 0.2 taken / 1.3 lost at first, about 0.8 taken / 1.3 lost by update 430.
+- **The owner's bar:** at least 2 crowns without losing a tower, most or all of the time; the
+  trainer logs it as `dominant_vs_bot`. It went from 0 to about 1–2 %, with 8 % in one update (494).
 
 **Watching the agent.**
 - **Replays:** `train/crl/evaluate.py --replays DIR` writes them, and the viewer plays them with
   `?replay=replays/<file>.json`. Two update-30 replays are in `sim/viewer/replays/`.
 - **Playing against it:** `?vs=agent`, or the "Red AI" button cycled to "RL agent". It runs
-  `sim/viewer/models/agent.onnx`, currently the update-130 actor, with onnxruntime-web.
+  `sim/viewer/models/agent.onnx`, currently the update-370 actor, with onnxruntime-web. Both sides get the agent's deck.
 - **Updating the published agent:** fetch `actor_XXXXXX.pt` and `spec.json`, then run
   `python -m crl.export actor.pt --spec spec.json --out ../sim/viewer/models/agent.onnx` from
   `train/`, then commit.
