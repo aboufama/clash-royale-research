@@ -14,9 +14,31 @@
 //   view vt+0x90 0x84e8e0: 0x82dcb0(actor) + target 0x82d484 + offset vt+0x48 + update(1).
 //   0x83fcc8 / 0x83b6d8: 0x82dedc(actor, attach 1): looping, attached.
 //   world listener vt+0x48 0x850258: 0x82dc54 at a point, no parent, with an angle.
-import type { Unit } from '../../../core/src/index.ts';
-import { ST_DEAD, ST_DEPLOYING } from '../../../core/src/entities.ts';
-import type { EffectPlayer, PlayOptions } from './effects.ts';
+// Every effect with a character parent re-sets its components' offset from PivotClip /
+// ParentLookAtOffsetRadius each update (0x82bf10 @0x82c2ac, sc/effects.ts parentOffset): the plays here
+// pass the parent's view (parentView).
+//
+// Logic-side effects played by a static name through the actor's view vt+0xc0 (pitch 1.0), sound-only in
+// this build (onStep, from the engine events):
+//   GenericDie (static String 0x1a5e4d8; EnemyGenericDie for the opponent): the death 0xf83990 (lookup
+//     0xf84508, vt+0xc0 @0xf84520) unless actor vt+0x178 0xf81fd0 (vt+0x170: crown tower, or
+//     IsSummonerTower 0xde02c4, +0x571); a crown tower's death 0xfa3d08 ends in 0xf83990 too. 0xf8d5bc (the
+//     die, vt+0x90, of actor class 6, vtable 0x1935e50) plays it as well: no supported card makes one;
+//   CrowdDieBigUnit (0x1a5e468): 0xf83990 @0xf844a8 (vt+0xc0 @0xf844d4), before GenericDie, when the location
+//     (0xd36014) has CrowdEffects (0xe48cd4: column 0x1986d8c) and the actor's data CrowdEffects
+//     (0xde1350, +0x7f8): Giant, Golem, P.E.K.K.A, Royal Giant, Giant Skeleton, Lava Hound, Bowler, Night
+//     Witch, Electro Wizard, Inferno Dragon and the Princess tower;
+//   CrowdTowerTakeDamage (0x1a5e488): Health_applyHit 0xfcb29c @0xfcbaa8 for every damage entry an actor
+//     with vt+0x178 survives (crown towers), CrowdEffects location;
+//   CrowdSummonBigUnit (0x1a5e478): Deploy_summon 0xd423bc @0xd42b34 for each summoned member with
+//     CrowdEffects, CrowdEffects location;
+//   King_player_activate (King_enemy_activate for the opponent): king_tower.toml's ActionWaitToActivate →
+//     ActionWithDuration 3300 → ActionFilter is_npc_battle() false → ActionPlayEffect, i.e. when the
+//     engine's King leaves KING_ACTIVATING (battle.ts kingTicks). The ActionPlayEffect runtime is not
+//     traced: played on the King's view like vt+0xc0 (A).
+import type { BattleEvent, Unit } from '../../../core/src/index.ts';
+import { KING_ACTIVATING, KING_ACTIVE, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE } from '../../../core/src/entities.ts';
+import type { EffectPlayer, ParentView, PlayOptions } from './effects.ts';
 import type { AnimFrame } from './anim.ts';
 import { nativeAngle } from './anim.ts';
 import type { CharacterArt, ClipRef, Manifest } from './manifest.ts';
@@ -24,6 +46,41 @@ import type { ScLibrary } from './library.ts';
 
 /** The global damage effect (Tables +0xec0, static name 0x1a5e498 "Damage": effect_Hit1). */
 export const DAMAGE_EFFECT = 'Damage';
+/** Static effect names of the logic-side sounds (0xe66800 initialisers, looked up with 0xe19214). */
+export const GENERIC_DIE = 'GenericDie';
+export const CROWD_DIE = 'CrowdDieBigUnit';
+export const CROWD_SUMMON = 'CrowdSummonBigUnit';
+export const CROWD_TOWER_DAMAGE = 'CrowdTowerTakeDamage';
+/** king_tower.toml KingTowerActivationEffect OnFalseAction (is_npc_battle() is false in PvP) */
+export const KING_ACTIVATE = 'King_player_activate';
+
+/**
+ * 0xfc24e0 → 0x83e524: the AttackStartEffect's speed (effect +0xb0, its sound pitch): 100 multiplied by
+ * each buff's AudioPitchModifier / 100 in integer steps (BuffData +0xfc, default 0, so a buff without one
+ * gives 0), as a float · 0.01; 1.0 for an actor without a buff component (every unit here has one).
+ */
+export function attackStartPitch(mods: readonly (number | undefined)[]): number {
+  let v = 100;
+  for (const m of mods) v = Math.trunc(((m ?? 0) * v) / 100);
+  return Math.fround(v * 0.01);
+}
+
+/** Matrix (tx, ty) of a clip frame's direct child named `name`, case-insensitive (0x1241adc), or null. */
+export function childTranslation(lib: ScLibrary, exp: string, frame: number, name: string): [number, number] | null {
+  const clip = lib.clip(exp);
+  if (!clip || !clip.names) return null;
+  const f = Math.max(0, Math.min(clip.frameCount - 1, frame));
+  const want = name.toLowerCase();
+  const bm = lib.banks[clip.bank].m;
+  for (let i = clip.frameStart[f]; i < clip.frameStart[f + 1]; i++) {
+    const ci = clip.elements[i * 3];
+    const nm = clip.names[ci];
+    if (nm === null || nm === undefined || nm.toLowerCase() !== want) continue;
+    const mi = clip.elements[i * 3 + 1];
+    return mi >= 0 ? [bm[mi * 6 + 4], bm[mi * 6 + 5]] : [0, 0];
+  }
+  return null;
+}
 
 /** What CharEffects needs from the world renderer (art.ts). */
 export interface CharFxHost {
@@ -181,6 +238,10 @@ export class CharEffects {
   private tunnels = new Map<number, { water: boolean; handle: number }>();
   /** chain-beam source per projectile (+0x174..+0x180, Projectile_setup 0xf8e6fc / 0xf8f618) */
   private chainFrom = new Map<number, { x: number; y: number; z: number; parent: Unit | null }>();
+  /** King tower state per King seen by onStep (KING_ACTIVATING → KING_ACTIVE plays the activation) */
+  private kingStates = new Map<number, number>();
+  /** the last cast (Tower_castSpell 0xf9f47c → Deploy_summon 0xd423bc on the same tick) */
+  private lastCast: { tick: number; team: number; card: string } | null = null;
 
   constructor(host: CharFxHost) {
     this.h = host;
@@ -195,6 +256,69 @@ export class CharEffects {
     this.hitTargets.clear();
     this.chainFrom.clear();
     this.tunnels.clear();
+    this.kingStates.clear();
+    this.lastCast = null;
+  }
+
+  // ------------------------------------------------------------------------------- logic-side sounds
+
+  /** The battle's location has CrowdEffects (0xd36014 → 0xe48cd4). */
+  private get crowd(): boolean {
+    return !!(this.h.manifest.arena as { crowdEffects?: boolean } | undefined)?.crowdEffects;
+  }
+
+  /** CharacterData CrowdEffects (0xde1350) of a character, building or crown tower. */
+  private crowdOf(u: Unit): boolean {
+    const m = this.h.manifest;
+    if (u.tower === TOWER_KING) return !!(m.towers.king as { crowdEffects?: boolean }).crowdEffects;
+    if (u.tower !== TOWER_NONE) return !!(m.towers.princess as { crowdEffects?: boolean }).crowdEffects;
+    return !!(m.characters[u.def.name] as { crowdEffects?: boolean } | undefined)?.crowdEffects;
+  }
+
+  /** Actor vt+0x178 0xf81fd0: a crown tower (vt+0x170) or IsSummonerTower data (0xde02c4). */
+  private towerLike(u: Unit): boolean {
+    return u.tower !== TOWER_NONE || !!(this.h.manifest.characters[u.def.name] as { isSummonerTower?: boolean } | undefined)?.isSummonerTower;
+  }
+
+  /**
+   * One engine step's logic-side effects (sound-only in this build), from its events in order and the
+   * King towers' state: GenericDie / CrowdDieBigUnit of each death (0xf83990), CrowdTowerTakeDamage of each
+   * damage entry a crown tower survives (0xfcb29c; the engine records a lethal entry's 'tower' event before
+   * its 'damage' event), CrowdSummonBigUnit of a cast's summon members (0xd423bc: actors spawned on the
+   * cast's tick with its card and team) and the King's activation effect when its state leaves
+   * KING_ACTIVATING. `byId` gives the step's actors (the dead included). art.ts calls it once per step.
+   */
+  onStep(b: { tick: number; events: readonly BattleEvent[]; units: readonly Unit[] }, byId: (id: number) => Unit | undefined): void {
+    const crowd = this.crowd;
+    const dead = new Set<number>();
+    for (const e of b.events) {
+      if (e.type === 'cast') {
+        this.lastCast = { tick: e.tick, team: e.team, card: e.name };
+      } else if (e.type === 'death' || e.type === 'tower') {
+        dead.add(e.id);
+        const u = byId(e.id);
+        if (!u) continue;
+        // 0xf83990: CrowdDieBigUnit first, then GenericDie unless vt+0x178
+        if (crowd && this.crowdOf(u)) this.playOnActor(u, CROWD_DIE);
+        if (!this.towerLike(u)) this.playOnActor(u, GENERIC_DIE);
+      } else if (e.type === 'damage') {
+        if (!crowd || dead.has(e.id)) continue;
+        const u = byId(e.id);
+        if (u && this.towerLike(u)) this.playOnActor(u, CROWD_TOWER_DAMAGE);
+      } else if (e.type === 'spawn') {
+        const c = this.lastCast;
+        if (!crowd || !c || c.tick !== e.tick || c.team !== e.team) continue;
+        const u = byId(e.id) ?? b.units.find((q) => q.id === e.id);
+        if (u && u.card === c.card && this.crowdOf(u)) this.playOnActor(u, CROWD_SUMMON);
+      }
+    }
+    // the King's ActionWithDuration (3300 ms) ending runs its ActionPlayEffect
+    for (const u of b.units) {
+      if (u.tower !== TOWER_KING) continue;
+      const prev = this.kingStates.get(u.id);
+      this.kingStates.set(u.id, u.kingState);
+      if (prev === KING_ACTIVATING && u.kingState === KING_ACTIVE && u.state !== ST_DEAD) this.playOnActor(u, KING_ACTIVATE);
+    }
   }
 
   private art(u: Unit): CharacterArt | undefined {
@@ -208,13 +332,50 @@ export class CharEffects {
   /** 0.01 world = 5 logic units in front of the parent (0x82b7ac), −0.01 under the flip */
   private get front(): number { return this.h.flip ? -5 : 5; }
 
-  /** view vt+0xc0 0x84f11c: once, at the actor's sprite, following it with FollowParent. */
-  playOnActor(u: Unit, eff: string | undefined, angle?: number): number {
+  /**
+   * What 0x82bf10 reads of a character parent's view each update (sc/effects.ts ParentView): the shown
+   * direction's angle +0x4dc (0x84a7f8: index · 180 / (N − 1)) and mirror sign +0x4e8 from its current
+   * direction sprite, its TargetEffectY, and the sprite frame's direct children. Null while the actor has
+   * no direction sprite (single-clip buildings, A: their view keeps the ctor's +0x4dc / +0x4e8).
+   */
+  parentView(u: Unit): () => ParentView | null {
+    return () => {
+      const sp = this.h.sprite(u);
+      const ca = this.art(u);
+      if (!sp || !ca || u.state === ST_DEAD) return null;
+      const acts = u.team === 1 && ca.actionsRed ? ca.actionsRed : ca.actions;
+      const n = acts?.[sp.key]?.dirs ?? 0;
+      const idx = Number(sp.export.slice(sp.export.lastIndexOf('_') + 1)) - 1;
+      const lib = this.h.lib(ca.sc);
+      return {
+        dirAngle: n > 1 && idx >= 0 ? Math.trunc((idx * 180) / (n - 1)) : 0,
+        mirror: sp.mirror ? -1 : 1,
+        targetEffectY: (ca as { targetEffectY?: number }).targetEffectY ?? 0,
+        child: (name) => childTranslation(lib, sp.export, sp.frame, name),
+      };
+    };
+  }
+
+  /**
+   * view vt+0xc0 0x84f11c: once, at the actor's sprite, following it with FollowParent; `pitch` is its
+   * float argument, set as the effect's speed (0x82ccf0, effect +0xb0: the sounds' pitch, 0x82bf10).
+   */
+  playOnActor(u: Unit, eff: string | undefined, angle?: number, pitch = 1): number {
     const fx = this.h.fx;
     if (!eff || !fx.has(eff)) return 0;
     return fx.play(eff, u.x, u.y + this.front, {
       team: u.team as 0 | 1, z: u.z, angle, loop: false, follow: this.followOf(u, eff), filterParent: u.id,
+      parentView: this.parentView(u), soundPitch: pitch,
     });
+  }
+
+  /**
+   * The AttackStartEffect pitch of 0x83e524 for an actor (attackStartPitch over its buffs'
+   * AudioPitchModifier): art.ts passes it to playOnActor for the AttackStartEffect.
+   */
+  attackStartPitch(u: Unit): number {
+    const bt = this.h.manifest.buffs;
+    return attackStartPitch(u.buffs.map((q) => (bt?.[q.def.name] as { audioPitchModifier?: number } | undefined)?.audioPitchModifier));
   }
 
   /** 0x82dedc(actor, attach 1): looping, attached to the actor's sprite. */
@@ -222,7 +383,8 @@ export class CharEffects {
     const fx = this.h.fx;
     if (!fx.has(eff)) return 0;
     return fx.play(eff, u.x, u.y + this.front, {
-      team: u.team as 0 | 1, z: u.z, loop: true, follow: () => this.h.spritePos(u), filterParent: u.id, ...extra,
+      team: u.team as 0 | 1, z: u.z, loop: true, follow: () => this.h.spritePos(u), filterParent: u.id,
+      parentView: this.parentView(u), ...extra,
     });
   }
 
@@ -276,7 +438,7 @@ export class CharEffects {
     const offset = this.pivot(a, index, false) ?? [0, ty];
     return fx.play(eff, a.x, a.y + this.front, {
       team: a.team as 0 | 1, z: a.z, follow: this.followOf(a, eff), filterParent: a.id,
-      target: this.targetPoint(t), targetPivot: () => this.targetPivot(t), offset,
+      target: this.targetPoint(t), targetPivot: () => this.targetPivot(t), offset, parentView: this.parentView(a),
     });
   }
 
@@ -400,7 +562,11 @@ export class CharEffects {
     const def = this.h.manifest.effects[eff];
     if (!def) return;
     if (!def.Loop) this.playOnActor(u, eff);
-    else this.h.fx.play(eff, u.x, u.y + this.front, { team: u.team as 0 | 1, z: u.z, follow: () => this.h.spritePos(u), filterParent: u.id });
+    else {
+      this.h.fx.play(eff, u.x, u.y + this.front, {
+        team: u.team as 0 | 1, z: u.z, follow: () => this.h.spritePos(u), filterParent: u.id, parentView: this.parentView(u),
+      });
+    }
   }
 
   /**
@@ -449,7 +615,9 @@ export class CharEffects {
     let handle = 0;
     const fx = this.h.fx;
     if (eff && fx.has(eff)) {
-      handle = fx.play(eff, u.x, u.y + this.front, { team: u.team as 0 | 1, z: u.z, follow: () => this.h.spritePos(u), filterParent: u.id });
+      handle = fx.play(eff, u.x, u.y + this.front, {
+        team: u.team as 0 | 1, z: u.z, follow: () => this.h.spritePos(u), filterParent: u.id, parentView: this.parentView(u),
+      });
     }
     this.tunnels.set(u.id, { water, handle });
   }

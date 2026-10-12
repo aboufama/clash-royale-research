@@ -9,7 +9,15 @@
 //    the FMODSound resource holds an event path; the FMOD backend (0x1a57a10) plays it with
 //    getEvent(path) -> createInstance -> start (0xcbc14c), keyed by an increasing id. Nothing else is
 //    set on the instance: no 3D attributes, no volume (the only per-instance call is setPitch, 0xcbc74c,
-//    from an effect whose speed is not 1, 0x82bf10), so every sound is 2D at its authored level;
+//    from an effect whose speed +0xb0 is not 1, 0x82bf10 @0x82c0d0; the speed is set only by view
+//    vt+0xc0 0x84f11c / vt+0xb8 0x84f200 through 0x82ccf0, and the only caller passing other than 1.0 is
+//    the AttackStartEffect 0x83e524 with the buffs' AudioPitchModifier product 0xfc24e0), so every
+//    sound is 2D at its authored level;
+//  - logic-side sounds are effects too, played by a static name through a view (sc/char_effects.ts):
+//    GenericDie / EnemyGenericDie (every death but crown towers, 0xf83990 / 0xf8d5bc), the crowd
+//    reactions of a CrowdEffects location (CrowdTowerTakeDamage 0xfcb29c, CrowdDieBigUnit 0xf83990,
+//    CrowdSummonBigUnit 0xd423bc) and the King tower's King_player_activate / King_enemy_activate
+//    (king_tower.toml ActionPlayEffect);
 //  - music (0xcbc880 with a music.csv row): the same, remembering the instance as the current music
 //    (backend +8); 0xcbb4c4 stops it (allow fade-out), 0xcbc9ec tells whether it still plays;
 //  - effects (0x82bf10): a component's Sound starts when the component does (age >= Time), muted
@@ -348,6 +356,10 @@ export class SoundSystem {
     if (!this.enabled || !this.ctx || !doc || this.paused) { this.record(key, kind, 0, false, 'not ready'); return 0; }
     const def = doc.events[key];
     if (!def) { this.record(key, kind, 0, false, 'unknown'); return 0; }
+    // EventInstance::setPitch(0) (an AttackStartEffect under a buff without AudioPitchModifier, 0xfc24e0)
+    // leaves the instance at playback rate 0: nothing is heard (A: the frozen FMOD instance itself, which
+    // still counts toward max instances, is not kept)
+    if (!(pitch > 0)) { this.record(key, kind, 0, false, 'pitch 0'); return 0; }
     const now = this.ctx.currentTime;
     const live = this.liveOf(key);
     const a = admit(def, now, this.lastStart.get(key), live);

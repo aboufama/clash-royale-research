@@ -114,9 +114,16 @@ CHAR_EFFECT_FIELDS = ("SpawnEffect", "DeathEffect", "AttackStartEffect", "Damage
                       "ReflectedAttackEffect", "ReflectedAttackTargetedEffect", "BuffWhenNotAttackingEffect",
                       # read by the views too (sc/char_effects.ts, docs/EFFECTS.md); no supported card sets them
                       "TakeDamageEffect", "TargetedHitEffectSpecial", "AttackStartEffectSpecial", "AttackStartEffect3")
-# Effects the client plays by a static name (Tables +0xec0 "Damage": World_areaDamage 0xf97be8, fallback
-# damage effect of characters, spells and spawned projectiles; sc/char_effects.ts).
-GLOBAL_EFFECTS = ("Damage",)
+# Effects the client plays by a static name (static Strings 0x1a5e468.. built at 0xe66800, looked up with
+# 0xe19214; each EnemyVersion follows through Baker.effect): "Damage" (Tables +0xec0: World_areaDamage
+# 0xf97be8, fallback damage effect of characters, spells and spawned projectiles); "GenericDie" (death
+# 0xf83990 / 0xf8d5bc via view vt+0xc0, not for crown towers); the crowd reactions of a location with
+# CrowdEffects: "CrowdTowerTakeDamage" (Health_applyHit 0xfcb29c @0xfcbaa8), "CrowdDieBigUnit" (0xf83990
+# @0xf844a8), "CrowdSummonBigUnit" (Deploy_summon 0xd423bc @0xd42b34); the King tower's activation
+# (king_tower.toml ActionPlayEffect "King_player_activate"); "GetMana" (Tables +0xec8, view vt+0x100
+# 0x84f444 with the "+%d" text). sc/char_effects.ts, docs/EFFECTS.md.
+GLOBAL_EFFECTS = ("Damage", "GenericDie", "CrowdTowerTakeDamage", "CrowdDieBigUnit", "CrowdSummonBigUnit",
+                  "King_player_activate", "GetMana")
 CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim", "DeathSpawnDeployBaseAnim")
 PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect",
                       "OverrideShooterProjectileEffect", "ChainedHitEndEffect")
@@ -615,8 +622,10 @@ class Baker:
         if e is None:
             self.missing_effects.add(name)
             return
+        # PivotClip (data +0xb8) and ParentLookAtOffsetRadius (+0xb0 -> effect +0x1c): the component offset
+        # of 0x82bf10 @0x82c2ac (sc/effects.ts)
         out = {k: e[k] for k in ("Loop", "FollowParent", "Scale", "ShakeScreen", "ForcedLength", "EnemyVersion",
-                                 "PivotClip", "ShakeMaxIntensity") if k in e}
+                                 "PivotClip", "ShakeMaxIntensity", "ParentLookAtOffsetRadius") if k in e}
         self.m_effects[name] = out
         # sound components (tools/audio): each component's Sound starts with the component (age >= Time,
         # 0x82bf10), visual or not; KillLoopingSoundsOnEnd (data +0xae) keys them off when it stops
@@ -671,17 +680,18 @@ class Baker:
         if em is None:
             self.warnings.append(f"emitter {name!r} not found")
             return
-        out = {k: v for k, v in em.items() if k not in ("ParticleResource", "ParticleExportName", "TrailSWF")}
+        # TrailMaxPoints / TrailDuration / TrailSWF / TrailExportName are only named by the emitter schema
+        # 0xe572b4 (0xe578e0..0xe57964): no getter reads them (the emitter getters 0xe56ccc..0xe57208 look
+        # fields up by name through 0xe0c420 / 0xe0c4a0 / 0xe0ca24), so the client draws no trails and none
+        # are baked (docs/EFFECTS.md)
+        out = {k: v for k, v in em.items() if k not in ("ParticleResource", "ParticleExportName", "TrailSWF",
+                                                        "TrailExportName", "TrailMaxPoints", "TrailDuration")}
         parts = []
         for rel, exp in zip(em.get("ParticleResource", []), em.get("ParticleExportName", [])):
             lib = self.want(rel, exp)
             if lib:
                 parts.append({"sc": lib, "export": exp, **self.clip_info(rel, exp)})
         out["particles"] = parts
-        if em.get("TrailSWF") and em.get("TrailExportName"):
-            lib = self.want(em["TrailSWF"], em["TrailExportName"])
-            if lib:
-                out["trail"] = {"sc": lib, "export": em["TrailExportName"]}
         self.m_emitters[name] = out
         if em.get("EnemyVersion"):
             self.emitter(em["EnemyVersion"])
@@ -803,7 +813,9 @@ class Baker:
                   # client-action health bar (healthbars.toml parts, view 0x8405c4 / 0x853574)
                   "OnStartingClientActions", "NewHealthBarOffsetX", "NewHealthBarOffsetXBlue", "NewHealthBarOffsetXRed",
                   # targeted effects' source offset (0xde1220) and the fallback damage effect flag (+0x138)
-                  "TargetEffectY", "UseFallbackDamageEffect"):
+                  "TargetEffectY", "UseFallbackDamageEffect",
+                  # crowd reactions (0xde1350, +0x7f8) and GenericDie's IsSummonerTower test (0xde02c4, +0x571)
+                  "CrowdEffects", "IsSummonerTower"):
             if k in row:
                 entry[k[0].lower() + k[1:]] = row[k]
         if not entry.get("healthBar"):
@@ -945,8 +957,9 @@ class Baker:
             return
         d: dict = {}
         self.m_buffs[name] = d
+        # AudioPitchModifier (+0xfc, default 0): the AttackStartEffect sound pitch product 0xfc24e0
         for k in ("SpeedMultiplier", "HitSpeedMultiplier", "SpawnSpeedMultiplier", "DamagePerSecond", "HitFrequency",
-                  "HealPerSecond", "DamageReduction", "Invisible", "EnableStacking"):
+                  "HealPerSecond", "DamageReduction", "Invisible", "EnableStacking", "AudioPitchModifier"):
             if k in row:
                 d[k[0].lower() + k[1:]] = row[k]
         if row.get("FilterExportName"):
@@ -1007,6 +1020,10 @@ class Baker:
                   "Tower_destroyed_water1", "Tower_destroyed_water2", "StarTower_base_neutral", "StarTower_top_neutral"):
             self.want(bt, e)
         for row, d in ((king, k), (prin, p)):
+            # crowd reactions (CharacterData +0x7f8: the Princess tower's CrowdDieBigUnit, 0xf83990)
+            for f in ("CrowdEffects", "IsSummonerTower", "IsSummoner"):
+                if row.get(f):
+                    d[f[0].lower() + f[1:]] = row[f]
             fx = {}
             for f in ("DeathEffect", "DamageEffect", "ProjectileEffect", "SpawnEffect"):
                 if row.get(f):
@@ -1090,6 +1107,8 @@ class Baker:
             "shadow": {k: loc.get(k, 0) for k in ("ShadowR", "ShadowG", "ShadowB", "ShadowA", "ShadowOffsetX",
                                                    "ShadowOffsetY")},
             "shadowBlurDistance": client_global("SHADOW_BLUR_DISTANCE", 170),
+            # LocationData CrowdEffects (column index 0x1986d8c, read by 0xe48cd4): the crowd reactions
+            "crowdEffects": bool(loc.get("CrowdEffects")),
         }
         if loc.get("CloudExportName"):
             cl = self.want(loc.get("CloudFileName", "sc/effects.sc"), loc["CloudExportName"])
