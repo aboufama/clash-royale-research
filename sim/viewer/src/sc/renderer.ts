@@ -10,7 +10,7 @@
 //   - named-child overrides (Supercell code swaps placeholder children such as the King tower's
 //     `king_dummy`/`turret`, health-bar `bar` frames and text instances at runtime),
 //   - the shadow pass of the game's 2D renderer: silhouettes (sprite alpha x vertex alpha,
-//     custom_sprite_shadow) into an offscreen buffer, then one composite (shadow_2d_composite):
+//     custom_sprite_shadow) into a half-resolution offscreen buffer, then one composite (shadow_2d_composite):
 //     4 taps at (+-ox, +-oy), summed, clamped to 1, times the location shadow colour.
 // Nested clips receive `childFrame` (default = the root frame), i.e. one shared clock like
 // render.py; pass a separate childFrame to hold the root on a frame while children animate.
@@ -201,7 +201,6 @@ export class ScRenderer {
   private readonly quadVao: WebGLVertexArrayObject;
   private fbos: { fb: WebGLFramebuffer; tex: WebGLTexture }[] = [];
   private fboSize: [number, number] = [0, 0];
-  private inShadows = false;
   /** grayscale program for the vertices being emitted (DrawOptions.grayscale / drawImageStrip) */
   private gray = false;
 
@@ -325,7 +324,8 @@ export class ScRenderer {
   private applyView(): void {
     const gl = this.gl;
     const [a, b, c, d, tx, ty] = this.view;
-    const sx = 2 / this.currentTargetWidth(), sy = -2 / this.currentTargetHeight();
+    // the shadow target covers the whole canvas at a lower resolution: same SC -> clip transform
+    const sx = 2 / this.width, sy = -2 / this.height;
     // column-major mat3: clip = P * V
     const m = new Float32Array([
       a * sx, b * sy, 0,
@@ -337,9 +337,6 @@ export class ScRenderer {
       gl.uniformMatrix3fv(this.uView, false, m);
     });
   }
-
-  private currentTargetWidth(): number { return this.inShadows ? this.fboSize[0] : this.width; }
-  private currentTargetHeight(): number { return this.inShadows ? this.fboSize[1] : this.height; }
 
   // -- public drawing ---------------------------------------------------------------------------
 
@@ -407,7 +404,6 @@ export class ScRenderer {
     this.flush();
     const gl = this.gl;
     this.ensureFbos();
-    this.inShadows = true;
     const fb = this.fbos[0].fb, [fw, fh] = this.fboSize;
     this.q.push(() => {
       gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
@@ -427,7 +423,6 @@ export class ScRenderer {
   endShadows(c: [number, number, number, number], off: [number, number] = [0, 0]): void {
     this.flush();
     const gl = this.gl;
-    this.inShadows = false;
     this.mode = 0;
     const [w, h] = this.fboSize;
     const tex = this.fbos[0].tex, cw = this.width, ch = this.height;
@@ -849,9 +844,13 @@ export class ScRenderer {
     return l;
   }
 
+  /**
+   * The shadow target: like 0x86b66c, half the surface size in device pixels (the globals 0x1aa4ab0/4,
+   * set from the GL surface size by createGameMain and the resize handler 0x14441b4), at least 1 x 1.
+   */
   private ensureFbos(): void {
     const gl = this.gl;
-    const w = this.width, h = this.height;
+    const w = Math.max(Math.trunc(this.width * 0.5), 1), h = Math.max(Math.trunc(this.height * 0.5), 1);
     if (this.fboSize[0] === w && this.fboSize[1] === h && this.fbos.length) return;
     for (const f of this.fbos) {
       gl.deleteFramebuffer(f.fb);
