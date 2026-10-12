@@ -92,6 +92,7 @@ test('0x10ca9a0 / 0xd3581c: the battle ticks after the end stop at EndScreenDela
   const b = battle();
   b.tick = 2000;
   b.players[1].king.state = ST_DEAD;
+  b.players[0].crowns = 3; // what the King's death gives; equal crowns would take the tiebreak gate
   (b as unknown as { checkEnd(): void }).checkEnd();
   b.tick++;
   // the viewer's clock runs on under the result screen; the HUD reads at most postEndTicks past the end
