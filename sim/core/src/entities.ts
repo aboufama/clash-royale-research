@@ -168,14 +168,18 @@ export class Unit {
   /** Attack component disabled while frozen (0xf7fee4: component mask bit 0 cleared). */
   atkOff: boolean;
   /**
-   * Height (native actor z, +0x74 + +0x8c): FlyingHeight for flyers, else 0. The river jump does not
-   * change it (the heights 0xfccd94 records go to the JumpHack check, see `jumpZ`).
+   * Height (native actor z 0xf942a8 = z base +0x74 + z offset +0x8c): the z offset is FlyingHeight
+   * for flyers, else 0; the z base is the river-jump height the movement component recorded in the
+   * previous tick (`jumpZ`), applied at the start of each tick by the actor preUpdate (0xf96040 ->
+   * 0xfd0320), so a jumping unit's z trails its arc by one tick and is back to 0 the tick after the
+   * last record. The client view draws the sprite at lerp(previous z, z) (0x84d738).
    */
   z: number;
   /**
-   * Visual jump height during a river jump (state 5), as 0xfccd94 computes it each tick: with
-   * n = total/JumpSpeed and k = remaining/JumpSpeed, u = clamp(2·min(k, n − k), 0, 32),
-   * (u − u²/64)·JumpHeight/16 (0 when that is below 1). Read-only for the view; 0 otherwise.
+   * Jump height recorded by this tick's movement update (state 5, 0xfccd94) and not yet applied:
+   * with n = total/JumpSpeed and k = remaining/JumpSpeed, u = clamp(2·min(k, n − k), 0, 32) and
+   * h = (u − u²/64)·JumpHeight, h >> 4 when h ≥ 16, else 0 (no record). The next tick's preUpdate
+   * moves it into `z` and clears it.
    */
   jumpZ: number;
   /**

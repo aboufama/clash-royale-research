@@ -11,6 +11,7 @@ import {
   type Battle, KING_ACTIVATING, KING_INACTIVE, type Projectile, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS,
   type Unit,
 } from '../../core/src/index.ts';
+import { idiv, isqrt } from '../../core/src/math.ts';
 import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
 import type { ArtHooks } from './main.ts';
@@ -369,12 +370,17 @@ export class ArtWorld implements WorldRenderer {
       }
       const st = this.unitState(u, f);
       const flying = u.def.flyingHeight > 0;
-      // sort key: ground-projected y, +48 px when z > 0 (0x851b84: actor vt+0x108 = z > 0)
+      // sort key: ground-projected y, +48 px for an air actor (0x851b84: vt+0x108 0xf826e8 = FlyingHeight > 0
+      // without the TAG_FORCE_IS_AIR / _GROUND status tags; a river jump's z does not count)
       const py = ypx(x, y) + (flying ? 48 : 0);
       const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: (b.tick - q.startTick) * 50 + f.alpha * 50 })) : undefined;
       const hit = this.hits.get(u.id);
       const damage = hit ? { dir: hit.dir, ms: sim - hit.start } : undefined;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { deployMs: st.deployMs, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
+      // GO_SPRITE at the interpolated actor z (0x84d738), which the river jump lifts (0xfd0320); the
+      // shadow stays at z 0 (0x84d738 places entry +0x18 at the node's x, y and 0) and keeps its size
+      // (0x83ce70 shrinks it only for JumpHeight > 0 with DashCooldown > 0)
+      const lift = f.uz(u) - u.def.flyingHeight;
+      const o: Parameters<BattleArt['drawUnit']>[8] = { z: lift, deployMs: st.deployMs, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
         face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9,
         clipFrame: this.clipFrames.get(u.id) };
       items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
@@ -422,7 +428,8 @@ export class ArtWorld implements WorldRenderer {
       if (u.hp >= u.maxHp && u.shield >= u.def.shieldHitpoints) continue;
       const ca = m.characters[u.def.name];
       if (ca?.hideHealthbar) continue;
-      const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u));
+      // the bar container follows BASE_SPRITE (or GO_SPRITE) with its z (0x8408f0 -> 0x851b84)
+      const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
       art.drawHealthBar(r, (ca?.healthBar as string | undefined) ?? 'Medium', team, sx, sy, u.hp / u.maxHp, u.def.level);
     }
     // HUD layer (battle screen +0x300): HUD elements, deploy timers (0x8d9748) and the drag name text
@@ -461,6 +468,7 @@ export class ArtWorld implements WorldRenderer {
         // attack component is not modelled)
         hitSpeed: u.tower === TOWER_PRINCESS ? u.def.hitSpeed : undefined,
         pathFacing: this.pathFacing.get(u.id),
+        jumpLeft: state === 5 ? this.jumpLeft(u, b.arena.w) : undefined,
       }));
     }
     this.pathFacing.clear();
@@ -516,6 +524,22 @@ export class ArtWorld implements WorldRenderer {
     }
     this.hitVec.clear();
     for (const [id, h] of this.hits) if (sim - h.start > 5000 || !b.units.some((q) => q.id === id)) this.hits.delete(id);
+  }
+
+  /**
+   * Steps left in a river jump as the character view takes them (0x84440c -> 0xfce8b8): the distance
+   * from the actor's logic position to the path's landing cell (movement +0x3c[0], set by 0xfcf594)
+   * at cell × 500 (the cell corner, not its centre), saturating isqrt (0x1294e10), ÷ the move speed
+   * vtb8 (JumpSpeed in state 5); undefined below speed 1 (the client skips the landing cap).
+   */
+  private jumpLeft(u: Unit, w: number): number | undefined {
+    const speed = u.def.jumpSpeed;
+    if (speed < 1 || !u.path.length) return undefined;
+    const cell = u.path[u.path.length - 1];
+    const dx = (cell % w) * 500 - u.x;
+    const dy = Math.floor(cell / w) * 500 - u.y;
+    const d = Math.abs(dx) > 46340 || Math.abs(dy) > 46340 || dx * dx + dy * dy > 0x7fffffff ? isqrt(0x7fffffff) : isqrt(dx * dx + dy * dy);
+    return idiv(d, speed);
   }
 
   /** Engine state -> clip, angle and clip time. */
@@ -640,7 +664,7 @@ export class ArtWorld implements WorldRenderer {
     }
     const t = p.target;
     const homing = !!pa?.homing && !!t;
-    const aimZ = homing && t ? t.def.flyingHeight : 0;
+    const aimZ = homing && t ? t.z : 0;
     return arcHeight(p.startX, p.startY, pv.startZ, p.tx, p.ty, aimZ, x, y, (pa?.speed as number | undefined) ?? p.def.speed,
       (pa?.gravity as number | undefined) ?? 0);
   }

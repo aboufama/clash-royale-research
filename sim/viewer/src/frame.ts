@@ -27,6 +27,8 @@ export class Frame {
   /** Tick-start attack timer and walk clock per unit (the client's +0x34 / movement +0x210 snapshots). */
   prevAtk = new Map<number, number>();
   prevWalk = new Map<number, number>();
+  /** Tick-start actor z per unit (the actor's +0x90 snapshot, 0xf95ac4). */
+  prevZ = new Map<number, number>();
   drag: DragPreview | null = null;
 
   /** Interpolated unit position. */
@@ -42,6 +44,17 @@ export class Frame {
     if (p === undefined) return u.y;
     const py = p % 65536;
     return py + (u.y - py) * this.alpha;
+  }
+
+  /**
+   * Interpolated actor z as the character view takes it (0x84d738): the view's getPrevZ / getZ
+   * (0x84f630 -> 0xf95b54, 0x84f618 -> 0xf942a8) give the tick-start and current actor z, kept as is
+   * when equal, else (int)((1 − alpha)·prev + alpha·z), truncated toward zero.
+   */
+  uz(u: Unit): number {
+    const p = this.prevZ.get(u.id);
+    if (p === undefined || p === u.z) return u.z;
+    return Math.trunc((1 - this.alpha) * p + this.alpha * u.z);
   }
 
   px(p: Projectile): number {
@@ -63,8 +76,10 @@ export class Frame {
     this.prevPos.clear();
     this.prevAtk.clear();
     this.prevWalk.clear();
+    this.prevZ.clear();
     for (const u of b.units) {
       this.prevPos.set(u.id, u.x * 65536 + u.y);
+      this.prevZ.set(u.id, u.z);
       this.prevAtk.set(u.id, u.atkTimer);
       this.prevWalk.set(u.id, u.walkMs);
     }

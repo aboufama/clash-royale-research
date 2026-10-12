@@ -511,6 +511,7 @@ export class Battle {
     this.regenElixir();
     const units = this.units;
     this.preTick();
+    for (let i = 0; i < units.length; i++) this.applyHeights(units[i]); // actor preUpdate (vt+0x40)
     for (let i = 0; i < units.length; i++) this.attackUpdate(units[i]); // all attack components
     for (let i = 0; i < units.length; i++) this.movementUpdate(units[i]); // all movement components
     for (let i = 0; i < units.length; i++) this.healthUpdate(units[i]); // health components
@@ -1937,12 +1938,29 @@ export class Battle {
   }
 
   /**
+   * Actor preUpdate, the height part (character vt+0x40 0xf80080 -> 0xf96040, which first snapshots
+   * the previous position and z through vt+0x160 0xf95ac4, then tail-calls 0xfd0320 for an actor with
+   * a movement component) [STAT]: the heights the movement component recorded last tick (list m+0x10,
+   * count m+0x1c; absolute heights m+0x20, count m+0x2c) become the actor's z base (+0x74): their sum
+   * clamped to [min − zo, max − zo] of the absolute records, both bounds starting at the z offset zo
+   * (+0x8c); both lists are cleared. Only the river jump records heights in this engine (0xfccd94;
+   * the other recorders, 0xfcf48c from 0xfa6774.., belong to unported mechanics), and it records at
+   * most one value v ≥ 1 per tick, so the z base is v, or 0 without a record. The actor z (0xf942a8)
+   * is z base + z offset (FlyingHeight).
+   */
+  private applyHeights(u: Unit): void {
+    if (u.def.speed <= 0) return; // no movement component (0xf7ed38: only with data Speed > 0)
+    u.z = u.def.flyingHeight + u.jumpZ;
+    u.jumpZ = 0;
+  }
+
+  /**
    * Jump state 5 of the movement update (0xfccd94) [STAT]: JumpSpeed steps toward the landing cell;
    * the total distance (m+0x204) grows to the current distance when larger once the unit has ever
    * been knocked back (m+0x1ec != 0); with n = total/JumpSpeed and k = remaining/JumpSpeed the jump
    * ends when k < 2, else u = clamp(2·min(k, n − k), 0, 32) and the arc height
-   * (u − u²/64)·JumpHeight/16 is recorded (when ≥ 1) for the JumpHack check; the actor's z is not
-   * changed. `jumpZ` exposes that height for the view.
+   * h = (u − u²/64)·JumpHeight is recorded as h >> 4 when h ≥ 16 (m+0x10 list, and z offset + h >> 4
+   * in m+0x20); the next tick's preUpdate turns the record into the actor's z (applyHeights).
    */
   private jumpStep(u: Unit): void {
     const speed = u.def.jumpSpeed;

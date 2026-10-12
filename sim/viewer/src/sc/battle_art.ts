@@ -772,10 +772,10 @@ export class BattleArt {
     return [px, py + this.barOffsetY(t.sc, exp, (t.scale ?? 100) / 100, 0, t.healthBarOffsetYBlue ?? 0, t.healthBarOffsetYRed ?? 0, team)];
   }
 
-  /** Unit health bar position (SC px) for a unit drawn at game (x, y), using its idle sprite at spawn facing. */
-  unitBarPx(name: string, team: Team, x: number, y: number): [number, number] {
+  /** Unit health bar position (SC px) for a unit drawn at game (x, y) and z above its FlyingHeight, using its idle sprite at spawn facing. */
+  unitBarPx(name: string, team: Team, x: number, y: number, z = 0): [number, number] {
     const art = this.manifest.characters[name];
-    const [px, py] = this.gameToPx(x, y, art?.flyingHeight ?? 0);
+    const [px, py] = this.gameToPx(x, y, z + (art?.flyingHeight ?? 0));
     if (!art) return [px, py - 50];
     let lib = art.sc;
     let exp: string | null = null;

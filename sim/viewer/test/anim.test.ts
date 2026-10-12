@@ -1,7 +1,7 @@
 // The client's character-view helpers ported in viewer/src/sc/anim.ts (libg 160402020).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { animateBuilding, attackFrame, ClipPlayer, nativeAngle, newBuildingAnim, pickDirectionNative, viewAngle } from '../src/sc/anim.ts';
+import { animate, animateBuilding, attackFrame, ClipPlayer, nativeAngle, newAnimState, newBuildingAnim, pickDirectionNative, viewAngle } from '../src/sc/anim.ts';
 import type { CharacterArt } from '../src/sc/manifest.ts';
 
 test('FUN_00f81d0c integer atan2: axes, diagonals, and within a degree of atan2', () => {
@@ -98,4 +98,24 @@ test('building clip frames follow the client view (0x840d44 first branch)', () =
   let f = 29;
   for (let i = 0; i < 20; i++) f = step(50);
   assert.equal(f, 0, 'then back to the timer sync');
+});
+
+test('river jump clip timing (0x840d44 jump timer +0xa2c, cap at 0x84440c): half the clip, hold, land on the last frame', () => {
+  // Hog Rider: no _jump1_, so the jump action plays its _run1_ (17 frames at 24 fps, 0x835fd0 slot 4)
+  const run1 = { export: 'HogRider_run1', dirs: 9, frames: 17, fps: 24 };
+  const hog = { jumpEnabled: 1, actions: { run1, idle1: { ...run1, frames: 1 } } } as unknown as CharacterArt;
+  const s = newAnimState();
+  const base = { dirX: 0, dirY: 1, id: 1, walker: true, charge: 0, walk: 0, walkPrev: 0, atk: 0, atkPrev: 0, finish: 0,
+    alpha: 0, dt: 0.05, clock: 0, flip: false };
+  const at = (left: number) => animate(hog, 0, s, { ...base, state: 5, jumpLeft: left })!;
+  // 22 jump ticks of 50 ms: steps left 21 .. 0 (one view frame per tick here)
+  const frames: number[] = [];
+  for (let left = 21; left >= 0; left--) frames.push(at(left).frame);
+  assert.equal(at(5).action, 4);
+  // the timer gives f = (int)(t·24); the cap max((int)(17 − left·1.2), 8) holds it at frame 8 until
+  // 7 steps are left, then the second half plays out and reaches frame 17 (≡ 0) at the landing
+  assert.deepEqual(frames, [1, 2, 3, 4, 6, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 11, 12, 13, 14, 15, 0]);
+  // leaving state 5 resets the timer
+  animate(hog, 0, s, { ...base, state: 1, walk: 100, walkPrev: 100 });
+  assert.equal(s.jumpT, 0);
 });

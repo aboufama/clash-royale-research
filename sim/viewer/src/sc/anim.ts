@@ -20,6 +20,8 @@ const ATAN_DEG = [
 ];
 
 const t = Math.trunc;
+/** -0.05 as the float32 constant 0xbd4ccccd (0x8444ac) */
+const F32_M005 = Math.fround(-0.05);
 
 /** FUN_00f81d0c: facing vector -> degrees 0..359 (0 = +x, 90 = +y), integer math. */
 export function nativeAngle(x: number, y: number): number {
@@ -116,11 +118,13 @@ export interface AnimState {
   /** facing angle recorded at the first path search and its 0.3 s hold (view +0x4e0 / +0x4e4, 0x845bb0) */
   walkAngle: number;
   walkHold: number;
+  /** seconds spent in the jump state 5 (view +0xa2c, float), JumpEnabled characters only */
+  jumpT: number;
 }
 
 export function newAnimState(): AnimState {
   return { angle: -1, hold: 0, rot: 0, sign: 1, action: -1, actionStart: 0, stepToggle: 0, stopped: false,
-    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0 };
+    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0 };
 }
 
 /** Logic inputs for one character view frame (native names in brackets). */
@@ -152,6 +156,12 @@ export interface AnimInput {
   hitSpeed?: number;
   /** facing vector at the unit's path search this frame, if any (engine 'path' event, view vt+0x178) */
   pathFacing?: [number, number];
+  /**
+   * Jump state only: steps left to the landing (0xfce8b8: distance from the actor to the landing cell
+   * of the path (movement +0x3c[0]) × 500, ÷ the move speed vtb8 = JumpSpeed); undefined when the
+   * move speed is below 1 (no landing cap).
+   */
+  jumpLeft?: number;
 }
 
 export interface AnimFrame {
@@ -196,6 +206,9 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   // displayed angle: changes at most every 0.5 s
   const want = ((i.flip ? 270 : 90) + fa) % 360;
   if (s.walkHold > 0) s.walkHold -= dt; // view update 0x839b08
+  // view +0xa2c (0x840d44, before the action choice): time in state 5 for JumpEnabled characters
+  // (not custom dummy objects, view +0x278), float seconds, 0 in any other state
+  if (art.jumpEnabled) s.jumpT = i.state === 5 ? Math.fround(s.jumpT + dt) : 0;
   let shown = s.angle;
   let hold = s.hold - dt;
   if (hold <= 0 && want !== shown) { shown = want; hold = 0.5; }
@@ -266,7 +279,21 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
       frame = f.frame;
       if (s.finishing && f.frame === 0) s.finishing = false;
     }
-  } else if (slot === 0 || slot === 3 || slot === 4) {
+  } else if (slot === 4) {
+    // the jump action (id 4: the slot holds _jump1_, or _run1_ without one, 0x835fd0) at 0x84440c:
+    // f = (int)(t / fd) on the jump timer, fd = the clip's frame time 1/fps (clip +0x8c, 0x123f218),
+    // capped at max((int)(N − left·0.05 / fd), N / 2) so the clip's second half ends at the landing
+    // (float32 arithmetic as in the client)
+    const fd = Math.fround(1 / a.fps);
+    frame = t(Math.fround(s.jumpT / fd));
+    if (i.jumpLeft !== undefined) {
+      const back = Math.fround(Math.fround(Math.fround(i.jumpLeft) * F32_M005) / fd);
+      let cap = t(Math.fround(a.frames + back));
+      const half = t(a.frames / 2);
+      if (cap <= half) cap = half;
+      if (cap <= frame) frame = cap;
+    }
+  } else if (slot === 0 || slot === 3) {
     const walk = i.walkPrev + i.alpha * (i.walk - i.walkPrev);
     const sma = art.stopMovementAfterMS ?? 0;
     if (sma < 1) {

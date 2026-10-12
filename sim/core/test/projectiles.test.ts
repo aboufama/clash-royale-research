@@ -125,6 +125,31 @@ test('the JumpHack action gives a jumping Hog Rider the pushback buff each tick'
   assert.ok(!hog.pushImmune && hog.jumpZ === 0);
 });
 
+test('the river jump lifts the actor z one tick behind its recorded arc (0xfccd94 records, 0xf96040 -> 0xfd0320 applies)', () => {
+  const b = newBattle();
+  b.spawn(0, 'HogRider', 9500, 13000);
+  let prevRecord = 0;
+  let peak = 0;
+  let jumpTicks = 0;
+  let landed = false;
+  for (let i = 0; i < 300 && !landed; i++) {
+    b.step();
+    const hog = b.units.find((u) => u.def.name === 'HogRider');
+    if (!hog) continue;
+    // the z applied at this tick's start is the height recorded during the previous tick
+    assert.equal(hog.z, prevRecord, `tick ${b.tick}: z = last tick's record`);
+    if (hog.jumping) {
+      jumpTicks++;
+      assert.ok(hog.jumpZ >= 0 && hog.jumpZ <= hog.def.jumpHeight);
+    } else if (jumpTicks > 0 && hog.jumpZ === 0 && hog.z === 0) landed = true;
+    peak = Math.max(peak, hog.z);
+    prevRecord = hog.jumpZ;
+  }
+  assert.ok(jumpTicks > 4 && landed, 'the hog jumped the river and landed');
+  // u reaches 32 mid-jump: (32 − 16)·JumpHeight / 16 = JumpHeight
+  assert.equal(peak, 4000);
+});
+
 test('Goblin Barrel: three goblins on the formation ring around the impact with priorities (20i)² and 1100 ms deploy (0xf9188c)', () => {
   const b = newBattle();
   b.spawn(0, 'GoblinBarrel', 4000, 24000);
