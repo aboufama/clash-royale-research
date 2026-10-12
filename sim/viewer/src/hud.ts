@@ -13,7 +13,10 @@ import type { BattleArt } from './sc/battle_art.ts';
 import type { ScLibrary } from './sc/library.ts';
 import type { DrawOptions, ScRenderer } from './sc/renderer.ts';
 import { ClipPlayer } from './sc/anim.ts';
-import { type CardStart, cardEntry, cardRaise, cardSlot, ElixirBar, HandCard, nextCardTimer, type StageLayout, stageLayout } from './sc/ui_port.ts';
+import {
+  type CardStart, cardEntry, cardRaise, cardSlot, dropWaitStep, ElixirBar, HandCard, HandWiggle, nextCardTimer, rotScale,
+  spellInstanceId, type StageLayout, stageLayout,
+} from './sc/ui_port.ts';
 
 type Rect = [number, number, number, number];
 
@@ -116,6 +119,15 @@ export class Hud {
   readonly elixir = new ElixirBar(10);
   selected = -1;
   drag: HudDrag | null = null;
+  /** a card released before it was affordable, still in drag mode while it waits (0x8e2c04 +0x324) */
+  held: HudDrag | null = null;
+  /**
+   * Called from the hand update when a waiting card's time is up or it became affordable (0x8e1408 ->
+   * 0x8e29f4): the owner releases it at its touch-end point now.
+   */
+  onRelease: ((slot: number) => void) | null = null;
+  /** full-elixir hand shake (HUD +0x280) */
+  readonly wiggle = new HandWiggle();
   opponentName = 'Opponent';
   private cards: HandCard[] = dealHand();
   /** hand card height at scale 1 (card_item_frame, see cardSlot) and its bounds (hit test) */
@@ -245,13 +257,38 @@ export class Hud {
     return { x: ox + p.x, y: oy + y, s: p.s };
   }
 
+  /**
+   * Linear part of hand card i's matrix: its scale (slotPos), or while the card is in the full-elixir
+   * wiggle list the list's rotation at the stored scale (0x907ab0 runs after the card updates).
+   */
+  private cardLinear(i: number, s: number): [number, number, number, number] {
+    const w = this.wiggle.of(i);
+    return w ? rotScale(w.deg, w.sx, w.sy) : [s, 0, 0, s];
+  }
+
+  /** Hand card i's matrix in stage space, or null while it is not shown. */
+  slotMatrix(i: number): Mat | null {
+    const p = this.slotPos(i);
+    if (!p) return null;
+    const [a, b, c, d] = this.cardLinear(i, p.s);
+    return [a, b, c, d, p.x, p.y];
+  }
+
+  /** The card held by the pointer or waiting for elixir in slot i, if any. */
+  private dragOf(i: number): HudDrag | null {
+    if (this.drag?.slot === i) return this.drag;
+    if (this.held?.slot === i) return this.held;
+    return null;
+  }
+
   /** Hand slot under a stage point, or -1. */
   cardAt(x: number, y: number): number {
     const b = this.cardBounds;
     if (!b) return -1;
     for (let i = 0; i < 4; i++) {
       const p = this.slotPos(i);
-      if (!p) continue;
+      // a dragged or waiting card is at the pointer (0x8e1fb8 moves the card itself), not in its slot
+      if (!p || this.dragOf(i)) continue;
       if (x >= p.x + b[0] * p.s && x <= p.x + b[2] * p.s && y >= p.y + b[1] * p.s && y <= p.y + b[3] * p.s) return i;
     }
     return -1;
@@ -268,6 +305,8 @@ export class Hud {
     this.cards = dealHand();
     this.selected = -1;
     this.drag = null;
+    this.held = null;
+    this.wiggle.reset();
     this.elixir.last = 0;
     this.elixir.timer = 0;
     this.elixir.fill = 0;
@@ -291,7 +330,29 @@ export class Hud {
     if (this.selected === slot) this.selected = -1;
   }
 
-  update(dt: number, b: Battle): void {
+  /** A released card starts waiting for its elixir (0x8e2c04: +0x324 = MAX_SPELL_PENDING_TIME). */
+  startWait(slot: number, t: number): void {
+    const c = this.cards[slot];
+    if (c) c.waitT = t;
+  }
+
+  /** Slot of a card waiting for elixir, or -1. */
+  get waiting(): number {
+    return this.cards.findIndex((c) => c.waitT > 0);
+  }
+
+  /** End a card's wait without the hand update (0x8e2b6c: +0x324 = 0, the caller releases it). */
+  stopWait(slot: number): void {
+    const c = this.cards[slot];
+    if (c) c.waitT = 0;
+  }
+
+  /**
+   * `dt` is the UI frame time (wall clock, like the client's HUD animations); `simDt` the simulation
+   * time of the frame, which runs the elixir wait so that it keeps the client's relation to the elixir
+   * regeneration at any viewer speed.
+   */
+  update(dt: number, b: Battle, simDt = dt): void {
     const p = b.players[this.team];
     const whole = Math.max(0, Math.min(10, Math.floor((p.elixir - p.pending) / 10000)));
     const hundredths = Math.max(0, Math.min(1000, Math.floor((p.elixir - p.pending) / 100)));
@@ -302,11 +363,29 @@ export class Hud {
     if (this.tipVisible && !this.tip.playing) this.tipVisible = false;
     this.flow.advance(dt);
     this.warning.advance(dt);
-    // hand cards (0x8dc37c -> 0x8e1408 per slot): the logic hand's card, -1 while the slot is empty
+    // hand cards (0x8dc37c -> 0x8e1408 per slot): the logic hand's card, -1 while the slot is empty.
+    // Before each card's update its full-elixir wiggle entry is added or removed (0x907654 / 0x9077f0);
+    // the elixir the hand sees is hundredths (0xfa1d10). A card waiting for elixir is released at the
+    // end of its update once affordable (cost · 100 <= hundredths, +0x31a) or out of time.
+    const maxHundredths = Math.trunc(b.maxElixir / 100);
     for (let i = 0; i < 4; i++) {
       const c = this.cards[i];
-      if (c.update(dt, p.hand[i] ?? -1, this.drag?.slot === i) && this.selected === i) this.selected = -1;
+      const card = p.hand[i] ?? -1;
+      if (card < 0 || hundredths < maxHundredths || !this.area) this.wiggle.remove(i);
+      else {
+        const s = cardSlot(this.area, i, this.cardH).s;
+        this.wiggle.add(i, s, s, spellInstanceId(p.deck[card]?.name ?? ''));
+      }
+      if (c.update(dt, card, this.dragOf(i) !== null) && this.selected === i) this.selected = -1;
+      if (c.waitT > 0) {
+        const def = card >= 0 ? p.deck[card] : undefined;
+        const affordable = !!def && (b.infiniteElixir || def.cost * 100 <= hundredths);
+        const st = dropWaitStep(c.waitT, simDt, affordable);
+        c.waitT = st.t;
+        if (st.release) this.onRelease?.(i);
+      }
     }
+    this.wiggle.update(dt);
     for (let t = 0; t < 2; t++) {
       const cr = b.players[t === 0 ? this.team : 1 - this.team].crowns;
       if (cr !== this.crowns[t]) { this.crowns[t] = cr; this.stars[t].playRange(0, this.stars[t].frames - 1, false); }
@@ -436,24 +515,31 @@ export class Hud {
     const shown = avail < 1 ? 0 : Math.trunc(Math.min(avail, b.maxElixir) / 100);
     for (let i = 0; i < 4; i++) {
       const def = p.deck[p.hand[i]];
-      const pos = this.slotPos(i);
-      if (!def || !pos) continue;
-      if (this.drag && this.drag.slot === i) continue; // drawn at the pointer
+      const m = this.slotMatrix(i);
+      if (!def || !m) continue;
+      if (this.dragOf(i)) continue; // drawn at the pointer
       const need = def.cost * 100;
       const ok = b.infiniteElixir || shown >= need;
-      this.art.drawCard(r, def.name, [pos.s, 0, 0, pos.s, pos.x, pos.y], { dim: !ok, fill: ok ? null : shown / need });
+      this.art.drawCard(r, def.name, m, { dim: !ok, fill: ok ? null : shown / need });
     }
     // emote button
     r.draw(ui, 'HUD_taunt', 0, [1, 0, 0, 1, L.stageW * 0.5, L.stageH], WHITE, {
       named: { buttons: { frame: 0 }, mute_btn: { hide: true }, muted: { hide: true } },
     });
-    // dragged card following the pointer (0x8e1fb8: scale/alpha shrink toward the arena)
-    if (this.drag && this.drag.cardScale > 0) {
-      const d = this.drag;
+    // dragged card following the pointer (0x8e1fb8: scale/alpha shrink toward the arena); a card waiting
+    // for elixir keeps its drag state (its visual is hidden over the arena)
+    for (const d of [this.held, this.drag]) {
+      if (!d || d.cardScale <= 0) continue;
       const pos = this.slotPos(d.slot);
-      const s = (pos?.s ?? (this.area ? cardSlot(this.area, d.slot, this.cardH).s : 1)) * d.cardScale;
-      // card visual at the pointer plus the grab offset scaled with the card (0x8e1fb8 +0x2c8/+0x2cc)
-      this.art.drawCard(r, d.card, [s, 0, 0, s, d.x + d.gx * d.cardScale, d.y + d.gy * d.cardScale], { alpha: d.cardScale });
+      const s0 = pos?.s ?? (this.area ? cardSlot(this.area, d.slot, this.cardH).s : 1);
+      // the hand card sits at the pointer with its own matrix (scale, or the wiggle's rotation); its card
+      // visual (+0x88) is scaled by cardScale and offset by the grab offset times cardScale
+      // (0x8e1fb8 +0x2c8/+0x2cc, in the card's local space)
+      const [a, bb, c, dd] = this.cardLinear(d.slot, s0);
+      const f = d.cardScale;
+      const lx = d.gx / s0, ly = d.gy / s0;
+      this.art.drawCard(r, d.card, [a * f, bb * f, c * f, dd * f, d.x + (a * lx + c * ly) * f, d.y + (bb * lx + dd * ly) * f],
+        { alpha: f });
     }
   }
 }

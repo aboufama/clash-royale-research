@@ -11,6 +11,7 @@ import { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
 import { Frame, type WorldRenderer } from './frame.ts';
 import { Overlay } from './overlay.ts';
 import { PlaceholderRenderer } from './placeholder.ts';
+import { affordableSoon, dropWaits, MAX_SPELL_PENDING_TIME_S } from './sc/ui_port.ts';
 
 export { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
 
@@ -101,6 +102,8 @@ class App {
   private elixirFill: HTMLElement | null = null;
   private elixirNum: HTMLElement | null = null;
   private drag: Drag | null = null;
+  /** a canvas-hand card released before it was affordable, still dragged while it waits (0x8e2c04) */
+  private held: Drag | null = null;
   private tickTimes: number[] = [];
 
   constructor() {
@@ -131,6 +134,8 @@ class App {
       world = new PlaceholderRenderer(c2);
     }
     this.world = world;
+    // a waiting card is released by the hand update (0x8e1408 -> 0x8e29f4)
+    if (this.ui) this.ui.hud.onRelease = (slot) => this.releaseHeld(slot);
     this.newBattle();
     this.bindControls();
     this.bindPointer();
@@ -153,6 +158,7 @@ class App {
     this.frame.snapshot(this.battle);
     this.acc = 0;
     this.drag = null;
+    this.held = null;
     this.ui?.reset();
     if (DEV) this.buildRedHand();
   }
@@ -243,22 +249,86 @@ class App {
       if (!d || d.dom) return;
       const ui = this.ui;
       this.drag = null;
-      if (ui) ui.hud.drag = null;
-      const [bx, by] = this.boardXY(e);
       if (!ui) return;
       if (!d.moved) {
         // tap: toggle the card's selection
+        ui.hud.drag = null;
         ui.hud.select(ui.hud.selected === d.slot ? -1 : d.slot);
         return;
       }
-      if (d.previewOn && this.previewAlpha(d) > 0.01) {
-        const pos = this.logicAt(bx, by);
-        this.playCard(d.team, d.slot, pos.x, pos.y);
-      }
-      ui.hud.select(-1);
+      [d.px, d.py] = this.boardXY(e); // touch-end point (+0x328)
+      this.touchEnd(d);
     };
     board.addEventListener('pointerup', end);
     board.addEventListener('pointercancel', end);
+  }
+
+  /**
+   * Touch end of a dragged hand card (0x8e2c04). With MAX_SPELL_PENDING_TIME > 0, a card that is not
+   * affordable (+0x31a) but will be within that time (0x8e2d50), dropped outside the own back rows
+   * (0xbe1500, here: its visual has finished shrinking, the same line, A for the row count), stays in
+   * drag mode with its preview and waits (+0x324): any other waiting card is released first (0x8d112c ->
+   * 0x8e2b6c). Otherwise it is released now (0x8e29f4 -> 0xbe1634, then 0x8e1004).
+   */
+  private touchEnd(d: Drag): void {
+    const ui = this.ui;
+    if (!ui) return;
+    const b = this.battle;
+    const p = b.players[d.team];
+    const def = p.deck[p.hand[d.slot]];
+    const avail = p.elixir - p.pending;
+    const hundredths = avail < 1 ? 0 : Math.trunc(Math.min(avail, b.maxElixir) / 100);
+    const affordNow = b.infiniteElixir || (!!def && def.cost * 100 <= hundredths);
+    const soon = !!def && affordableSoon(hundredths, def.cost, this.msPerElixir());
+    if (def && dropWaits(affordNow, soon, this.cardScale(d) > 0)) {
+      const other = this.held;
+      if (other) { ui.hud.stopWait(other.slot); this.releaseHeld(other.slot); }
+      ui.hud.startWait(d.slot, MAX_SPELL_PENDING_TIME_S);
+      this.held = d;
+      ui.hud.held = ui.hud.drag;
+      ui.hud.drag = null;
+      ui.holdPreview();
+      return;
+    }
+    ui.hud.drag = null;
+    this.release(d, 0);
+  }
+
+  /** The waiting card in `slot` is released (its time is up or it became affordable, 0x8e1408). */
+  private releaseHeld(slot: number): void {
+    const d = this.held;
+    const ui = this.ui;
+    if (!d || d.slot !== slot || !ui) return;
+    this.held = null;
+    ui.hud.held = null;
+    this.release(d, 1);
+  }
+
+  /**
+   * Release at the touch-end point (0x8e29f4 -> 0x8e1fb8(0, card, 1) -> 0xbe1634): a play is submitted
+   * only with the card's visual hidden (0xbe1634 param_6) and goes through the play check (0xd77504 via
+   * 0xcc4658: here Battle.play). On success the preview leaves its ghosts, ring, indicator and name until
+   * the cast (0xbe1aa8) and the card hides (0x8d5438 -> 0x8e2868); 0x8e1004 returns the card to its slot
+   * and deselects it only after a successful play.
+   */
+  private release(d: Drag, which: 0 | 1): void {
+    const ui = this.ui;
+    if (!ui) return;
+    let play: { x: number; y: number } | null = null;
+    if (d.previewOn && this.cardScale(d) <= 0) {
+      const pos = this.logicAt(d.px, d.py);
+      play = this.playCard(d.team, d.slot, pos.x, pos.y);
+    }
+    ui.releasePreview(which, play);
+  }
+
+  /** ms per elixir (0xfa3e28): the timeline's current full-bar time (0xd448b0) / MAX_MANA. */
+  private msPerElixir(): number {
+    const b = this.battle;
+    const sec = b.timeMs / 1000;
+    let full = b.timeline.elixirRates[0].fullBarMs;
+    for (const r of b.timeline.elixirRates) if (sec >= r.fromSec) full = r.fullBarMs;
+    return Math.trunc(full / Math.trunc(b.maxElixir / 10000));
   }
 
   /** Card visual scale while dragged (0x8e1fb8): 1 - (d / span)^4 from its slot up to the arena's near edge, 0 = hidden. */
@@ -303,39 +373,45 @@ class App {
     ui.hud.drag = { slot: d.slot, card: d.card, x: sx, y: sy, cardScale: s, gx: d.gx, gy: d.gy };
   }
 
-  /** Each frame: feed the drag preview (snapped by the engine's deploy check prediction). */
+  /**
+   * Each frame: feed the drag previews of the dragged card and of a card waiting for elixir (snapped by
+   * the engine's deploy check prediction; an invalid position keeps the pointer's, 0xbe1634).
+   */
   private updatePreview(): void {
     const ui = this.ui;
     if (!ui) return;
-    const d = this.drag;
-    let pv: PreviewInput | null = null;
-    if (d && (d.previewOn || d.dom)) {
-      const b = this.battle;
-      const card = b.defs.card(d.card, b.levels[d.team]);
-      const raw = d.dom ? this.domLogic(d) : this.logicAt(d.px, d.py);
-      if (raw) {
-        const snapped = b.deployPlace(d.team, card, raw.x, raw.y) ?? raw;
-        const alpha = d.dom ? 1 : this.previewAlpha(d);
-        pv = { team: d.team, card: d.card, slot: d.slot, x: snapped.x, y: snapped.y, alpha };
-        if (ui.hud.drag) ui.hud.drag.cardScale = d.dom ? 0 : this.cardScale(d);
-      }
-    }
     // the overlay reads the selected card; the HUD shows the own team's hand
-    ui.preview = pv;
+    ui.preview = this.previewOf(this.drag);
+    ui.held = this.previewOf(this.held);
+    if (ui.hud.drag && this.drag && !this.drag.dom) ui.hud.drag.cardScale = this.cardScale(this.drag);
+    if (ui.hud.held && this.held) ui.hud.held.cardScale = this.cardScale(this.held);
   }
 
-  private playCard(team: number, slot: number, x: number, y: number): void {
+  private previewOf(d: Drag | null): PreviewInput | null {
+    if (!d || !(d.previewOn || d.dom)) return null;
+    const b = this.battle;
+    const card = b.defs.card(d.card, b.levels[d.team]);
+    const raw = d.dom ? this.domLogic(d) : this.logicAt(d.px, d.py);
+    if (!raw) return null;
+    const snapped = b.deployPlace(d.team, card, raw.x, raw.y);
+    const hidden = d.dom !== null || this.cardScale(d) <= 0;
+    const pos = snapped ?? raw;
+    return { team: d.team, card: d.card, slot: d.slot, x: pos.x, y: pos.y, alpha: d.dom ? 1 : this.previewAlpha(d),
+      valid: snapped !== null && hidden };
+  }
+
+  /** Submit a play now; the snapped play position, or null when the engine rejects it. */
+  private playCard(team: number, slot: number, x: number, y: number): { x: number; y: number } | null {
     const b = this.battle;
     const err = b.play(team, slot, x, y);
-    if (err) { console.info('play rejected:', err); return; }
+    if (err) { console.info('play rejected:', err); return null; }
     const cmd = b.commands[b.commands.length - 1];
     const ui = this.ui;
     // the placed card hides in its slot until the slot changes (0xbe1634 -> 0x8d5438 -> 0x8e2868)
     if (ui && team === ui.hud.team) ui.hud.played(slot);
-    if (ui && cmd) {
-      const pos = b.deployPlace(team, cmd.card, x, y) ?? { x, y };
-      ui.markPending(team, cmd.card.name, pos.x, pos.y, b.tick);
-    }
+    const pos = cmd ? b.deployPlace(team, cmd.card, x, y) ?? { x, y } : { x, y };
+    if (ui && cmd) ui.markPending(team, cmd.card.name, pos.x, pos.y, b.tick);
+    return pos;
   }
 
   // ------------------------------------------------------------------ dev controls (?dev)

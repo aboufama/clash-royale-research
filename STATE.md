@@ -149,9 +149,18 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the full-elixir hand wiggle (0x907654 / 0x907ab0), the
-   unaffordable-drop wait (MAX_SPELL_PENDING_TIME). Training bridge (M3) and
+5. **HUD left:** the "Not enough Elixir!" floater of a failed play (0xd77504
+   → listener vt+0x278 0xbe7184 → 0x88cb54: needs `floater_text` and
+   `TID_NOT_ENOUGH_MANA` baked), the own back-row line of 0xbe1500 / 0x8e1fb8
+   (logic Globals +0x1c8 rows, not written by the Globals loaders), the Log
+   leftover's end event (battle screen vt+0xd8 0xbe4340 by projectile id,
+   reached from view method 0x84fdcc). Training bridge (M3) and
    the fidelity pass (M5); see [GOAL.md](GOAL.md). Done 2026-10-12: the
+   full-elixir hand wiggle (0x8dc37c → 0x907654 / 0x9077f0 / 0x907ab0), the
+   unaffordable-drop wait (MAX_SPELL_PENDING_TIME: 0x8e2c04 / 0x8e2d50 /
+   0x8e1408 +0x324) and the released play's leftover preview (ghosts, ring,
+   name; 0xbe1aa8 → 0x8dd100, dropped by the cast 0xbe5b4c), decompiles in
+   `work/native/decomp_hand2/`. Also done: the
    tiebreaker / draw / final-score clips of 0x8d38c4 and the crown-score
    prints of 0x8d2de0 (`sc/announce.ts`), on the engine's ported tiebreak
    (`Battle.tiebreakMs` / `drawMs`, 0x10ca9a0, `end.test.ts`); decompiles in

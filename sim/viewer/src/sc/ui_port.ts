@@ -12,6 +12,11 @@
 //   cardSlot             hand card placement in cardArea (0x8da088)
 //   HandCard, cardEntry  hand card cycle: hide after a play, deal from the next card (0x8e0b84, 0x8e1408)
 //   nextCardTimer        next card grayscale + NextSpellTimer while the hand timer runs (0x8dc37c)
+//   dropWaits, dropWaitStep  releasing a card a moment before it is affordable (0x8e2c04, 0x8e2d50,
+//                        0x8e1408 +0x324; MAX_SPELL_PENDING_TIME)
+//   HandWiggle           full-elixir hand card shake (list 0x907230: add 0x907654, remove 0x9077f0,
+//                        update 0x907ab0, matrix 0x123e8b4), spellInstanceId (LogicData +0x40)
+//   PENDING_GHOST_S      lifetime cap of a released play's leftover preview (0x8dd4cc)
 //   radialFillStrip      RadialFill card mask while a card is unaffordable (ctor 0x89f9b4, draw 0x89fd24)
 //   elixirRequirement    selected card's cost on the elixir bar (0x8dbebc, elixirRequirementBar)
 
@@ -559,6 +564,8 @@ export class HandCard {
   visible = false; // +0x8
   selected = false; // +0x319
   raiseT = 1; // +0x320
+  /** elixir wait after a release (+0x324, s): see dropWaits / dropWaitStep */
+  waitT = 0;
 
   deal(dur: number, delay: number): void {
     this.dur = dur;
@@ -612,6 +619,172 @@ export class HandCard {
 export function nextCardTimer(timerMs: number): { gray: boolean; text: string | null } {
   if (timerMs <= 0) return { gray: false, text: null };
   return { gray: true, text: String(Math.floor((timerMs + 999) / 1000)) };
+}
+
+// -- releasing a card before it is affordable ------------------------------------------------------
+
+const f32 = Math.fround;
+
+/**
+ * Client global MAX_SPELL_PENDING_TIME (client_globals.csv: 1200 ms); its loader 0xdf3394 stores
+ * value · 0.001 as a float at client globals +0x1b8, read only by 0x8e2c04 and 0x8e2d50.
+ */
+export const MAX_SPELL_PENDING_TIME_S = f32(1200 * f32(0.001));
+
+/**
+ * 0x8e2d50: will the card be affordable within MAX_SPELL_PENDING_TIME − 0.1 s? `hundredths` is the
+ * available elixir in 1/100 (0xfa1d10: min(elixir − pending, MAX_MANA) / 100, 0 below 1), `msPerElixir`
+ * 0xfa3e28 = the timeline's full-bar time (0xd448b0) / MAX_MANA, integer. With w = (int)((T − 0.1) · 1000)
+ * in float (1100), the elixir gained meanwhile is (w · 100) / msPerElixir (integer division).
+ */
+export function affordableSoon(hundredths: number, cost: number, msPerElixir: number, pendingS = MAX_SPELL_PENDING_TIME_S): boolean {
+  let h = hundredths;
+  const t = f32(pendingS + f32(-0.1));
+  if (t > 0 && msPerElixir !== 0) h += Math.trunc((Math.trunc(f32(t * 1000)) * 100) / msPerElixir);
+  return cost * 100 <= h;
+}
+
+/**
+ * The hand card's touch end 0x8e2c04 decides between releasing now (0x8e29f4 -> 0x8e1fb8 -> the play
+ * submit 0xbe1634) and waiting for the elixir: it waits (timer +0x324 = MAX_SPELL_PENDING_TIME, the card
+ * stays in drag mode with its drag preview, after 0x8d112c has flushed any other card's wait) when the
+ * time is > 0, the card is not affordable now (+0x31a, set by the last 0x8e1408 from the HUD's elixir:
+ * cost · 100 <= hundredths), it will be within the time (0x8e2d50), and the drop is not in the own back
+ * rows (0xbe1500: logic y past Globals +0x1c8 rows from the own edge, the same line where the dragged
+ * card's visual finishes shrinking in 0x8e1fb8; or a tutorial gate).
+ */
+export function dropWaits(affordableNow: boolean, soon: boolean, inBackRows: boolean, pendingS = MAX_SPELL_PENDING_TIME_S): boolean {
+  return pendingS > 0 && !affordableNow && soon && !inBackRows;
+}
+
+/**
+ * One frame of a waiting card (0x8e1408, after the drag update): t = max(0, t − dt); when it reaches 0
+ * or the card is affordable this frame (+0x31a), t = 0 and the card is released at its touch-end point
+ * (+0x328: 0x8e29f4 -> 0x8e1fb8(0, card, 1) -> 0xbe1634, whose command 0xcc4658 the logic validates
+ * with the play check 0xd77504), then returned to its slot by 0x8e1004(success). Nothing happens while
+ * t <= 0.
+ */
+export function dropWaitStep(t: number, dt: number, affordable: boolean): { t: number; release: boolean } {
+  if (!(t > 0)) return { t, release: false };
+  const n = Math.max(0, f32(t - dt));
+  if (n === 0 || affordable) return { t: 0, release: true };
+  return { t: n, release: false };
+}
+
+/**
+ * A released play's leftover preview (0xbe1aa8 builds it from the drag preview: the ghost characters,
+ * the radius ring, the card's indicator clips and the spell_placement_text name; not the footprint) is
+ * dropped when its cast arrives (0xbe5b4c), and at the latest once it has lived this long: 0x8dd4cc adds
+ * the battle screen's frame dt to +0x78 and removes it at 3 s (0x8dd2a0, then 0x8dd174 next frame).
+ */
+export const PENDING_GHOST_S = 3;
+
+// -- full-elixir hand wiggle ----------------------------------------------------------------------
+
+/**
+ * Named rows of the build's card tables in file order (csv_logic/spells_characters.csv,
+ * spells_buildings.csv, spells_other.csv; rows with an empty Name continue the previous row and get no
+ * instance). A card's LogicData global ID (+0x40, 0xe0b624) is table class · 1000000 + this index
+ * (0xfdb6fc: id % 1000000; Knight 26000000, Wizard 26000017, Cannon 27000000, Fireball 28000000).
+ */
+const SPELL_TABLE_ROWS = [
+  'Knight|Archer|Goblins|Giant|Pekka|Minions|Balloon|Witch|Barbarians|Golem|Skeletons|Valkyrie|SkeletonArmy|Bomber|' +
+  'Musketeer|BabyDragon|Prince|Wizard|MiniPekka|SpearGoblins|GiantSkeleton|HogRider|MinionHorde|IceWizard|RoyalGiant|' +
+  'SkeletonWarriors|Princess|DarkPrince|ThreeMusketeers|LavaHound|IceSpirits|FireSpirits|Miner|ZapMachine|Bowler|' +
+  'RageBarbarian|BattleRam|InfernoDragon|IceGolemite|MegaMinion|BlowdartGoblin|GoblinGang|ElectroWizard|AngryBarbarians|' +
+  'Hunter|AxeMan|Assassin|RoyalRecruits|DarkWitch|Bats|Ghost|RamRider|MiniSparkys|Rascals|MovingCannon|MegaKnight|' +
+  'SkeletonBalloon|DartBarrell|Wallbreakers|RoyalHogs|GoblinGiant|Fisherman|EliteArcher|ElectroDragon|Firecracker|' +
+  'MightyMiner|SuperWitch|ElixirGolem|BattleHealer|SkeletonKing|SuperLavaHound|SuperEliteArcher|ArcherQueen|' +
+  'SuperHogRider|GoldenKnight|SuperIceGolemite|CHAR_DISABLED_1|Monk|SuperArcher|RoyalRecruits_Chess|SkeletonDragons|' +
+  'SuperHogRiderTerry|SuperMiniPekka|WitchMother|ElectroSpirit|ElectroGiant|PrinceBuff|Phoenix|CHAR_DISABLED_3|' +
+  'CHAR_DISABLED_4|CHAR_DISABLED_5|CHAR_DISABLED_6|CHAR_DISABLED_7|LittlePrince|TriWizards|GoblinDemolisher|' +
+  'GoblinMachine|SuspiciousBush|SuperKnight|Goblinstein|SkeletonWarriors_SpookyChess|GiantBuffer|Berserker|BossBandit|' +
+  'MergeMaiden_Normal|MergeMaiden_Mounted|Ronin|MinionGiant',
+  'Cannon|GoblinHut|Mortar|InfernoTower|BombTower|BarbarianHut|Tesla|Elixir Collector|Xbow|Tombstone|FirespiritHut|' +
+  'BarbarianLauncher|GoblinCage|GoblinDrill|GoblinPartyHut|DarkElixir_Bottle|ElixirBarrel|GoblinRocketSilo',
+  'Fireball|Arrows|Rage|Rocket|GoblinBarrel|Freeze|Mirror|Lightning|Zap|Poison|Graveyard|Log|Tornado|Clone|Earthquake|' +
+  'BarbLog|Heal|Snowball|RoyalDelivery|GlobalClone|GoblinPartyRocket|WarmSpell|GlobalLightning|DarkMagic|GoblinCurse|' +
+  'MergeMaiden|Vines',
+];
+let spellRowIndex: Map<string, number> | null = null;
+
+/** Instance part of a card's global ID (its row among the named rows of its table), or 0 if unknown. */
+export function spellInstanceId(card: string): number {
+  if (!spellRowIndex) {
+    spellRowIndex = new Map();
+    for (const t of SPELL_TABLE_ROWS) t.split('|').forEach((n, i) => { if (!spellRowIndex!.has(n)) spellRowIndex!.set(n, i); });
+  }
+  return spellRowIndex.get(card) ?? 0;
+}
+
+/** Rotation and scale of a display object's matrix (0x123e8b4): angle in degrees. */
+export function rotScale(deg: number, sx: number, sy: number): [number, number, number, number] {
+  const r = f32(f32(deg) * f32(0.017453292));
+  const c = f32(Math.cos(r)), s = f32(Math.sin(r));
+  return [c * sx, s * sy, -(sx * s), c * sy];
+}
+
+interface WiggleEntry { key: number; slot: number; sx: number; sy: number; end: number }
+
+/**
+ * The battle HUD's wiggle list (HUD +0x280, constructed by 0x907230 with its clock +0x20 = 0). Each frame
+ * the hand update 0x8dc37c, for slots 0..3 before that slot's card update 0x8e1408, removes the slot's
+ * card (0x9077f0: matrix back to rotation 0 at its stored scale) when the slot is empty or the available
+ * elixir (0xfa1d10, hundredths) is below MAX_MANA · 100, and otherwise adds it (0x907654(card scale +0x2c4,
+ * the same, list, card, its SpellData, -1): appended only if the card is not in the list, end time 0 =
+ * never; a non-negative index i would end it at clock + 0.112199746 i). After the four slots 0x907ab0
+ * runs once: clock += dt, and every entry's matrix becomes rotation(sin(clock · 28 + (id % 10000) · 123) ·
+ * 0.45°) · scale(sx, sy) (0x123e8b4), id = the SpellData global ID; entries past their end are removed and
+ * reset to rotation 0. The card update writes the card's scale before that (vt+0x30 and the entry's
+ * vt+0x38 / vt+0x40), so a listed card shows the stored scale. The entry keeps the card data it was added
+ * with until it is removed.
+ */
+export class HandWiggle {
+  clock = 0; // +0x20
+  private entries: WiggleEntry[] = []; // +0x08..+0x18, 32-byte records {data, card, sx, sy, end}
+  /** angle (degrees) of each listed slot after the last update */
+  private angles = new Map<number, number>();
+
+  add(slot: number, sx: number, sy: number, key: number, index = -1): void {
+    if (this.entries.some((e) => e.slot === slot)) return;
+    const end = index > -1 ? f32(this.clock + f32(index * f32(0.112199746))) : 0;
+    this.entries.push({ key, slot, sx, sy, end });
+  }
+
+  remove(slot: number): void {
+    const i = this.entries.findIndex((e) => e.slot === slot);
+    if (i < 0) return;
+    this.entries.splice(i, 1);
+    this.angles.delete(slot);
+  }
+
+  update(dt: number): void {
+    this.clock = f32(this.clock + dt);
+    for (let i = 0; i < this.entries.length;) {
+      const e = this.entries[i];
+      const a = f32(f32(Math.sin(f32(f32(this.clock * 28) + (e.key % 10000) * 123))) * f32(0.45));
+      this.angles.set(e.slot, a);
+      if (e.end > 0 && e.end < this.clock) {
+        this.entries.splice(i, 1);
+        this.angles.delete(e.slot);
+        continue;
+      }
+      i++;
+    }
+  }
+
+  /** The slot's wiggle (angle in degrees and the stored scale), or null when it is not listed. */
+  of(slot: number): { deg: number; sx: number; sy: number } | null {
+    const e = this.entries.find((q) => q.slot === slot);
+    if (!e) return null;
+    return { deg: this.angles.get(slot) ?? 0, sx: e.sx, sy: e.sy };
+  }
+
+  reset(): void {
+    this.clock = 0;
+    this.entries = [];
+    this.angles.clear();
+  }
 }
 
 // -- radial fill (card mask) -----------------------------------------------------------------------

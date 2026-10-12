@@ -17,7 +17,7 @@ import { ClipPlayer } from './sc/anim.ts';
 import { Announcements } from './sc/announce.ts';
 import {
   type AreaActor, CLIENT_GLOBALS, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
-  indicatorRadius, ringBand, ringStrip, type UiSpell,
+  indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
 } from './sc/ui_port.ts';
 
 type Team = 0 | 1;
@@ -34,13 +34,55 @@ export interface PreviewInput {
   y: number;
   /** preview alpha: 1 - the dragged card's scale (0x8e1fb8); 0 while the card is over the hand */
   alpha: number;
+  /**
+   * the position is valid (0xbe1634's flag passed to 0x8e4eb4 as !invalid): the deploy check accepts it
+   * and the drop is not in the own back rows. The container (footprint, ring, indicator clips) and the
+   * ghost characters' parts are shown only then; the name text follows the alpha (0x8e4dcc).
+   */
+  valid: boolean;
 }
 
-/** A play released and waiting for its commit: the footprint plays `release`, then `remove` (A). */
-interface PendingMark { card: string; team: number; x: number; y: number; clip: ClipPlayer; exp: string; removing: boolean;
-  submitTick: number }
-
 interface GhostUnit { def: UnitDef; x: number; y: number; angle: number }
+
+/** One drag preview object (class 0x8e3fd4, hand card +0x2e0): its clips and its mana counter. */
+interface PreviewView {
+  card: string;
+  footprint: { exp: string; clip: ClipPlayer; scale: number } | null;
+  indicator: ClipPlayer | null;
+  /** mana child of the name text (0x8e5ccc): alpha, last shown elixir (+0xec), flash clock (+0xe8), "%d/%d" */
+  mana: { alpha: number; shown: number; flashT: number; text: string };
+}
+
+/**
+ * What a successful release leaves on the field until its cast arrives (0xbe1aa8 -> object 0x8dd100 in
+ * the battle screen list +0x2c0): the preview's ghost characters (+0x38, frozen: their views are only
+ * updated by the preview, 0x8e4eb4, never by the view manager 0x84facc), its radius ring and indicator
+ * clips moved into a new container at alpha 1 (+0x60, depth 0.01), and the spell_placement_text name
+ * (+0x58) with its mana child as they were at the release. The footprint stays in the old preview
+ * container, which 0x8e4ccc hides.
+ */
+interface PendingGhost {
+  team: number;
+  card: string;
+  /** the submitted play position (+0x18 / +0x1c), matched against the cast within 5 units */
+  x: number;
+  y: number;
+  /** preview position the ghosts, ring, indicator and name were drawn at */
+  px: number;
+  py: number;
+  ghosts: GhostUnit[];
+  ring: { R: number; minR: number } | null;
+  indicator: ClipPlayer | null;
+  name: { alpha: number; text: string; level: string; mana: { alpha: number; text: string; flash: number } };
+  /** +0x78: lifetime, removed at PENDING_GHOST_S (0x8dd4cc) */
+  t: number;
+  /** +0x74: removed (0x8dd2a0 dropped the ghosts and indicator clips); deleted by the next update */
+  removed: boolean;
+  /** a spawn-pathfind summon's cast: waiting for its character (0xbe5b4c +0x34) */
+  awaitSpawn: boolean;
+  /** that character's unit id: the leftover goes when it stops tunnelling (0x845a8c -> 0xbe5b0c) */
+  unitId: number;
+}
 
 const num = (r: Row | undefined, k: string): number => (r && typeof r[k] === 'number' ? r[k] as number : 0);
 const flag = (r: Row | undefined, k: string): boolean => !!(r && r[k] === true);
@@ -55,11 +97,12 @@ export class BattleUi {
   /** elixir cost texts of the own summons (0x85ada8 -> 0xbe5898, list +0x400 of the battle screen) */
   private floats: { x: number; y: number; text: string; clip: ClipPlayer }[] = [];
   private range: ImageBitmap | null = null;
-  private footprint: { exp: string; clip: ClipPlayer; scale: number } | null = null;
-  private indicatorClip: ClipPlayer | null = null;
-  private previewCard: string | null = null;
-  private mana = { alpha: 0, shown: -1, flashT: 1000 };
-  private pending: PendingMark[] = [];
+  /** a released card waiting for its elixir (0x8e2c04): its preview keeps updating at the release point */
+  held: PreviewInput | null = null;
+  /** preview objects of `preview` [0] and `held` [1] */
+  private views: [PreviewView | null, PreviewView | null] = [null, null];
+  /** released plays' leftovers, oldest first (battle screen +0x2c0) */
+  private pending: PendingGhost[] = [];
 
   constructor(art: BattleArt) {
     this.art = art;
@@ -91,6 +134,8 @@ export class BattleUi {
     this.announce = null;
     this.pending = [];
     this.preview = null;
+    this.held = null;
+    this.views = [null, null];
     this.areaAlpha = 0;
     this.grid.blocked.fill(0);
     this.grid.timer.fill(0);
@@ -177,19 +222,22 @@ export class BattleUi {
     const ui = this.ui;
     if (!ui) return;
     for (const e of b.events) {
+      if (e.type === 'spawn') {
+        // the character a spawn-pathfind cast summoned (Deploy_summon's actor, 0xf9f47c param_6)
+        for (const g of this.pending) {
+          if (g.awaitSpawn && g.team === e.team && b.units.some((u) => u.id === e.id && u.card === g.card)) {
+            g.awaitSpawn = false;
+            g.unitId = e.id;
+          }
+        }
+        continue;
+      }
       if (e.type !== 'cast') continue;
       const card = b.defs.card(e.name, b.levels[e.team]);
       const d = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
       const n = card.spec.main ? card.spec.number : card.spec.second ? card.spec.secondCount : card.spec.list.length;
       const own = e.team === this.hud.team;
-      for (const pm of this.pending) {
-        if (!pm.removing && pm.team === e.team && pm.card === e.name) {
-          pm.removing = true;
-          const l = ui.labels(pm.exp);
-          pm.clip.playRange(l.remove ?? 0, l.remove_end ?? pm.clip.frames - 1, false);
-          break;
-        }
-      }
+      if (own) this.castArrived(card, e.x, e.y);
       // the own summon's elixir cost floats up from the deploy point when its characters appear: the
       // unit view's card-deploy handler 0x85ada8 -> 0xbe5898 (elixir_float_txt, icon/txt = "-<cost>",
       // played once, then removed); spells have no character view and show none
@@ -210,10 +258,93 @@ export class BattleUi {
   }
 
   /**
-   * Release of a valid play. The client draws nothing here: the footprint (spell_placement_NxN) is a
-   * child of the drag preview container (0x8e4eb4 adds it to +0x78 with playLabels("appear",
-   * "appear_end")) and goes away with the preview on release; the binary has no "release_end",
-   * "remove" or "remove_end" label strings, so those ranges of the clip are never played.
+   * The own cast handler 0xbe5b4c (from the King view's 0x85b058 with Tower_castSpell's projectile id
+   * and first summoned character id) walks the leftovers: one that is not yet removed, has the same card
+   * and lies within 5 units of the cast (0x8dd56c) goes now (0x8dd538), except (a) a summon whose
+   * SummonCharacter has SpawnPathfindSpeed (and no projectile, 0x8dd5ac false): it waits for that
+   * character (+0x34) to end its spawn pathfinding (0x845a8c -> 0xbe5b0c), and (b) a projectile spell
+   * with no summon whose projectile has a SpawnProjectile without SpawnCharacter (the Log): it waits for
+   * the battle screen's vt+0xd8 (0xbe4340) with the projectile's id, which is not mapped to an engine
+   * event here (A: it lasts until the 3 s cap). Every leftover then loses its indicator clips (0x8dd62c).
+   */
+  private castArrived(card: CardDef, x: number, y: number): void {
+    const b = this.battleRef;
+    if (!b) return;
+    const data = b.defs.data as unknown as { projectiles: Record<string, Row> };
+    const pr = card.spellProjectile ? data.projectiles[card.spellProjectile.name] : undefined;
+    const sp = typeof pr?.SpawnProjectile === 'string' ? data.projectiles[pr.SpawnProjectile as string] : undefined;
+    // 0x8dd5ac: a projectile without SpawnProjectile, or whose SpawnProjectile spawns a character
+    const projectileSpell = !!card.spellProjectile && (!pr?.SpawnProjectile || !!sp?.SpawnCharacter);
+    const summons = card.spec.main !== null || card.spec.second !== null || card.spec.list.length > 0;
+    const main = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
+    for (const g of this.pending) {
+      if (g.removed || g.card !== card.name || Math.abs(g.x - x) >= 5 || Math.abs(g.y - y) >= 5) continue;
+      if (summons && !projectileSpell && main && main.spawnPathfindSpeed !== 0) { g.awaitSpawn = true; continue; }
+      if (!summons && card.spellProjectile && !projectileSpell) continue;
+      this.removeGhost(g);
+    }
+    for (const g of this.pending) g.indicator = null;
+  }
+
+  /**
+   * 0x8dd538 / 0x8dd2a0: the ghost characters and indicator clips go now, the rest (ring, name) when the
+   * battle screen update deletes the object (0x8dd174), which runs later in the same frame for a cast
+   * (logic tick, then the HUD, then the list) and on the next frame after the 3 s cap.
+   */
+  private removeGhost(g: PendingGhost): void {
+    g.removed = true;
+    g.ghosts = [];
+    g.indicator = null;
+  }
+
+  /**
+   * End of the preview of `preview` (0) or `held` (1). `play` is the submitted play's position when
+   * the release succeeded (0xbe1634 -> 0xbe1aa8 with the card): the preview's ghosts, ring, indicator
+   * clips and name text stay as a leftover until the cast. On failure (or a drop with the card still
+   * showing) 0xbe1aa8 leaves nothing (no card: removed at once, 0x8dd538).
+   */
+  releasePreview(which: 0 | 1, play: { x: number; y: number } | null): void {
+    const pv = which === 0 ? this.preview : this.held;
+    const view = this.views[which];
+    const b = this.battleRef;
+    if (play && pv && view && b) {
+      const card = b.defs.card(pv.card, b.levels[pv.team]);
+      const nm = this.nameText(pv, view);
+      this.pending.push({
+        team: pv.team, card: pv.card, x: play.x, y: play.y, px: pv.x, py: pv.y,
+        ghosts: this.ghosts(b, card, pv.team, pv.x, pv.y), ring: this.ringOf(card), indicator: view.indicator,
+        name: nm, t: 0, removed: false, awaitSpawn: false, unitId: -1,
+      });
+    }
+    this.views[which] = null;
+    if (which === 0) this.preview = null;
+    else this.held = null;
+  }
+
+  /** The card held by the pointer was released before it was affordable: its preview goes on waiting. */
+  holdPreview(): void {
+    this.held = this.preview;
+    this.views[1] = this.views[0];
+    this.preview = null;
+    this.views[0] = null;
+  }
+
+  /** Name, level and mana child of a preview's spell_placement_text (0x8e4994 / 0x8e5ccc). */
+  private nameText(pv: PreviewInput, view: PreviewView): PendingGhost['name'] {
+    const b = this.battleRef!;
+    const card = b.defs.card(pv.card, b.levels[pv.team]);
+    const text = (this.raw(pv.card)?._displayName as string | undefined) ?? pv.card;
+    const level = (this.art.manifest.hud.texts?.TID_SPELL_ITEM_LEVEL_SHORT ?? 'lvl.<NUMBER>').replace('<NUMBER>', String(card.level));
+    const m = view.mana;
+    const flash = m.flashT < 0.28 ? Math.min(1, Math.max(0, Math.sin(Math.min(1, m.flashT * 3.5714285) * Math.PI) * 0.5)) * 255 : 0;
+    return { alpha: pv.alpha, text, level, mana: { alpha: m.alpha, text: m.text, flash } };
+  }
+
+  /**
+   * A hand play was submitted. Its leftover preview is made by releasePreview; the footprint
+   * (spell_placement_NxN, a child of the preview container: 0x8e4eb4 adds it to +0x78 with
+   * playLabels("appear", "appear_end")) is not part of it and goes with the preview; the binary has no
+   * "release_end", "remove" or "remove_end" label strings, so those ranges of the clip are never played.
    */
   markPending(team: number, card: string, x: number, y: number, tick: number): void {
     void x; void y; void tick;
@@ -311,20 +442,38 @@ export class BattleUi {
     this.timers = this.timers.filter((tm) => tm.t.update(simDt));
     // cost texts: UI clips on the wall clock, removed once played through
     this.floats = this.floats.filter((fl) => { const was = fl.clip.playing; fl.clip.advance(dt); return was; });
-    this.hud.update(dt, b);
+    // drag previews first: a hand card updates its preview (0x8e1fb8 -> vt+0x68 0x8e5ccc) before its
+    // elixir wait may release it (0x8e1408)
+    this.updateViews(dt, b);
+    this.hud.update(dt, b, simDt);
     this.announcer()?.update(dt, b, team);
-    // preview clips
-    const pv = this.preview;
-    if (!pv || !ui) {
-      this.footprint = null;
-      this.indicatorClip = null;
-      this.previewCard = null;
-      this.mana = { alpha: 0, shown: -1, flashT: 1000 };
-    } else {
-      if (this.previewCard !== pv.card) {
-        this.previewCard = pv.card;
+    // released plays' leftovers (battle screen update 0xbe1d3c, last to first): 0x8dd4cc deletes one
+    // removed on an earlier frame, else adds the frame dt and removes it at 3 s; a spawn-pathfind
+    // summon's goes when its character stops tunnelling (0xbe5b0c). Simulation time, like the cast.
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const g = this.pending[i];
+      if (g.unitId >= 0 && !g.removed) {
+        // the view manager (0x84facc, earlier in the same update) ends it when the character surfaces
+        const u = b.units.find((q) => q.id === g.unitId);
+        if (!u || !u.tunneling) this.removeGhost(g);
+      }
+      if (g.removed) { this.pending.splice(i, 1); continue; }
+      g.t += simDt;
+      if (g.t >= PENDING_GHOST_S) this.removeGhost(g);
+      g.indicator?.advance(dt);
+    }
+  }
+
+  /** Advance the drag preview objects of `preview` and `held` (clips and the mana counter 0x8e5ccc). */
+  private updateViews(dt: number, b: Battle): void {
+    const ui = this.ui;
+    for (const which of [0, 1] as const) {
+      const pv = which === 0 ? this.preview : this.held;
+      if (!pv || !ui) { this.views[which] = null; continue; }
+      let view = this.views[which];
+      if (!view || view.card !== pv.card) {
+        view = { card: pv.card, footprint: null, indicator: null, mana: { alpha: 0, shown: -1, flashT: 1000, text: '' } };
         const exp = this.footprintExport(pv.card);
-        this.footprint = null;
         if (exp && ui.has(exp)) {
           const clip = new ClipPlayer(ui.frameCount(exp), ui.fps(exp));
           const l = ui.labels(exp);
@@ -333,30 +482,30 @@ export class BattleUi {
           const d = this.ghostDefs(card)[0];
           const ts = d && d.kind === 'building' ? this.tileSize(d) : 1;
           const n = Math.max(1, Math.min(4, ts));
-          this.footprint = { exp, clip, scale: ts / n };
+          view.footprint = { exp, clip, scale: ts / n };
         }
         const ind = this.art.manifest.cards[pv.card]?.indicator as { sc: string; export: string; frames?: number; fps?: number } | undefined;
-        this.indicatorClip = ind ? new ClipPlayer(ind.frames ?? 1, ind.fps ?? 30) : null;
-        this.indicatorClip?.playRange(0, (ind?.frames ?? 1) - 1, true);
-        this.mana = { alpha: 0, shown: -1, flashT: 1000 };
+        view.indicator = ind ? new ClipPlayer(ind.frames ?? 1, ind.fps ?? 30) : null;
+        view.indicator?.playRange(0, (ind?.frames ?? 1) - 1, true);
+        this.views[which] = view;
       }
-      this.footprint?.clip.advance(dt);
-      this.indicatorClip?.advance(dt);
+      view.footprint?.clip.advance(dt);
+      view.indicator?.advance(dt);
       // mana counter (0x8e5ccc): "elixir/cost" while short of elixir, flashing on each change, fading at 3/s
       const card = b.defs.card(pv.card, b.levels[pv.team]);
       const pl = b.players[pv.team];
       const have = b.infiniteElixir ? 10 : Math.max(0, Math.min(10, Math.floor((pl.elixir - pl.pending) / 10000)));
       const cost = Math.min(10, card.cost);
-      this.mana.flashT += dt;
-      if (have <= cost && have !== this.mana.shown) {
-        if (this.mana.shown === -1) this.mana.alpha = have < cost ? 1 : 0;
-        this.mana.flashT = this.mana.shown === -1 ? 1000 : 0;
-        this.mana.shown = have;
+      const m = view.mana;
+      m.flashT += dt;
+      if (have <= cost && have !== m.shown) {
+        if (m.shown === -1) m.alpha = have < cost ? 1 : 0;
+        m.flashT = m.shown === -1 ? 1000 : 0;
+        m.shown = have;
+        m.text = `${Math.min(have, cost)}/${cost}`;
       }
-      if (have >= cost) this.mana.alpha = Math.max(0, this.mana.alpha - 3 * dt);
+      if (have >= cost) m.alpha = Math.max(0, m.alpha - 3 * dt);
     }
-    for (const pm of this.pending) pm.clip.advance(simDt);
-    this.pending = this.pending.filter((pm) => !(pm.removing && !pm.clip.playing) && b.tick - pm.submitTick < 200);
   }
 
   // ---------------------------------------------------------------- battle-layer passes
@@ -379,50 +528,76 @@ export class BattleUi {
     }
   }
 
-  /** Ground part of the drag preview container: footprint, indicator clip, radius ring (0x8e4eb4). */
+  /**
+   * Ground part of the drag preview containers: footprint, indicator clip, radius ring (0x8e4eb4), shown
+   * while the position is valid at the preview alpha (container +0x78, 0x8e4dcc); then the released
+   * plays' leftovers: ring and indicator clips in their own container at alpha 1, no footprint (0xbe1aa8).
+   */
   drawPreviewGround(r: ScRenderer): void {
     const ui = this.ui;
     const b = this.battleRef;
     if (!ui || !b) return;
-    for (const pm of this.pending) {
-      const [px, py] = this.art.gameToPx(pm.x, pm.y);
-      r.draw(ui, pm.exp, pm.clip.frame, [1, 0, 0, 1, px, py]);
+    for (const g of this.pending) {
+      if (g.removed) continue;
+      const [px, py] = this.art.gameToPx(g.px, g.py);
+      this.drawRing(r, g.ring, px, py, WHITE);
+      this.drawIndicator(r, g.card, g.indicator, px, py, WHITE);
     }
-    const pv = this.preview;
-    if (!pv || pv.alpha <= 0.01) return;
-    const card = b.defs.card(pv.card, b.levels[pv.team]);
-    const [px, py] = this.art.gameToPx(pv.x, pv.y);
-    const col: Col = [1, 1, 1, pv.alpha, 0, 0, 0];
-    const ring = this.ringOf(card);
-    if (ring && this.range) {
-      const verts = ringStrip(ring.R, ringBand(ring.R, this.range.height));
-      r.drawImageStrip(this.range, verts, [1, 0, 0, 1, px, py], col);
-      if (ring.minR > 0) r.drawImageStrip(this.range, ringStrip(ring.minR, -ringBand(ring.R, this.range.height)), [1, 0, 0, 1, px, py], col);
-    }
-    const ind = this.art.manifest.cards[pv.card]?.indicator as { sc: string; export: string } | undefined;
-    if (ind && this.indicatorClip) {
-      const lib = this.art.lib(ind.sc);
-      if (lib) r.draw(lib, ind.export, this.indicatorClip.frame, [1, 0, 0, 1, px, py], col);
-    }
-    if (this.footprint) {
-      const s = this.footprint.scale;
-      // building footprint centring offset (+0xf0/+0xf4): the snapped position is already the footprint centre
-      r.draw(ui, this.footprint.exp, this.footprint.clip.frame, [s, 0, 0, s, px, py], col);
+    for (const which of [1, 0] as const) {
+      const pv = which === 0 ? this.preview : this.held;
+      const view = this.views[which];
+      if (!pv || !view || !pv.valid || pv.alpha <= 0.01) continue;
+      const card = b.defs.card(pv.card, b.levels[pv.team]);
+      const [px, py] = this.art.gameToPx(pv.x, pv.y);
+      const col: Col = [1, 1, 1, pv.alpha, 0, 0, 0];
+      this.drawRing(r, this.ringOf(card), px, py, col);
+      this.drawIndicator(r, pv.card, view.indicator, px, py, col);
+      if (view.footprint) {
+        const s = view.footprint.scale;
+        // building footprint centring offset (+0xf0/+0xf4): the snapped position is already the footprint centre
+        r.draw(ui, view.footprint.exp, view.footprint.clip.frame, [s, 0, 0, s, px, py], col);
+      }
     }
   }
 
-  /** Ghost units of the preview (real actor views at SPELL_DRAG_OBJECT_ALPHA, 0x84f538). */
+  private drawRing(r: ScRenderer, ring: { R: number; minR: number } | null, px: number, py: number, col: Readonly<Col>): void {
+    if (!ring || !this.range) return;
+    const verts = ringStrip(ring.R, ringBand(ring.R, this.range.height));
+    const c = [...col] as Col;
+    r.drawImageStrip(this.range, verts, [1, 0, 0, 1, px, py], c);
+    if (ring.minR > 0) r.drawImageStrip(this.range, ringStrip(ring.minR, -ringBand(ring.R, this.range.height)), [1, 0, 0, 1, px, py], c);
+  }
+
+  private drawIndicator(r: ScRenderer, cardName: string, clip: ClipPlayer | null, px: number, py: number, col: Readonly<Col>): void {
+    const ind = this.art.manifest.cards[cardName]?.indicator as { sc: string; export: string } | undefined;
+    if (!ind || !clip) return;
+    const lib = this.art.lib(ind.sc);
+    if (lib) r.draw(lib, ind.export, clip.frame, [1, 0, 0, 1, px, py], [...col] as Col);
+  }
+
+  /**
+   * Ghost characters of the previews and of the released plays' leftovers. They are real actor views
+   * outside the preview container, so the preview alpha does not reach them: 0x84f538 gives each view
+   * SPELL_DRAG_OBJECT_ALPHA · 0.0015 + 0.85 (characters) or · 0.01 (others) once, and 0x8e4eb4 hides
+   * their parts while the position is invalid. A leftover keeps them as they were at the release.
+   */
   ghostUnits(): { def: UnitDef; team: Team; x: number; y: number; angle: number; alpha: number }[] {
     const b = this.battleRef;
-    const pv = this.preview;
-    if (!b || !pv || pv.alpha <= 0.01) return [];
-    const card = b.defs.card(pv.card, b.levels[pv.team]);
+    if (!b) return [];
     // characters with health: ALPHA * 0.0015 + 0.85; others ALPHA * 0.01
     const a = CLIENT_GLOBALS.SPELL_DRAG_OBJECT_ALPHA;
-    return this.ghosts(b, card, pv.team, pv.x, pv.y).map((g) => ({
-      def: g.def, team: pv.team as Team, x: g.x, y: g.y, angle: g.angle,
-      alpha: pv.alpha * (g.def.hitpoints > 0 ? a * 0.0015 + 0.85 : a * 0.01),
-    }));
+    const out: { def: UnitDef; team: Team; x: number; y: number; angle: number; alpha: number }[] = [];
+    const put = (team: number, list: GhostUnit[]) => {
+      for (const g of list) {
+        out.push({ def: g.def, team: team as Team, x: g.x, y: g.y, angle: g.angle, alpha: g.def.hitpoints > 0 ? a * 0.0015 + 0.85 : a * 0.01 });
+      }
+    };
+    for (const g of this.pending) if (!g.removed) put(g.team, g.ghosts);
+    for (const pv of [this.held, this.preview]) {
+      if (!pv || !pv.valid || pv.alpha <= 0.01) continue;
+      put(pv.team, this.ghosts(b, b.defs.card(pv.card, b.levels[pv.team]), pv.team, pv.x, pv.y));
+    }
+    return out;
   }
 
   // ---------------------------------------------------------------- stage pass
@@ -467,30 +642,36 @@ export class BattleUi {
     }
     // timed announcements, children the HUD adds at the arena centre (_DAT_01a57004/8)
     this.announce?.draw(r, [Math.trunc(centreX), Math.trunc(riverY)]);
-    // drag name text (spell_placement_text): projected drop point, y + SPELL_DRAG_NAME_Y_POS / layer scale
-    const pv = this.preview;
-    if (pv && pv.alpha > 0.01 && ui.has('spell_placement_text')) {
-      const [sx, sy] = this.toStage(...this.art.gameToPx(pv.x, pv.y));
-      const yOff = CLIENT_GLOBALS.SPELL_DRAG_NAME_Y_POS / this.layout.battleScale;
-      const card = b.defs.card(pv.card, b.levels[pv.team]);
-      const name = (this.raw(pv.card)?._displayName as string | undefined) ?? pv.card;
-      const lvl = (this.art.manifest.hud.texts?.TID_SPELL_ITEM_LEVEL_SHORT ?? 'lvl.<NUMBER>').replace('<NUMBER>', String(card.level));
-      const flash = this.mana.flashT < 0.28 ? Math.min(1, Math.max(0, Math.sin(Math.min(1, this.mana.flashT * 3.5714285) * Math.PI) * 0.5)) * 255 : 0;
-      const m: Mat = [1, 0, 0, 1, sx, sy + yOff];
-      r.draw(ui, 'spell_placement_text', 0, m, [1, 1, 1, pv.alpha, 0, 0, 0], {
-        named: { mana: { hide: true } },
-        text: { txt: name, level: lvl },
-      });
-      const mc = this.manaChild(ui);
-      if (this.mana.alpha > 0 && mc) {
-        // the mana child ("have/cost" + elixir drop) has its own `txt`: draw it on its own
-        const pl = b.players[pv.team];
-        const have = b.infiniteElixir ? 10 : Math.max(0, Math.min(10, Math.floor((pl.elixir - pl.pending) / 10000)));
-        const mm: Mat = [m[0] * mc.m[0], 0, 0, m[3] * mc.m[3], m[4] + mc.m[4], m[5] + mc.m[5]];
-        r.drawId(ui, mc.id, 0, mm, [1, 1, 1, pv.alpha * this.mana.alpha, flash, flash, flash], {
-          text: { txt: `${Math.min(have, card.cost)}/${Math.min(10, card.cost)}` },
-        });
-      }
+    // drag name texts (spell_placement_text): projected drop point, y + SPELL_DRAG_NAME_Y_POS / layer scale.
+    // 0x8e4994 adds each new one at index 0 of the UI layer, so newer ones lie under older ones: the
+    // previews first, then the leftovers from newest to oldest; a leftover's text and mana child are
+    // frozen as they were at the release (nothing updates object +0x58 any more)
+    if (!ui.has('spell_placement_text')) return;
+    for (const which of [0, 1] as const) {
+      const pv = which === 0 ? this.preview : this.held;
+      const view = this.views[which];
+      if (pv && view && pv.alpha > 0.01) this.drawName(r, ui, pv.x, pv.y, this.nameText(pv, view));
+    }
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const g = this.pending[i];
+      if (!g.removed) this.drawName(r, ui, g.px, g.py, g.name);
+    }
+  }
+
+  private drawName(r: ScRenderer, ui: ScLibrary, x: number, y: number, nm: PendingGhost['name']): void {
+    const [sx, sy] = this.toStage(...this.art.gameToPx(x, y));
+    const yOff = CLIENT_GLOBALS.SPELL_DRAG_NAME_Y_POS / this.layout.battleScale;
+    const m: Mat = [1, 0, 0, 1, sx, sy + yOff];
+    r.draw(ui, 'spell_placement_text', 0, m, [1, 1, 1, nm.alpha, 0, 0, 0], {
+      named: { mana: { hide: true } },
+      text: { txt: nm.text, level: nm.level },
+    });
+    const mc = this.manaChild(ui);
+    if (nm.mana.alpha > 0 && mc) {
+      // the mana child ("have/cost" + elixir drop) has its own `txt`: draw it on its own
+      const f = nm.mana.flash;
+      const mm: Mat = [m[0] * mc.m[0], 0, 0, m[3] * mc.m[3], m[4] + mc.m[4], m[5] + mc.m[5]];
+      r.drawId(ui, mc.id, 0, mm, [1, 1, 1, nm.alpha * nm.mana.alpha, f, f, f], { text: { txt: nm.mana.text } });
     }
   }
 }

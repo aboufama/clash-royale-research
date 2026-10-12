@@ -5,8 +5,9 @@ import { Battle } from '../../core/src/index.ts';
 import { loadGameData } from '../../core/src/node.ts';
 import { FOCUS_CARDS, FOCUS_DECKS } from '../src/focus.ts';
 import {
-  type AreaActor, cardEntry, cardRaise, cardSlot, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
-  ElixirBar, HandCard, indicatorRadius, nextCardTimer, ringBand, ringStrip, stageLayout, uiEase,
+  affordableSoon, type AreaActor, cardEntry, cardRaise, cardSlot, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown,
+  DeployTimer, dropWaits, dropWaitStep, ElixirBar, HandCard, HandWiggle, indicatorRadius, MAX_SPELL_PENDING_TIME_S, nextCardTimer,
+  PENDING_GHOST_S, ringBand, ringStrip, rotScale, spellInstanceId, stageLayout, uiEase,
 } from '../src/sc/ui_port.ts';
 
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} vs ${b}`);
@@ -251,4 +252,93 @@ test('0x8dc37c next card: grayscale and NextSpellTimer seconds while the hand ti
   assert.deepEqual(nextCardTimer(1000), { gray: true, text: '1' });
   assert.deepEqual(nextCardTimer(50), { gray: true, text: '1' });
   assert.deepEqual(nextCardTimer(1001), { gray: true, text: '2' });
+});
+
+test('MAX_SPELL_PENDING_TIME: the drop waits only for elixir due within 1.1 s (0x8e2c04 / 0x8e2d50)', () => {
+  // client_globals.csv 1200 ms, stored * 0.001 as a float (0xdf3394)
+  assert.equal(MAX_SPELL_PENDING_TIME_S, Math.fround(1.2));
+  // (int)((1.2f - 0.1f) * 1000f) = 1100 ms of regeneration: 110000 / msPerElixir hundredths
+  assert.equal(affordableSoon(361, 4, 2800), true); // 361 + 39 = 400
+  assert.equal(affordableSoon(360, 4, 2800), false);
+  assert.equal(affordableSoon(322, 4, 1400), true); // + 78 (double elixir)
+  assert.equal(affordableSoon(321, 4, 1400), false);
+  assert.equal(affordableSoon(282, 4, 930), true); // + 118 (triple elixir)
+  assert.equal(affordableSoon(281, 4, 930), false);
+  assert.equal(affordableSoon(400, 4, 0), true); // no regeneration: only what is there
+  assert.equal(affordableSoon(399, 4, 0), false);
+  // waits: not affordable now, due soon, not dropped in the own back rows, time > 0
+  assert.equal(dropWaits(false, true, false), true);
+  assert.equal(dropWaits(true, true, false), false);
+  assert.equal(dropWaits(false, false, false), false);
+  assert.equal(dropWaits(false, true, true), false);
+  assert.equal(dropWaits(false, true, false, 0), false);
+});
+
+test('0x8e1408 +0x324: a waiting card is released once affordable or when the time is up', () => {
+  // counting down, not affordable yet
+  let st = dropWaitStep(MAX_SPELL_PENDING_TIME_S, 0.5, false);
+  assert.equal(st.release, false);
+  close(st.t, 0.7, 1e-6);
+  // affordable this frame: released at once, timer cleared
+  assert.deepEqual(dropWaitStep(st.t, 0.016, true), { t: 0, release: true });
+  // time up (clamped at 0) without the elixir: released anyway (the play check then refuses it)
+  st = dropWaitStep(0.01, 0.016, false);
+  assert.deepEqual(st, { t: 0, release: true });
+  // nothing while not waiting
+  assert.deepEqual(dropWaitStep(0, 0.016, true), { t: 0, release: false });
+  // the engine's elixir reaches a 4-cost card from 3.62 within the wait: 22 ticks of 178
+  const need = Math.ceil((40000 - 36200) / 178);
+  assert.ok(need * 0.05 <= MAX_SPELL_PENDING_TIME_S, `${need} ticks`);
+  assert.equal(PENDING_GHOST_S, 3);
+});
+
+test('full-elixir hand wiggle (0x907654 / 0x9077f0 / 0x907ab0 / 0x123e8b4)', () => {
+  const w = new HandWiggle();
+  const s = 0.6;
+  w.add(1, s, s, spellInstanceId('Wizard'));
+  w.add(1, 9, 9, 0); // already listed: unchanged
+  w.add(2, s, s, spellInstanceId('Knight'));
+  w.update(0.1);
+  const deg = (t: number, id: number) => Math.sin(t * 28 + (id % 10000) * 123) * 0.45;
+  const a = w.of(1)!;
+  close(a.deg, deg(Math.fround(0.1), 17), 1e-5);
+  assert.equal(a.sx, s);
+  close(w.of(2)!.deg, deg(Math.fround(0.1), 0), 1e-5);
+  assert.ok(Math.abs(a.deg) <= 0.45);
+  // the clock keeps running from the HUD's creation; removal drops the entry
+  w.update(0.25);
+  close(w.clock, 0.35, 1e-6);
+  close(w.of(2)!.deg, deg(Math.fround(0.35), 0), 1e-5);
+  w.remove(2);
+  assert.equal(w.of(2), null);
+  // a non-negative index ends the entry at clock + 0.1122 i
+  w.add(3, s, s, 0, 2);
+  w.update(0.2);
+  assert.ok(w.of(3) !== null);
+  w.update(0.1);
+  assert.equal(w.of(3), null);
+  // matrix: rotation times scale, a = cos sx, b = sin sy, c = -sin sx, d = cos sy
+  const [ma, mb, mc, md] = rotScale(0.45, 2, 3);
+  const r = 0.45 * Math.PI / 180;
+  close(ma, Math.cos(r) * 2, 1e-6);
+  close(mb, Math.sin(r) * 3, 1e-6);
+  close(mc, -Math.sin(r) * 2, 1e-6);
+  close(md, Math.cos(r) * 3, 1e-6);
+  w.reset();
+  assert.equal(w.clock, 0);
+  assert.equal(w.of(1), null);
+});
+
+test('card global IDs: instance = named row of the card table (LogicData +0x40 % 10000)', () => {
+  assert.equal(spellInstanceId('Knight'), 0);
+  assert.equal(spellInstanceId('Prince'), 16);
+  assert.equal(spellInstanceId('Wizard'), 17); // the Prince's continuation row has no instance
+  assert.equal(spellInstanceId('MiniPekka'), 18);
+  assert.equal(spellInstanceId('Miner'), 32);
+  assert.equal(spellInstanceId('MightyMiner'), 65);
+  assert.equal(spellInstanceId('Cannon'), 0);
+  assert.equal(spellInstanceId('Tesla'), 6);
+  assert.equal(spellInstanceId('Fireball'), 0);
+  assert.equal(spellInstanceId('Log'), 11);
+  assert.equal(spellInstanceId('BarbLog'), 15);
 });
