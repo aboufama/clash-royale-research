@@ -112,8 +112,15 @@ export interface AnimState {
   /** stop-and-go walking: half-cycle toggle (+0xa0c) and last stopped flag (+0xa14) */
   stepToggle: number;
   stopped: boolean;
-  /** TryToFinishAttackAnimation: view-side attack clock (+0xa94) while finishing */
+  /**
+   * The actor state this view update returned last frame (view +0xa84: 0x839b08 stores the result of
+   * vt+0x2a8 = 0x840d44, local_128; -1 from the ctor 0x836860): the actor state, or 2 while
+   * TryToFinishAttackAnimation is finishing a swing. A finish starts only when it is 2.
+   */
+  ret: number;
+  /** this frame was a TryToFinishAttackAnimation finish (0x840d44's bVar5 @0x840e38) */
   finishing: boolean;
+  /** the view-side attack clock (+0xa94, float): the last shown attack time, run on while finishing */
   finishClock: number;
   /** facing angle recorded at the first path search and its 0.3 s hold (view +0x4e0 / +0x4e4, 0x845bb0) */
   walkAngle: number;
@@ -132,7 +139,7 @@ export interface AnimState {
 
 export function newAnimState(): AnimState {
   return { angle: -1, hold: 0, rot: 0, sign: 1, action: -1, actionStart: 0, stepToggle: 0, stopped: false,
-    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false, scale: 50, midSwing: false, shakes: null };
+    ret: -1, finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false, scale: 50, midSwing: false, shakes: null };
 }
 
 /** Logic inputs for one character view frame (native names in brackets). */
@@ -318,19 +325,23 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
 
   // action slot (state -> slot), with the clip-exists fallbacks of the native
   let slot = 1;
-  let st = i.state;
-  // TryToFinishAttackAnimation: after the attack state ends, keep playing the swing on a view clock
-  // continued from the last shown attack time until the clip comes back to frame 0; only while the buff
-  // time scale is above 0 (0x840d44 @0x840e24: no buff component or Buff_timeScale(buff, 50) > 0), so a
-  // frozen or stunned unit stops finishing
+  const st = i.state;
+  // TryToFinishAttackAnimation (0x840d44 @0x840de0): an actor in state 0 or 1 whose view returned 2 last
+  // frame (+0xa84) finishes the swing: the returned state stays 2 and the last action (+0x4d4) runs on the
+  // view clock (@0x8418fc) until the attack branch ends it (@0x8436d8, below); only while the buff time
+  // scale is above 0 (@0x840e24: no buff component or Buff_timeScale(buff, 50) > 0), so a frozen or stunned
+  // unit stops finishing. The returned state, not the shown action, arms it: the action stays the attack on
+  // the frame the finish ends, and re-arming from it restarted the finish every frame, so the view clock ran
+  // on into new swings while the unit walked (the 2026-10-12 Valkyrie report).
   const scale = i.scale ?? 50;
-  if (st < 2 && (s.action === 2 || s.finishing) && art.tryToFinishAttackAnimation && scale > 0) {
-    s.finishing = true;
-    st = 2;
-  } else {
-    s.finishing = false;
-  }
-  if (st === 4) slot = slotArt(art, team, 5) ? 5 : 1;
+  const finishing = (st === 0 || st === 1) && s.ret === 2 && !!art.tryToFinishAttackAnimation && scale > 0;
+  s.finishing = finishing;
+  let ret = finishing ? 2 : st;
+  if (finishing) {
+    // the last action as it was (+0x4d4: the attack, or the idle fallback of a character without an attack
+    // clip, whose finish the client never ends: no supported character has one)
+    slot = s.action;
+  } else if (st === 4) slot = slotArt(art, team, 5) ? 5 : 1;
   else if (st === 2) slot = slotArt(art, team, 2) ? 2 : 1;
   else if (st === 5) slot = slotArt(art, team, 4) ? 4 : 0;
   else if (st === 1) {
@@ -340,7 +351,7 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   let r = slotArt(art, team, slot);
   if (!r) { slot = 1; r = slotArt(art, team, 1); }
   if (!r) { slot = 0; r = slotArt(art, team, 0); }
-  if (!r) return null;
+  if (!r) { s.ret = ret; return null; }
   const [key, a] = r;
 
   // RotateAngleSpeed: the shown angle turns toward the facing at that many degrees per second
@@ -367,6 +378,9 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   const frameDur = 1 / a.fps;
   let frame = t(i.clock / frameDur);
   let swing = false;
+  // every action other than the attacks (2, 6, 7, 8) clears +0xc68 (@0x84295c), so a swing cut by walking is
+  // not resumed by TryToFinishAttackAnimationBeforeNextAttack when the next attack starts
+  if (slot !== 2) s.midSwing = false;
 
   if (slot === 2) {
     const clipMs = t((a.frames * 1000) / a.fps);
@@ -378,33 +392,46 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
     let time = i.atk;
     let hs = dataHs;
     let extra = 0;
-    // +0xa94 += dt · (+0xa98 · 20): the step of the last attacking frame (stored @0x842850), float32 (0x840d44 @0x8418fc)
-    const finishStep = () => { s.finishClock = Math.fround(s.finishClock + Math.fround(dt * Math.fround(s.scale * 20))); return t(s.finishClock); };
-    let f: { frame: number; done: boolean };
-    if (s.finishing) {
-      // TryToFinishAttackAnimation out of the attack state: the view clock, HitSpeed, no finish time (local_124 = 0)
+    // the attack step this frame stores in +0xa98 (local_144, @0x842850)
+    let step = scale;
+    // +0xa94 = fmadd((float)(+0xa98 · 20), dt, +0xa94), one rounding (@0x841920 / @0x8427d0): the view clock runs at
+    // the step of the last attacking frame; the attack frame is taken at its truncation
+    const finishStep = () => {
+      s.finishClock = Math.fround(Math.fround(s.scale * 20) * Math.fround(dt) + s.finishClock);
+      return t(s.finishClock);
+    };
+    // 0x840d44's bVar5: a TryToFinishAttackAnimation finish, or a swing finished by TryToFinishAttackAnimationBeforeNextAttack
+    let finished = finishing;
+    if (finishing) {
+      // @0x8418fc: the view clock, the data HitSpeed (+0x418), no finish time (local_124 = 0); +0xa98 kept
+      step = s.scale;
       time = finishStep();
-      f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, 0);
-      if (f.frame === 0) s.finishing = false;
     } else {
       if (i.atkPrev !== i.atk) time = t(i.atkPrev + i.alpha * (i.atk - i.atkPrev));
       extra = i.finish > 0 ? t(i.alpha * 50) + i.finish : 0;
-      f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, extra);
-      if (f.frame === 0 && s.midSwing && art.tryToFinishAttackAnimationBeforeNextAttack) {
-        // 0x8427a8: the timer's frame is back at 0 (a new cycle, or the timer restarted) while the last frame
-        // was not: the old swing goes on, on the view clock +0xa94 with HitSpeed, until it reaches frame 0;
-        // +0xa98 keeps its value
-        time = finishStep();
-        hs = dataHs;
-        f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, extra);
-        if (f.frame === 0) s.midSwing = false;
-      } else {
-        // 0x842828: +0xc68 = frame > 0, +0xa94 = the shown attack time, +0xa98 = this frame's step
-        s.midSwing = f.frame > 0;
-        s.finishClock = time;
-        s.scale = scale;
-      }
     }
+    let f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, extra);
+    if (f.frame === 0 && s.midSwing && art.tryToFinishAttackAnimationBeforeNextAttack) {
+      // @0x8427a8: the frame is back at 0 (a new cycle, the timer restarted, or a finish that came back to its
+      // start) while the last frame was not: the old swing goes on, on the view clock +0xa94 (advanced again)
+      // with the data HitSpeed and the same finish time, until it reaches frame 0; +0xa98 keeps its value
+      step = s.scale;
+      time = finishStep();
+      hs = dataHs;
+      f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, extra);
+      if (f.frame === 0) s.midSwing = false;
+      finished = true;
+    } else {
+      // @0x842828: +0xc68 = frame > 0, +0xa94 = (float) the shown attack time (the finish clock truncated)
+      s.midSwing = f.frame > 0;
+      s.finishClock = time;
+    }
+    s.scale = step;
+    // @0x8436d8: a finish ends on frame 0, on a frame before the action frame (uStack_cc, the label 0x845244
+    // found) or past the clip: the view returns the actor's own state, so the next frame shows its action.
+    // This frame still shows the attack clip. A finish therefore plays the follow-through only, never a new
+    // wind-up.
+    if (finished && (f.frame === 0 || f.frame < af || f.frame >= a.frames)) ret = st;
     frame = f.frame;
     swing = f.done;
     // AttackShakeTime (0x842c44): while the swing flag is up and was up last frame (+0xa15), the clip sits at
@@ -482,6 +509,7 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   if (frame < 0) frame += a.frames;
   const attackStart = swing && !s.swing;
   s.swing = swing;
+  s.ret = ret; // 0x839b08: +0xa84 = 0x840d44's result
   const exp = `${a.export}_${dir.idx + 1}`;
   const out: AnimFrame = { export: exp, frame, mirror: dir.sign < 0, action: slot, key, attackStart };
   const sh = s.shakes?.get(exp);

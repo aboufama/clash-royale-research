@@ -322,6 +322,12 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    happens only while the turret has sign +1 and no recoil (invisible). The Electro Wizard beam overshoot
    could not be reproduced (4,416 beam frames of an AI battle and the single / two-target / tower / red-side
    cases end within 8 px of their target).
+   Fixed 2026-10-12 (owner: "the valk still swings as it moves", `sim/viewer/test/finish_anim.test.ts`): the
+   Valkyrie's TryToFinishAttackAnimation is armed by the state 0x840d44 returned last frame (+0xa84, @0x840de0)
+   and ends on frame 0, a frame before the action frame or past the clip (@0x8436d8); the port re-armed it from
+   the shown action and ended it on frame 0 only, so after her first attack she spun for as long as she walked.
+   She now plays at most the rest of one follow-through (as the client does) and then her run clip. No other
+   supported character has the flag; Knight, Mini P.E.K.K.A, Barbarians, Giant and P.E.K.K.A were checked.
 
 ## Open questions for the owner
 
