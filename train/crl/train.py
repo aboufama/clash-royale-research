@@ -296,7 +296,7 @@ def main(argv=None):
         N = len(idx)
         adv_n = (adv - adv.mean()) / (adv.std() + 1e-8)
         dev = lambda a, dt=None: torch.from_numpy(np.ascontiguousarray(a)).to(device, dtype=dt)  # noqa: E731
-        obs_all = torch.from_numpy(buf.obs[idx])  # float16, moved per minibatch
+        obs_all = torch.from_numpy(buf.obs[idx]).to(device)  # float16, the whole rollout on the device
         sm_all, tm_all = dev(buf.slot_mask[idx]), dev(buf.tile_mask[idx])
         slot_all, tile_all = dev(buf.slot[idx]), dev(buf.tile[idx])
         logp_old, v_old = dev(buf.logp[idx]), dev(buf.value[idx])
@@ -309,7 +309,7 @@ def main(argv=None):
             for start in range(0, N, args.minibatch):
                 mb = perm[start:start + args.minibatch]
                 mbd = mb.to(device)
-                o = obs_all[mb].to(device, non_blocking=True).float()
+                o = obs_all[mbd].float()
                 with autocast():
                     logp, ent_s, ent_t = run_actor.evaluate(o, sm_all[mbd], tm_all[mbd], slot_all[mbd], tile_all[mbd])
                     v = run_critic(o).float()

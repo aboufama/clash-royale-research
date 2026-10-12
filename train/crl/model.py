@@ -86,7 +86,19 @@ class Encoder(nn.Module):
         self.norm = nn.LayerNorm(d)
         self.n_cards = S["N_CARDS"]
 
+    @staticmethod
+    def trim(x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Cut each padded block to the last slot used anywhere in the batch (slots are filled from 0)."""
+        x = dict(x)
+        for f, i in (("unit_f", "unit_id"), ("proj_f", "proj_id"), ("aoe_f", "aoe_id"), ("pend_f", "pend_id"),
+                     ("priv_pend_f", "priv_pend_id")):
+            used = torch.nonzero((x[i][..., 0] > 0).any(0))
+            n = int(used.max()) + 1 if used.numel() else 1
+            x[f], x[i] = x[f][:, :n], x[i][:, :n]
+        return x
+
     def forward(self, x: dict[str, torch.Tensor]):
+        x = self.trim(x)
         dev = x["glob"].device
         B = x["glob"].shape[0]
         T = lambda i: self.e_type.weight[i]  # noqa: E731
