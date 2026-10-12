@@ -462,6 +462,8 @@ export interface Command {
   submitTick: number;
   /** Hand slot used (-1 for sandbox spawns that bypass the hand). */
   slot: number;
+  /** Deck index of the played card (-1 for sandbox spawns); it leaves the hand when the play commits. */
+  deck: number;
   cost: number;
 }
 

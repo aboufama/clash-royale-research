@@ -279,7 +279,7 @@ export class BattleUi {
     }
     const p = b.players[team];
     const sel = this.preview ? b.defs.card(this.preview.card, b.levels[team])
-      : this.hud.selected >= 0 ? p.deck[p.hand[this.hud.selected]] : null;
+      : this.hud.selected >= 0 ? p.deck[p.hand[this.hud.selected]] ?? null : null;
     const fullLane = sel ? flag(this.raw(sel.name), 'FullLaneDeploy') : false;
     this.grid.update(dt, actors, team, this.art.flip, { fullLane });
     this.areaAlpha = deployAreaAlpha(this.areaAlpha, deployAreaShown(sel ? this.spellOf(sel) : null), dt);

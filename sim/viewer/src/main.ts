@@ -330,6 +330,8 @@ class App {
     if (err) { console.info('play rejected:', err); return; }
     const cmd = b.commands[b.commands.length - 1];
     const ui = this.ui;
+    // the placed card hides in its slot until the slot changes (0xbe1634 -> 0x8d5438 -> 0x8e2868)
+    if (ui && team === ui.hud.team) ui.hud.played(slot);
     if (ui && cmd) {
       const pos = b.deployPlace(team, cmd.card, x, y) ?? { x, y };
       ui.markPending(team, cmd.card.name, pos.x, pos.y, b.tick);
@@ -383,11 +385,16 @@ class App {
     const p = b.players[1];
     for (let s = 0; s < 4 && s < this.handEls.length; s++) {
       const card = p.deck[p.hand[s]];
-      this.setCard(this.handEls[s], card);
+      const el = this.handEls[s];
+      // an empty slot (card played, not yet refilled) or a card whose play has not committed yet
+      const hidden = !card || b.commands.some((c) => c.team === 1 && c.slot === s);
+      el.style.visibility = hidden ? 'hidden' : '';
+      if (!card) continue;
+      this.setCard(el, card);
       const ok = b.infiniteElixir || p.elixir - p.pending >= card.cost * 10000;
-      this.handEls[s].classList.toggle('disabled', !ok || b.tick < p.slotReady[s]);
+      el.classList.toggle('disabled', !ok);
     }
-    if (this.nextEl) this.setCard(this.nextEl, p.deck[p.queue[0]]);
+    if (this.nextEl && p.queue.length) this.setCard(this.nextEl, p.deck[p.queue[0]]);
     const avail = Math.max(0, p.elixir - p.pending);
     // DOM writes only on change (and the status text a few times a second): each write restyles and
     // repaints the panel
@@ -411,7 +418,9 @@ class App {
   private startDomDrag(ev: PointerEvent, team: number, slot: number, paletteCard: string | null): void {
     ev.preventDefault();
     const p = this.battle.players[team];
-    const card = paletteCard ?? p.deck[p.hand[slot]].name;
+    const handCard = slot >= 0 ? p.deck[p.hand[slot]] : undefined;
+    if (!paletteCard && !handCard) return; // empty slot
+    const card = paletteCard ?? handCard!.name;
     this.art?.prewarm(cardArtNames(this.battle.defs.card(card, 11)));
     const ghost = document.createElement('div');
     ghost.className = 'card dragghost';

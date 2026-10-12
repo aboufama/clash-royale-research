@@ -13,7 +13,7 @@ import type { BattleArt } from './sc/battle_art.ts';
 import type { ScLibrary } from './sc/library.ts';
 import type { DrawOptions, ScRenderer } from './sc/renderer.ts';
 import { ClipPlayer } from './sc/anim.ts';
-import { cardRaise, cardSlot, ElixirBar, type StageLayout, stageLayout, uiEase } from './sc/ui_port.ts';
+import { type CardStart, cardEntry, cardRaise, cardSlot, ElixirBar, HandCard, nextCardTimer, type StageLayout, stageLayout } from './sc/ui_port.ts';
 
 type Rect = [number, number, number, number];
 
@@ -90,9 +90,10 @@ function xform(m: Mat, r: Rect): Rect {
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 
-/** Per-card hand state: selection raise timer (+0x320), the card shown and its cycle animation
- * (0x8e1408: from the next-card slot over +0x354 = 0.375 s, started by 0x8e0a80 / 0x8e0aa8). */
-interface CardState { card: number; raiseT: number; selected: boolean; t: number; dur: number }
+/** The four hand cards as the HUD setup 0x8da088 deals them: entry 0.375 s, delays 0.6 + 0.18 i s. */
+function dealHand(): HandCard[] {
+  return [0, 1, 2, 3].map((i) => { const c = new HandCard(); c.deal(0.375, i * 0.18 + 0.6); return c; });
+}
 
 export interface HudDrag {
   slot: number;
@@ -116,13 +117,17 @@ export class Hud {
   selected = -1;
   drag: HudDrag | null = null;
   opponentName = 'Opponent';
-  private cards: CardState[] = [0, 1, 2, 3].map((i) => ({ card: -1, raiseT: 1, selected: false, t: -(i * 0.18 + 0.6), dur: 0.375 }));
-  private cardH = 198;
+  private cards: HandCard[] = dealHand();
+  /** hand card height at scale 1 (card_item_frame, see cardSlot) and its bounds (hit test) */
+  private cardH = 160.35;
+  private cardBounds: Rect | null = null;
   private area: Rect | null = null;
   private next: Rect | null = null;
   private bar: { len: number; body: ChildInfo; end: ChildInfo; ghost: ChildInfo; tip: ChildInfo | null;
     flow: ChildInfo | null; dividers: ChildInfo[] } | null = null;
   private amountTxt: Mat | null = null;
+  /** HUD_player with every top-level child but NextSpellTimer hidden */
+  private timerOnly: NonNullable<DrawOptions['named']> | null = null;
   private tip = new ClipPlayer(1, 30);
   private flow = new ClipPlayer(1, 30);
   private warning = new ClipPlayer(1, 30);
@@ -137,8 +142,8 @@ export class Hud {
     this.art = art;
     const ui = this.ui;
     if (!ui) return;
-    const cb = ui.frameBounds('spell_card_ingame', 0);
-    if (cb) this.cardH = cb[3] - cb[1];
+    const cb = ui.frameBounds('card_item_frame', 0);
+    if (cb) { this.cardH = cb[3] - cb[1]; this.cardBounds = cb as Rect; }
     this.area = childInfo(ui, 'HUD_player', ['cardArea'])?.textRect ?? null;
     this.next = childInfo(ui, 'HUD_player', ['nextCard1'])?.textRect ?? null;
     const p = (n: string) => childInfo(ui, 'HUD_player', ['elixir_bar', n]);
@@ -149,6 +154,17 @@ export class Hud {
       this.bar = { len: bg.bounds[2] - bg.bounds[0], body, end, ghost, tip: p('bar_tip'), flow: p('bar_flow'), dividers };
     }
     this.amountTxt = childInfo(ui, 'HUD_player', ['elixir_bar', 'elixirBarLeftNumbers', 'elixirAmount', 'txt'])?.m ?? null;
+    const hp = ui.clip('HUD_player');
+    if (hp?.names) {
+      const only: NonNullable<DrawOptions['named']> = {};
+      let named = true;
+      for (let i = hp.frameStart[0]; i < hp.frameStart[1]; i++) {
+        const n = hp.names[hp.elements[i * 3]];
+        if (!n) named = false;
+        else if (n !== 'NextSpellTimer') only[n] = { hide: true };
+      }
+      if (named) this.timerOnly = only;
+    }
     this.tip = new ClipPlayer(this.childFrames(ui, 'HUD_player', ['elixir_bar', 'bar_tip']), 30);
     this.flow = new ClipPlayer(this.childFrames(ui, 'HUD_player', ['elixir_bar', 'bar_flow']), 30);
     this.warning = new ClipPlayer(this.childFrames(ui, 'HUD_player', ['elixir_warning']), 30);
@@ -196,21 +212,34 @@ export class Hud {
     return [this.layout.stageW * 0.5, this.layout.stageH];
   }
 
-  /** Stage position and scale of hand slot i (with the selection raise). */
+  /**
+   * Start transform of every entry (0x8e0a80 from the HUD setup 0x8da088): the next card's position
+   * (nextCard1's middle, set by vt+0x28 before the hand is built) and scale x / y = next card width /
+   * card width and height / card height. The next card holds no card yet when the setup measures it
+   * (its card is set by the first hand update 0x8dc37c -> 0x909fbc), so its bounds collapse to its
+   * position (0x125a0f4 with nothing drawn) and both scales are 0: a new card grows from that point.
+   */
+  private get entryStart(): CardStart | null {
+    const nr = this.next;
+    if (!nr) return null;
+    return { x: (nr[0] + nr[2]) / 2, y: (nr[1] + nr[3]) / 2, sx: 0, sy: 0 };
+  }
+
+  /**
+   * Stage position and scale of hand slot i (entry animation or selection raise), or null while the
+   * card is not shown (empty slot, hidden after a play, before its battle-start delay).
+   */
   slotPos(i: number): { x: number; y: number; s: number } | null {
     if (!this.area) return null;
+    const c = this.cards[i];
+    if (!c.visible) return null;
     const [ox, oy] = this.playerOrigin;
     const p = cardSlot(this.area, i, this.cardH);
-    const c = this.cards[i];
-    if (c.t < c.dur && this.next) {
-      // cycle-in from the next card (0x8e1408): x eases with overshoot, y and scale lerp over 4x the time
-      if (c.t < 0) return null;
-      const nr = this.next;
-      const fx = (nr[0] + nr[2]) / 2, fy = (nr[1] + nr[3]) / 2;
-      const fs = (nr[3] - nr[1]) / 1.34 / this.cardH;
-      const k = Math.max(0, Math.min(1, c.t / c.dur)), k4 = Math.max(0, Math.min(1, (c.t * 4) / c.dur));
-      const x = uiEase(fx, p.x, k, 1 / 3, 20, 2 / 3);
-      return { x: ox + x, y: oy + fy + k4 * (p.y - fy), s: fs + k4 * (p.s - fs) };
+    const from = this.entryStart;
+    if (c.t < c.dur && from) {
+      const e = cardEntry(c.t, c.dur, from, p.x, p.y, p.s);
+      if (!e) return null;
+      return { x: ox + e.x, y: oy + e.y, s: e.sx };
     }
     const y = cardRaise(p.y, c.raiseT, c.selected);
     return { x: ox + p.x, y: oy + y, s: p.s };
@@ -218,8 +247,7 @@ export class Hud {
 
   /** Hand slot under a stage point, or -1. */
   cardAt(x: number, y: number): number {
-    const ui = this.ui;
-    const b = ui?.frameBounds('spell_card_ingame', 0);
+    const b = this.cardBounds;
     if (!b) return -1;
     for (let i = 0; i < 4; i++) {
       const p = this.slotPos(i);
@@ -237,7 +265,7 @@ export class Hud {
 
   /** New battle: cards cycle in again with the start delays (0x8e0aa8: 0.6 + 0.18 i s). */
   reset(): void {
-    this.cards = [0, 1, 2, 3].map((i) => ({ card: -1, raiseT: 1, selected: false, t: -(i * 0.18 + 0.6), dur: 0.375 }));
+    this.cards = dealHand();
     this.selected = -1;
     this.drag = null;
     this.elixir.last = 0;
@@ -247,11 +275,20 @@ export class Hud {
   }
 
   select(slot: number): void {
-    for (let i = 0; i < 4; i++) {
-      const sel = i === slot;
-      if (this.cards[i].selected !== sel) { this.cards[i].selected = sel; this.cards[i].raiseT = 0; }
-    }
+    for (let i = 0; i < 4; i++) this.cards[i].select(i === slot);
     this.selected = slot;
+  }
+
+  /**
+   * A play from hand slot `slot` was accepted: the card hides until its slot changes (0x8e2868, 3 s at
+   * most) and loses its selection (0x8e1004 after a placement).
+   */
+  played(slot: number): void {
+    const c = this.cards[slot];
+    if (!c) return;
+    c.played();
+    c.select(false);
+    if (this.selected === slot) this.selected = -1;
   }
 
   update(dt: number, b: Battle): void {
@@ -265,16 +302,10 @@ export class Hud {
     if (this.tipVisible && !this.tip.playing) this.tipVisible = false;
     this.flow.advance(dt);
     this.warning.advance(dt);
+    // hand cards (0x8dc37c -> 0x8e1408 per slot): the logic hand's card, -1 while the slot is empty
     for (let i = 0; i < 4; i++) {
       const c = this.cards[i];
-      c.raiseT += dt;
-      const di = p.hand[i];
-      if (c.card !== di) {
-        // a new card in this slot cycles in from the next-card position (battle start keeps its delay)
-        if (c.card !== -1) c.t = -0;
-        c.card = di;
-      }
-      if (c.t < c.dur) c.t += dt;
+      if (c.update(dt, p.hand[i] ?? -1, this.drag?.slot === i) && this.selected === i) this.selected = -1;
     }
     for (let t = 0; t < 2; t++) {
       const cr = b.players[t === 0 ? this.team : 1 - this.team].crowns;
@@ -341,7 +372,10 @@ export class Hud {
     // bottom: HUD_player
     const [ox, oy] = this.playerOrigin;
     const hm: Mat = [1, 0, 0, 1, ox, oy];
+    // next card and NextSpellTimer follow the hand timer (0x8dc37c)
+    const nt = nextCardTimer(p.cycleTimer);
     const named: NonNullable<DrawOptions['named']> = {
+      // NextSpellTimer is drawn after the next card (below)
       darken: { hide: true }, ability_location: { hide: true }, NextSpellTimer: { hide: true },
       panel: { lib: ui, export: 'panel_ingame_blue', frame: 0 },
       bar_refund: { hide: true },
@@ -380,15 +414,20 @@ export class Hud {
         TID_MAX_ELIXIR: this.text('TID_MAX_ELIXIR', { MAX_MANA: 10 }),
       },
     });
-    // next card (nextCard1: scaled to the rect height / (card item height * 1.34), 0x8da088)
+    // next card (0x907dc8 at nextCard1's middle, scale = rect height / (card_item_frame height * 1.34),
+    // 0x8da088 / 0x90a6bc): the queue's head (0xfa4170), rebuilt at once when it changes (0x909fbc), in
+    // grayscale while the hand timer runs
     if (this.next) {
       const nr = this.next;
-      const card = p.deck[p.queue[0]]?.name;
+      const card = p.queue.length ? p.deck[p.queue[0]]?.name : undefined;
       const s = (nr[3] - nr[1]) / 1.34 / this.cardH;
       const cx = (nr[0] + nr[2]) / 2, cy = (nr[1] + nr[3]) / 2;
-      const cb = ui.frameBounds('spell_card_ingame', 0);
-      const mid = cb ? (cb[1] + cb[3]) / 2 : 0;
-      if (card) this.art.drawCard(r, card, matMul(hm, [s, 0, 0, s, cx, cy - mid * s]), { noCost: true });
+      if (card) this.art.drawCard(r, card, matMul(hm, [s, 0, 0, s, cx, cy]), { noCost: true, grayscale: nt.gray });
+    }
+    // the next card sits at nextCard1's place in HUD_player's children (0x125299c at its index), so the
+    // later NextSpellTimer field draws over it
+    if (nt.text !== null && this.timerOnly) {
+      r.draw(ui, 'HUD_player', 0, hm, WHITE, { named: this.timerOnly, text: { NextSpellTimer: nt.text } });
     }
     // hand: the elixir the cards see (0xfa1d10) is (elixir − pending plays, at most MAX_MANA) / 100,
     // 0 below 1; a card is playable at cost · 100, else its RadialFill shows shown / (cost · 100)
@@ -402,8 +441,7 @@ export class Hud {
       if (this.drag && this.drag.slot === i) continue; // drawn at the pointer
       const need = def.cost * 100;
       const ok = b.infiniteElixir || shown >= need;
-      const ready = b.tick >= p.slotReady[i];
-      this.art.drawCard(r, def.name, [pos.s, 0, 0, pos.s, pos.x, pos.y], { dim: !ok || !ready, fill: ok ? null : shown / need });
+      this.art.drawCard(r, def.name, [pos.s, 0, 0, pos.s, pos.x, pos.y], { dim: !ok, fill: ok ? null : shown / need });
     }
     // emote button
     r.draw(ui, 'HUD_taunt', 0, [1, 0, 0, 1, L.stageW * 0.5, L.stageH], WHITE, {
@@ -413,7 +451,7 @@ export class Hud {
     if (this.drag && this.drag.cardScale > 0) {
       const d = this.drag;
       const pos = this.slotPos(d.slot);
-      const s = (pos?.s ?? 0.64) * d.cardScale;
+      const s = (pos?.s ?? (this.area ? cardSlot(this.area, d.slot, this.cardH).s : 1)) * d.cardScale;
       // card visual at the pointer plus the grab offset scaled with the card (0x8e1fb8 +0x2c8/+0x2cc)
       this.art.drawCard(r, d.card, [s, 0, 0, s, d.x + d.gx * d.cardScale, d.y + d.gy * d.cardScale], { alpha: d.cardScale });
     }

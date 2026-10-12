@@ -2,8 +2,9 @@
 // seeded RNG, stable (id-ordered) iteration. Headless and browser share this code.
 //
 // Per-tick order follows the native world loop (docs/MECHANICS_BRIEF.md §8):
-//   1. command manager: commit commands aged >= 20 ticks (debit elixir, spawn)
-//   2. elixir regeneration (after commits: native debit observations)
+//   1. command manager: commit commands aged >= 20 ticks (debit elixir, spawn, card leaves the hand)
+//   2. King tower update parts: hand refill tick, then elixir regeneration (after commits: native
+//      debit observations)
 //   3. world tick: attack updates for every actor, then actor/movement updates,
 //      projectile updates, then the damage flush (damage applied end of tick)
 //   4. end check
@@ -51,10 +52,11 @@ export interface Player {
   pending: number;
   crowns: number;
   deck: CardDef[];
-  hand: number[]; // 4 deck indices
+  /** 4 deck indices; -1 = an empty slot (its card left when its play committed, refilled by handTick). */
+  hand: number[];
   queue: number[]; // remaining deck indices in cycle order (queue[0] = next card)
-  /** Tick from which each hand slot may be played (NextSpellCooldown). */
-  slotReady: number[];
+  /** Hand fill timer in ms (player +0x208, 0xfa5b4c): an empty slot is refilled once it runs out. */
+  cycleTimer: number;
   king: Unit;
   princess: [Unit, Unit]; // [left (x<9000), right]
 }
@@ -66,7 +68,7 @@ export interface BattleResult {
 }
 
 export type PlayError =
-  | 'ended' | 'bad-slot' | 'slot-cooldown' | 'elixir' | 'position' | 'unsupported';
+  | 'ended' | 'bad-slot' | 'empty-slot' | 'pending' | 'elixir' | 'position' | 'unsupported';
 
 /** Native command delay: commands commit when aged >= 20 ticks [OBS+STAT]. */
 export const COMMAND_DELAY_TICKS = 20;
@@ -183,7 +185,7 @@ export class Battle {
         deck,
         hand: order.slice(0, 4),
         queue: order.slice(4),
-        slotReady: [0, 0, 0, 0],
+        cycleTimer: 0,
         king: null as unknown as Unit,
         princess: [null, null] as unknown as [Unit, Unit],
       };
@@ -249,17 +251,22 @@ export class Battle {
     return Math.floor((this.maxElixir * TICK_MS) / fullBar);
   }
 
-  nextCardCooldownTicks(): number {
+  /**
+   * Hand fill cooldown in ms: the timeline's NextSpellCooldownMS for the current
+   * NextSpellCooldownLength section (timeline +0x58, set from those columns by 0xd567ac and read by
+   * 0xd56790). The section switch follows the match clock (D: the native switch tick is not traced).
+   */
+  nextCardCooldownMs(): number {
     const raw = this.timeline.raw;
     const lens = (raw.NextSpellCooldownLength as number[] | undefined) ?? [];
     const ms = (raw.NextSpellCooldownMS as number[] | undefined) ?? [];
     let t = 0;
     const sec = this.timeMs / 1000;
     for (let i = 0; i < ms.length; i++) {
-      if (sec < t + (lens[i] ?? 0)) return Math.ceil(ms[i] / TICK_MS);
+      if (sec < t + (lens[i] ?? 0)) return ms[i];
       t += lens[i] ?? 0;
     }
-    return ms.length ? Math.ceil(ms[ms.length - 1] / TICK_MS) : 0;
+    return ms.length ? ms[ms.length - 1] : 0;
   }
 
   /**
@@ -457,7 +464,10 @@ export class Battle {
     if (this.result) return 'ended';
     if (slot < 0 || slot > 3) return 'bad-slot';
     const p = this.players[team];
-    if (this.tick < p.slotReady[slot]) return 'slot-cooldown';
+    if (p.hand[slot] < 0) return 'empty-slot';
+    // a played card stays in its slot until its play commits; the client hides it until the slot
+    // changes (0x8e2868 hide timer, 0x8e1408), so it cannot be played again meanwhile
+    for (const c of this.commands) if (c.team === team && c.slot === slot) return 'pending';
     const card = p.deck[p.hand[slot]];
     if (card.unsupported.length) return 'unsupported';
     if (!this.infiniteElixir && p.elixir - p.pending < card.cost * ELIXIR_ONE) return 'elixir';
@@ -465,7 +475,10 @@ export class Battle {
     return this.deployPlace(team, card, x, y) ?? 'position';
   }
 
-  /** Play the card in hand slot `slot` at (x, y). It commits 20 ticks later. */
+  /**
+   * Play the card in hand slot `slot` at (x, y). It commits 20 ticks later; only then does the card
+   * leave the hand (cycleOut) and the hand timer refill the slot (handTick), as in 0xd77504.
+   */
   play(team: number, slot: number, x: number, y: number): PlayError | null {
     const pos = this.checkPlay(team, slot, x, y);
     if (typeof pos === 'string') return pos;
@@ -474,12 +487,8 @@ export class Battle {
     const card = p.deck[di];
     const cost = this.infiniteElixir ? 0 : card.cost * ELIXIR_ONE;
     p.pending += cost;
-    // Cycle: played card to the back of the queue, next card into the slot.
-    p.queue.push(di);
-    p.hand[slot] = p.queue.shift()!;
-    p.slotReady[slot] = this.tick + this.nextCardCooldownTicks();
     // the command carries the input position; the deploy check runs again when it commits
-    this.commands.push({ team, card, x, y, submitTick: this.tick, slot, cost });
+    this.commands.push({ team, card, x, y, submitTick: this.tick, slot, deck: di, cost });
     return null;
   }
 
@@ -489,7 +498,7 @@ export class Battle {
     const card = this.defs.card(cardName, this.levels[team]);
     if (card.unsupported.length) return 'unsupported';
     if (this.deployPlace(team, card, x, y) === null) return 'position';
-    this.commands.push({ team, card, x, y, submitTick: this.tick, slot: -1, cost: 0 });
+    this.commands.push({ team, card, x, y, submitTick: this.tick, slot: -1, deck: -1, cost: 0 });
     return null;
   }
 
@@ -498,6 +507,7 @@ export class Battle {
     if (this.result) return;
     if (this.recordEvents) this.events.length = 0;
     this.commitCommands();
+    this.handTick();
     this.regenElixir();
     const units = this.units;
     this.preTick();
@@ -601,6 +611,37 @@ export class Battle {
     }
     if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: pos.x, y: pos.y, name: card.name, id: -1 });
     this.castSpell(c.team, card, pos.x, pos.y);
+    if (c.deck >= 0) this.cycleOut(p, c.deck);
+  }
+
+  /**
+   * The cast card leaves the hand (0xf9ea68 -> 0xf9f23c: 0xfa58e0 finds its slot, 0xfa5810 empties
+   * it and appends the card to the queue) [STAT]. The slot stays empty until handTick refills it.
+   */
+  private cycleOut(p: Player, deck: number): void {
+    const slot = p.hand.indexOf(deck);
+    if (slot < 0) return;
+    p.hand[slot] = -1;
+    p.queue.push(deck);
+  }
+
+  /**
+   * Hand tick 0xfa5b4c, run by the King tower's update 0xfa06ec before its elixir regeneration
+   * [STAT]: the fill timer (player +0x208) drops by 50 ms, not below 0; when it was at most 50 ms the
+   * first empty slot (lowest index) takes the queue's head and the timer restarts at the current
+   * NextSpellCooldownMS (0xd56790). Without an empty slot the timer waits at 0.
+   */
+  private handTick(): void {
+    if (this.fixture) return; // no King tower
+    for (const p of this.players) {
+      const t = p.cycleTimer - 50;
+      p.cycleTimer = t > 0 ? t : 0;
+      if (t >= 1) continue;
+      const slot = p.hand.indexOf(-1);
+      if (slot < 0) continue;
+      if (p.queue.length) p.hand[slot] = p.queue.shift()!;
+      p.cycleTimer = this.nextCardCooldownMs();
+    }
   }
 
   /**
@@ -3377,7 +3418,7 @@ export class Battle {
       h.add(p.elixir); h.add(p.pending); h.add(p.crowns);
       for (const c of p.hand) h.add(c);
       for (const c of p.queue) h.add(c);
-      for (const c of p.slotReady) h.add(c);
+      h.add(p.cycleTimer);
     }
     for (const u of this.units) {
       h.add(u.id); h.add(u.x); h.add(u.y); h.add(u.hp); h.add(u.shield); h.add(u.state);

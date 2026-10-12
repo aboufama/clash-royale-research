@@ -5,8 +5,8 @@ import { Battle } from '../../core/src/index.ts';
 import { loadGameData } from '../../core/src/node.ts';
 import { FOCUS_CARDS, FOCUS_DECKS } from '../src/focus.ts';
 import {
-  type AreaActor, cardRaise, cardSlot, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
-  ElixirBar, indicatorRadius, ringBand, ringStrip, stageLayout, uiEase,
+  type AreaActor, cardEntry, cardRaise, cardSlot, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
+  ElixirBar, HandCard, indicatorRadius, nextCardTimer, ringBand, ringStrip, stageLayout, uiEase,
 } from '../src/sc/ui_port.ts';
 
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} vs ${b}`);
@@ -193,4 +193,62 @@ test('0x8da088 hand slots and the 0x8e1408 selection raise', () => {
   close(cardRaise(-113, 0.24, true), -130);
   close(cardRaise(-113, 0.24, false), -113);
   close(cardRaise(-113, 0, true), -113);
+});
+
+test('0x8e1408 card entry: x eases with a 20 px overshoot over D, y and scale reach the slot at D / 4', () => {
+  const from = { x: -235, y: -73.65, sx: 0, sy: 0 };
+  assert.equal(cardEntry(-0.1, 0.375, from, -108.6, -113.05, 0.792), null);
+  const a = cardEntry(0, 0.375, from, -108.6, -113.05, 0.792)!;
+  close(a.x, -235); close(a.y, -73.65); close(a.sx, 0); close(a.sy, 0);
+  const q = cardEntry(0.375 / 4, 0.375, from, -108.6, -113.05, 0.792)!;
+  close(q.y, -113.05); close(q.sx, 0.792); close(q.sy, 0.792);
+  close(q.x, uiEase(-235, -108.6, 0.25, 1 / 3, 20, 2 / 3));
+  const o = cardEntry(0.375 / 3, 0.375, from, -108.6, -113.05, 0.792)!;
+  close(o.x, -108.6 + 20, 1e-4); // the overshoot peak at k = 1/3
+  close(cardEntry(0.4, 0.375, from, -108.6, -113.05, 0.792)!.x, -108.6);
+});
+
+test('hand card cycle: hidden after a play until the slot changes, then dealt again (0x8e0b84 / 0x8e2868)', () => {
+  const c = new HandCard();
+  c.deal(0.375, 0.6);
+  // battle start: the first card does not restart the delay
+  c.update(0.1, 3);
+  close(c.t, -0.5);
+  c.update(1, 3);
+  assert.ok(c.t >= c.dur);
+  assert.equal(c.visible, true);
+  c.select(true);
+  c.played();
+  c.update(0.5, 3); // play pending: still card 3 in the logic hand, hidden
+  assert.equal(c.visible, false);
+  // commit: the slot empties, the entry restarts at -0 and waits while empty
+  assert.equal(c.update(0.05, -1), true);
+  assert.equal(c.visible, false);
+  assert.equal(c.selected, false);
+  assert.equal(c.hideT, 0);
+  assert.ok(Object.is(c.t, -0));
+  // refill: shown at once, the entry runs from t = dt
+  c.update(0.05, 5);
+  assert.equal(c.visible, true);
+  close(c.t, 0.05);
+  close(c.raiseT, 0.24);
+  // a card that never commits shows again after the 3 s hide timer
+  const d = new HandCard();
+  d.deal(0.375, 0);
+  d.update(1, 2);
+  d.played();
+  d.update(2.9, 2);
+  assert.equal(d.visible, false);
+  d.update(0.2, 2);
+  assert.equal(d.visible, true);
+  // a direct card -> card change (commit and refill in one tick) also restarts the entry
+  d.update(0.016, 6);
+  close(d.t, 0.016);
+});
+
+test('0x8dc37c next card: grayscale and NextSpellTimer seconds while the hand timer runs', () => {
+  assert.deepEqual(nextCardTimer(0), { gray: false, text: null });
+  assert.deepEqual(nextCardTimer(1000), { gray: true, text: '1' });
+  assert.deepEqual(nextCardTimer(50), { gray: true, text: '1' });
+  assert.deepEqual(nextCardTimer(1001), { gray: true, text: '2' });
 });

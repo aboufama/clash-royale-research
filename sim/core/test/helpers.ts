@@ -30,6 +30,7 @@ export function randomPolicy(b: Battle, rngState: { s: number }, team: number): 
   const x = r() % 18000;
   const y = team === 0 ? r() % 15000 : 17000 + (r() % 15000);
   const p = b.players[team];
+  if (p.hand[slot] < 0) return; // empty until the hand timer refills it
   const card = p.deck[p.hand[slot]];
   const tx = card.type === 'spell' ? r() % 18000 : x;
   const ty = card.type === 'spell' ? r() % 32000 : y;

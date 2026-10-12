@@ -41,9 +41,35 @@ test('no play rejected for elixir when affordable; hand cycles correctly', () =>
   const next = p.queue[0];
   const err = b.play(0, 0, 9000, 5000);
   assert.equal(err, null);
+  // the card stays in its slot (and cannot be played again) until its play commits
+  assert.deepEqual(p.hand, hand0);
+  assert.equal(b.play(0, 0, 9000, 5000), 'pending');
+  b.run(21);
+  // tick 20, commit at age 20: the card leaves (0xfa5810) and the idle hand timer refills the slot at once (0xfa5b4c)
   assert.equal(p.hand[0], next);
   assert.equal(p.queue[p.queue.length - 1], hand0[0]);
-  assert.equal(b.play(0, 0, 9000, 5000), 'slot-cooldown');
+  assert.equal(p.cycleTimer, 1000);
+});
+
+test('hand refills wait for the hand timer (NextSpellCooldownMS, 0xfa5b4c)', () => {
+  const b = newBattle();
+  b.infiniteElixir = true;
+  const p = b.players[0];
+  const [q0, q1] = p.queue;
+  assert.equal(b.play(0, 0, 9000, 5000), null);
+  b.step();
+  assert.equal(b.play(0, 1, 9000, 5000), null);
+  b.run(20); // ticks 1..20; tick 20: first commit, slot 0 refilled at once, timer 1000
+  assert.equal(p.hand[0], q0);
+  b.step(); // tick 21: second commit, the timer is still running
+  assert.equal(p.hand[1], -1);
+  assert.equal(b.play(0, 1, 9000, 5000), 'empty-slot');
+  b.run(18); // ticks 22..39: timer 900 .. 50
+  assert.equal(p.hand[1], -1);
+  assert.equal(p.cycleTimer, 50);
+  b.step(); // tick 40: 50 - 50 < 1 -> refill
+  assert.equal(p.hand[1], q1);
+  assert.equal(p.cycleTimer, 1000);
 });
 
 test('every M1 card is supported and can be deployed by both sides', () => {

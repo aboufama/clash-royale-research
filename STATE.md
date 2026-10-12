@@ -62,6 +62,7 @@ These come from the brief and the data notes.
 - **Space:** integer game units at 1000 per tile. The arena is 18000×32000. The path grid is 36×64 cells of 500 units, with the river at y 15000–17000.
 - **Elixir:** stored ×10000. It regenerates exactly 178 units per tick at 1× elixir. Players start with 6, and the max is 10.
 - **Deploying:** a deploy commits 20 ticks after it is played. The unit becomes active after its data `DeployTime` (usually 1000 ms).
+- **Hand cycle:** the played card stays in its slot (hidden by the client) until its play commits; then the slot empties and the hand timer refills it from the queue, at most one fill per NextSpellCooldownMS (1000 ms at first), so the next card appears about 1 s after the release (0xf9f23c, 0xfa5b4c).
 - **Movement:** a unit moves its data `Speed` value in game units per tick. Pathing is A* on the 500-unit grid, with step costs 10/14 × cell cost.
 - **Attacks:** units spawn preloaded, so the first hit lands after `HitSpeed − LoadTime`. Damage is applied at the end of the same tick.
 - **King tower:** activates 3300 ms after it is first damaged or a Princess tower falls.
@@ -148,12 +149,13 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the hand's card cycle animation after a play, the timed
-   announcements of the HUD time update 0x8d38c4 (print_endTimer countdown,
-   print_60secondsLeft(_overtime) / print_30secondsLeft, print_extra_time,
-   print_tiebreaker, the elixir-speed banner 0x8d4fe0), the opponent-side
-   elixir float text (0x85ada8). Training bridge (M3) and the fidelity pass
-   (M5); see [GOAL.md](GOAL.md).
+5. **HUD left:** the timed announcements of the HUD time update 0x8d38c4
+   (print_endTimer countdown, print_60secondsLeft(_overtime) /
+   print_30secondsLeft, print_extra_time, print_tiebreaker, the elixir-speed
+   banner 0x8d4fe0), the elixir float texts (the own play's path is not
+   recovered: 0x8df9fc is the spectate HUD; 0x85ada8 → 0xbe5898 is the other
+   caller), the full-elixir hand wiggle (0x907654 / 0x907ab0). Training bridge
+   (M3) and the fidelity pass (M5); see [GOAL.md](GOAL.md).
 6. **Viewer fidelity left:** the battle layer's vertical placement under the
    HUD (width framing is ported: 578.5 SC px on tall phones), the arena clip field
    +0x84 used as the 180° turn's ty (768 assumed), how the client picks

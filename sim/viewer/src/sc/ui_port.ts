@@ -10,6 +10,8 @@
 //   uiEase               value ease with overshoot (0x1433fb0)
 //   ElixirBar            HUD_player elixir bar state (0x8da088 setup, 0x8dbebc update, bar 0x8b2368)
 //   cardSlot             hand card placement in cardArea (0x8da088)
+//   HandCard, cardEntry  hand card cycle: hide after a play, deal from the next card (0x8e0b84, 0x8e1408)
+//   nextCardTimer        next card grayscale + NextSpellTimer while the hand timer runs (0x8dc37c)
 //   radialFillStrip      RadialFill card mask while a card is unaffordable (ctor 0x89f9b4, draw 0x89fd24)
 //   elixirRequirement    selected card's cost on the elixir bar (0x8dbebc, elixirRequirementBar)
 
@@ -493,8 +495,10 @@ export class ElixirBar {
 // -- hand ------------------------------------------------------------------------------------------
 
 /**
- * Card slot i (0..3) in HUD_player's cardArea rect [x0, y0, x1, y1] (0x8da088): x = x0 + W * (i / 4 +
- * 0.125), y = the rect's middle, scale = rect height / card height.
+ * Card slot i (0..3) in HUD_player's cardArea rect [x0, y0, x1, y1] (0x8da088 -> 0x8e2eb0): x = x0 + W *
+ * (i / 4 + 0.125), y = the rect's middle, scale (+0x2c4) = rect height / card height. The card height is
+ * the hand card's own height when the HUD builds it (vt+0x68, 0x123ca58), before it holds a card: the
+ * empty card visual is just card_item_frame (0x8b25e8 -> 0x90ab14 -> 0x90acc8 with no spell).
  */
 export function cardSlot(area: readonly [number, number, number, number], i: number, cardH: number): { x: number; y: number; s: number } {
   const W = area[2] - area[0], H = area[3] - area[1];
@@ -506,6 +510,108 @@ export function cardRaise(baseY: number, t: number, selected: boolean, top = fal
   const d = top ? 17 : -17;
   const k = Math.max(0, Math.min(1, t * 4.166667));
   return selected ? uiEase(baseY, baseY + d, k, 0.2, 5, 0.8) : uiEase(baseY + d, baseY, k, 0.2, 5, 0.8);
+}
+
+/** Start transform of a hand card's entry: the 0x8e0a80 matrix (scale x, scale y, x, y). */
+export interface CardStart { x: number; y: number; sx: number; sy: number }
+
+/**
+ * The hand card's entry transform (0x8e1408 while the entry timer t (+0x350) < D (+0x354)): with
+ * k = clamp(t / D, 0, 1) and k4 = clamp(4t / D, 0, 1), x = uiEase(start x, slot x, k, 1/3, 20, 2/3),
+ * y = start y + k4 (slot y - start y), scale x / y = start scale x / y + k4 (slot scale - start). null
+ * while t < 0 (alpha 0: the battle-start delays).
+ */
+export function cardEntry(t: number, dur: number, from: CardStart, toX: number, toY: number, toS: number):
+  { x: number; y: number; sx: number; sy: number } | null {
+  if (t < 0) return null;
+  const k = dur > 0 ? Math.max(0, Math.min(1, t / dur)) : 1;
+  const k4 = dur > 0 ? Math.max(0, Math.min(1, (t * 4) / dur)) : 1;
+  return {
+    x: uiEase(from.x, toX, k, 1 / 3, 20, 2 / 3),
+    y: from.y + k4 * (toY - from.y),
+    sx: from.sx + k4 * (toS - from.sx),
+    sy: from.sy + k4 * (toS - from.sy),
+  };
+}
+
+/**
+ * One hand card's cycle state (card object 0x8e0750), advanced once per frame in the order of the hand
+ * update 0x8dc37c -> 0x8e1408:
+ *  - deal(D, delay): 0x8e0a80 (entry duration D, armed +0x31e) and 0x8e0aa8 (t = -delay), called only by
+ *    the HUD setup 0x8da088 (D = 0.375 s, delay 0.6 + 0.18 i).
+ *  - played(): a placement from this slot succeeded (release 0x8e2c04 -> 0x8e1fb8 -> 0xbe1634 ->
+ *    0x8d5438 -> 0x8e2868): hide timer +0x29c = 3 s. The card returns to its slot (0x8e1004) but stays
+ *    invisible.
+ *  - update(dt, card): `card` is the slot's deck index in the logic hand (0xf9dd98, -1 = empty). On a
+ *    change (0x8e0b84, before the timers): an armed card that showed a card restarts its entry (t = -0,
+ *    with the deal sound +0x31f on the first shown frame; empty -> card keeps the running t), a selected
+ *    card is deselected (+0x319 = 0, raise timer +0x320 = 0) and the hide timer is cleared. Then, only
+ *    while it holds a card, t += dt while t < D (the raise timer is held at 0.24 once t >= 0); the hide
+ *    timer counts down; visible (+0x8) = holds a card and the hide timer has run out (<= 0); the
+ *    selection raise advances only after the entry (t >= D, raise timer < 0.24) and not while dragged.
+ */
+export class HandCard {
+  card = -1; // +0x260 card reference (deck index)
+  t = 0; // +0x350
+  dur = 0; // +0x354
+  armed = false; // +0x31e
+  hideT = 0; // +0x29c
+  visible = false; // +0x8
+  selected = false; // +0x319
+  raiseT = 1; // +0x320
+
+  deal(dur: number, delay: number): void {
+    this.dur = dur;
+    this.t = -delay;
+    this.armed = true;
+  }
+
+  played(): void {
+    this.hideT = 3;
+  }
+
+  /**
+   * Returns true when the slot's card changed this frame (selection dropped). `dragging`: the card is
+   * held by the pointer (+0x318), which pauses the selection raise.
+   */
+  update(dt: number, card: number, dragging = false): boolean {
+    let changed = false;
+    if (card !== this.card) {
+      changed = true;
+      if (this.armed && this.card !== -1) this.t = -0;
+      if (this.selected) { this.selected = false; this.raiseT = 0; }
+      this.hideT = 0;
+      this.card = card;
+    }
+    const has = card !== -1;
+    if (has && this.t < this.dur) {
+      this.t += dt;
+      if (this.t >= 0) this.raiseT = 0.24;
+    }
+    let visible = has;
+    if (this.hideT > 0) {
+      this.hideT -= dt;
+      if (this.hideT > 0) visible = false;
+    }
+    this.visible = visible;
+    if (!dragging && this.t >= this.dur && this.raiseT < 0.24) this.raiseT += dt;
+    return changed;
+  }
+
+  /** Select / deselect (the tap toggle and drag start): the raise animation restarts. */
+  select(on: boolean): void {
+    if (this.selected !== on) { this.selected = on; this.raiseT = 0; }
+  }
+}
+
+/**
+ * Next card state from the hand timer (player +0x208, ms) in the hand update 0x8dc37c: the next card is
+ * drawn in grayscale (vt+0xd0 -> 0x123c580) and HUD_player's NextSpellTimer shows (timer + 999) / 1000
+ * seconds while the timer runs; both go away at 0.
+ */
+export function nextCardTimer(timerMs: number): { gray: boolean; text: string | null } {
+  if (timerMs <= 0) return { gray: false, text: null };
+  return { gray: true, text: String(Math.floor((timerMs + 999) / 1000)) };
 }
 
 // -- radial fill (card mask) -----------------------------------------------------------------------
