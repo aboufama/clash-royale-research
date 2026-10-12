@@ -9,3 +9,5 @@ export {
   TOWER_NONE, TOWER_PRINCESS, Unit,
 } from './entities.ts';
 export type { BattleEvent, Command } from './entities.ts';
+export { Bot, cardRole } from './bot.ts';
+export type { BotOptions, BotPlay, CardRole, SpellRole, UnitRole } from './bot.ts';

@@ -3,6 +3,60 @@
 Newest first. Each entry gives the decision, why it was made, and what would
 change it.
 
+## 2026-10-12 — Scripted AI opponent: data-driven heuristics, not a native port
+
+- **Decision:** `sim/core/src/bot.ts` adds `Bot`, a deterministic scripted
+  player for either side and any supported deck (`new Bot(team, { seed, level })`,
+  then `bot.act(battle)` once per tick before `battle.step()`). It is **not** a
+  port: the original client's AI is not used, decompiled or imitated, and the
+  bot claims no native fidelity (FIDELITY row "Scripted AI opponent", level –).
+  It plays only through `Battle.play`, so it changes no engine mechanic.
+- **How it plays:** card roles come from the build's data through the engine's
+  definitions, never from card names: hit points (with shields, spawner and
+  death-spawn shares), dps against ground, air and crown towers (projectile
+  damage, splash and piercing radii, chain hops, the inferno ramp, charge
+  damage), building targeting, flying, range, speed, elixir handed to the
+  opponent on death, and for spells damage, tower damage, radius, rolling
+  length, strikes, stun and damage over time. Decisions use a coarse
+  Lanchester-style fight estimate (time for each side to kill the other, a
+  splash bonus against counts, a single-target overkill floor, tower dps
+  covering the fight, ranged troops shielded by the tower only when the
+  geometry says so, fire that cannot target our troops landing on the tower)
+  scored in elixir-equivalents: value killed, tower HP lost (24 elixir per
+  Princess tower, 60 for the King), survivors' value, cost.
+  - *Defence:* enemy troops near or over the river are grouped by lane; every
+    hand card is scored against the group at a role-dependent spot (buildings
+    in the centre to pull, ranged troops behind the tower the threat walks to,
+    melee in front and pulled to the centre, swarms and building-targeting
+    sponges on top of the threat); spells re-run the fight on what they leave.
+    The bot waits for elixir when an unaffordable card is clearly better and
+    time allows, and plays a cheap card to draw the next card when only that
+    card answers the threat (the next card is visible to a player).
+  - *Offence:* the same model run the other way: our troops in a lane against
+    the enemy's defenders there, their tower and a virtual defender for the
+    elixir they will have when the push arrives. Placements: the bridge (the
+    pocket after a Princess tower falls), behind or in front of a push, slow
+    tanks in the back, Miner and Goblin Barrel on the tower, siege at the river.
+    Spells are cast for value (clusters, tower finishes; chip damage late).
+  - *Elixir:* a reserve sized from enemy troops walking at us and their bar,
+    punish when they are low, play rather than leak, save up for and unclog
+    cards held too long, press when level or behind late and in overtime, hold
+    back when ahead.
+  - *Levels:* 1–3 change think rate, reaction time, placement jitter, the play
+    gap, the spell threshold, a share of hesitations or random natural plays,
+    and whether the cycling and saving tricks are used.
+- **Determinism:** decisions read only the battle state (including the
+  opponent's elixir, as an elixir counter would, but not their hand or pending
+  plays) and the bot's own seeded xorshift32; float math uses only exact IEEE
+  operations; bot-vs-bot matches replayed from the same seeds reproduce the
+  state hash (tests and `node sim/bench/bot.ts`).
+- **Why:** the owner wants an opponent in the viewer and a baseline for
+  training; a heuristic player is quick to build, costs about 2 µs per tick
+  and works with any deck. Native fidelity of the opponent's decisions is not
+  a goal of the simulator.
+- **Would change if:** a trained policy (M3) outplays it, or the owner wants the
+  native client's AI behaviour (that would need its own research and port).
+
 ## 2026-10-11 — Follow the decompiled code literally, even where it surprises
 
 - **Decision:** where the decompiled libg code disagrees with community
