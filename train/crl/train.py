@@ -68,6 +68,7 @@ def parse(argv=None):
     a("--d-model", type=int, default=256)
     a("--layers", type=int, default=4)
     a("--heads", type=int, default=8)
+    a("--tile-dim", type=int, default=64)
     a("--critic-d-model", type=int, default=192)
     a("--critic-layers", type=int, default=3)
     # league / io
@@ -85,6 +86,7 @@ def parse(argv=None):
         args.device, args.workers, args.envs = "cpu", 2, 4
         args.rollout, args.minibatch, args.epochs = 256, 128, 1
         args.d_model, args.layers, args.heads, args.critic_d_model, args.critic_layers = 64, 1, 4, 64, 1
+        args.tile_dim = 32
         args.snapshot_every, args.ckpt_every = 1, 1
         args.max_updates = args.max_updates or 3
         args.bot_prob = 0.25
@@ -140,7 +142,7 @@ def main(argv=None):
     spec = pool.spec
     (out / "spec.json").write_text(json.dumps(spec))
     lay = Layout(spec)
-    mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.critic_d_model, args.critic_layers)
+    mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.tile_dim, 4, args.critic_d_model, args.critic_layers)
     actor = Actor(lay, mcfg).to(device)
     critic = Critic(lay, mcfg).to(device)
     params = list(actor.parameters()) + list(critic.parameters())

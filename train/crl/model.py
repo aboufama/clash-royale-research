@@ -26,6 +26,8 @@ class ModelConfig:
     layers: int = 4
     heads: int = 8
     tile_layers: int = 2
+    tile_dim: int = 64  # width of the 576 tile queries (they dominate the compute at full width)
+    tile_heads: int = 4
     critic_d_model: int = 192
     critic_layers: int = 3
 
@@ -118,28 +120,32 @@ class Encoder(nn.Module):
 
 
 class TileHead(nn.Module):
-    """18 x 32 tile queries cross-attending to the entity tokens, then a local conv mix."""
+    """18 x 32 tile queries cross-attending to the entity tokens (projected to a narrow width), then a
+    local conv mix."""
 
-    def __init__(self, d: int, heads: int, layers: int, w: int, h: int):
+    def __init__(self, d: int, dt: int, heads: int, layers: int, w: int, h: int):
         super().__init__()
         self.w, self.h = w, h
-        self.pos = nn.Parameter(torch.randn(w * h, d) * 0.02)
-        self.attn = nn.ModuleList([nn.MultiheadAttention(d, heads, batch_first=True) for _ in range(layers)])
-        self.ff = nn.ModuleList([nn.Sequential(nn.LayerNorm(d), nn.Linear(d, 2 * d), nn.GELU(), nn.Linear(2 * d, d)) for _ in range(layers)])
-        self.ln = nn.ModuleList([nn.LayerNorm(d) for _ in range(layers)])
-        self.conv = nn.Conv2d(d, d, 3, padding=1, groups=d)
-        self.out = nn.LayerNorm(d)
+        self.kv = nn.Linear(d, dt)
+        self.g = nn.Linear(d, dt)
+        self.pos = nn.Parameter(torch.randn(w * h, dt) * 0.02)
+        self.attn = nn.ModuleList([nn.MultiheadAttention(dt, heads, batch_first=True) for _ in range(layers)])
+        self.ff = nn.ModuleList([nn.Sequential(nn.LayerNorm(dt), nn.Linear(dt, 2 * dt), nn.GELU(), nn.Linear(2 * dt, dt)) for _ in range(layers)])
+        self.ln = nn.ModuleList([nn.LayerNorm(dt) for _ in range(layers)])
+        self.conv = nn.Conv2d(dt, dt, 3, padding=1, groups=dt)
+        self.out = nn.LayerNorm(dt)
 
     def forward(self, tok: torch.Tensor, kpm: torch.Tensor, glob: torch.Tensor) -> torch.Tensor:
         B = tok.shape[0]
-        q = self.pos.unsqueeze(0).expand(B, -1, -1) + glob.unsqueeze(1)
+        kv = self.kv(tok)
+        q = self.pos.unsqueeze(0).expand(B, -1, -1) + self.g(glob).unsqueeze(1)
         for attn, ff, ln in zip(self.attn, self.ff, self.ln):
-            a, _ = attn(ln(q), tok, tok, key_padding_mask=kpm, need_weights=False)
+            a, _ = attn(ln(q), kv, kv, key_padding_mask=kpm, need_weights=False)
             q = q + a
             q = q + ff(q)
         grid = q.transpose(1, 2).reshape(B, -1, self.h, self.w)
         q = q + self.conv(grid).reshape(B, -1, self.h * self.w).transpose(1, 2)
-        return self.out(q)  # (B, tiles, d), tile index = row * w + col
+        return self.out(q)  # (B, tiles, dt), tile index = row * w + col
 
 
 def masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -154,10 +160,10 @@ class Actor(nn.Module):
         self.lay = lay
         self.n_tiles = S["N_TILES"]
         self.enc = Encoder(lay, d, cfg.layers, cfg.heads, privileged=False)
-        self.tiles = TileHead(d, cfg.heads, cfg.tile_layers, S["TILES_W"], S["TILES_H"])
+        self.tiles = TileHead(d, cfg.tile_dim, cfg.tile_heads, cfg.tile_layers, S["TILES_W"], S["TILES_H"])
         self.slot_card = nn.Sequential(nn.Linear(2 * d, d), nn.GELU(), nn.Linear(d, 1))
         self.slot_wait = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 1))
-        self.tile_q = nn.Sequential(nn.Linear(2 * d, d), nn.GELU(), nn.Linear(d, d))
+        self.tile_q = nn.Sequential(nn.Linear(2 * d, d), nn.GELU(), nn.Linear(d, cfg.tile_dim))
         self.empty = nn.Parameter(torch.zeros(d))
 
     def trunk(self, obs: torch.Tensor):
