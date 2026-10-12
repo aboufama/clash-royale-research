@@ -154,7 +154,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         if not self._auth():
             return
-        if urlparse(self.path).path != "/bundle":
+        u = urlparse(self.path)
+        if u.path == "/upload":
+            # a file into $CRL_HOME/runs (e.g. a checkpoint moved from another pod)
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            try:
+                dest = safe(q["path"], RUNS)
+            except (KeyError, PermissionError) as e:
+                return self._send(400, {"error": repr(e)})
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            data = self._body()
+            tmp = dest.with_name(dest.name + ".part")
+            tmp.write_bytes(data)
+            os.replace(tmp, dest)
+            return self._send(200, {"ok": True, "bytes": len(data), "path": str(dest)})
+        if u.path != "/bundle":
             return self._send(404, {"error": "not found"})
         data = self._body()
         with LOCK:

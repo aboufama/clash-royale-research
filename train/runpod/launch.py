@@ -177,6 +177,11 @@ def cmd_fetch(args):
     print(f"{dest} ({len(data) / 2**20:.1f} MiB)")
 
 
+def cmd_upload(args):
+    data = Path(args.src).read_bytes()
+    print(ctl(pod(args), "PUT", f"/upload?path={args.path}", data, ctype="application/octet-stream", timeout=600))
+
+
 def cmd_exec(args):
     r = ctl(pod(args), "POST", "/exec", json.dumps({"cmd": " ".join(args.shell), "timeout": args.timeout}).encode(), timeout=args.timeout + 30)
     sys.stdout.write(r["stdout"])
@@ -226,6 +231,9 @@ def main():
     f = sub.add_parser("fetch")
     f.add_argument("path")
     f.add_argument("--dest")
+    up = sub.add_parser("upload")
+    up.add_argument("src")
+    up.add_argument("path", help="destination under the pod's runs/ (e.g. runs/exp1/latest.pt)")
     e = sub.add_parser("exec")
     e.add_argument("shell", nargs=argparse.REMAINDER)
     e.add_argument("--timeout", type=float, default=60)
@@ -234,7 +242,7 @@ def main():
     if getattr(args, "train_args", None) and args.train_args[:1] == ["--"]:
         args.train_args = args.train_args[1:]
     {"create": cmd_create, "wait": cmd_wait, "push": cmd_push, "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
-     "log": cmd_log, "ls": cmd_ls, "fetch": cmd_fetch, "exec": cmd_exec, "terminate": cmd_terminate}[args.cmd](args)
+     "log": cmd_log, "ls": cmd_ls, "fetch": cmd_fetch, "upload": cmd_upload, "exec": cmd_exec, "terminate": cmd_terminate}[args.cmd](args)
 
 
 if __name__ == "__main__":
