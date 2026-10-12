@@ -31,6 +31,10 @@ import { Clouds } from './sc/clouds.ts';
 import { UnitFx } from './sc/unit_fx.ts';
 import { applyPanelSkin } from './panel_skin.ts';
 import type { ProjectileViewFrame, ProjectileViewState } from './sc/projectile_view.ts';
+import { applyFilterColor, AreaViews, BuffViews } from './sc/area_view.ts';
+import { CharEffects, deathSpawnFilter } from './sc/char_effects.ts';
+import type { Col } from './sc/math.ts';
+import type { ClipRef } from './sc/manifest.ts';
 
 type Team = 0 | 1;
 
@@ -56,6 +60,9 @@ interface ProjView {
   /** attached TrailEffect (0x8545e0 → 0x82dcb0, follows the sprite) */
   trail: number;
   seen: boolean;
+  /** p->shooter (+0xf0): an out-and-back projectile back without it plays its PingpongDeathEffect */
+  shooter: Unit | null;
+  team: Team;
 }
 
 /**
@@ -76,6 +83,8 @@ interface UnitView {
   wasWaiting: boolean;
   /** sim ms the deploy filter started (null: none) */
   filterStart: number | null;
+  /** the filter clip vt+0x140 gave a death spawn (0xf8aac8; null: none); undefined: the unit's own */
+  filter?: ClipRef | null;
   /** client-action health bar state (view +0x610 / +0x614 and the component, sc/unit_view.ts) */
   nb: NewBarView | null;
   /** its root sprite x and each badge clip's frame (stopped, or playing its intro from `playFrom` sim ms) */
@@ -157,8 +166,13 @@ export class ArtWorld implements WorldRenderer {
   private canvas: HTMLCanvasElement;
   private fx: EffectPlayer;
   private lastNow = 0;
-  /** Running area-effect visuals by engine AEO id. */
-  private aeoFx = new Map<number, { stop(): void }>();
+  /** Area-effect object views (0x833b84) and buff views (0x8348c8), sc/area_view.ts. */
+  private areaViews: AreaViews;
+  private buffViews: BuffViews;
+  /** character / building view effects beyond the ones here (sc/char_effects.ts, docs/EFFECTS.md) */
+  private charFx: CharEffects;
+  /** actors that effects with Filter components may recolour this frame */
+  private filterParents = new Set<number>();
   /** Client view state per unit (sc/anim.ts) and this frame's chosen sprite. */
   private anims = new Map<number, AnimState>();
   /** footstep effects of the character view update (sc/unit_fx.ts) */
@@ -190,6 +204,8 @@ export class ArtWorld implements WorldRenderer {
   private stepVec = new Map<number, [number, number]>();
   /** Actors by id as of the last onEvents (plus this step's), so a death can read the dead actor. */
   private byId = new Map<number, Unit>();
+  /** Projectiles by id as of the last onEvents (a projectile spawn's own one left the world this step). */
+  private projById = new Map<number, Projectile>();
   /** location cloud shadows (battle layer 11), built for each battle */
   private clouds: Clouds | null = null;
   private cloudsFor: unknown = null;
@@ -206,6 +222,26 @@ export class ArtWorld implements WorldRenderer {
     this.cam = cam;
     this.canvas = canvas;
     this.fx = new EffectPlayer(art, 7);
+    this.areaViews = new AreaViews(this.fx, art.manifest, art.flip);
+    this.buffViews = new BuffViews(this.fx, art.manifest, art.flip);
+    this.charFx = new CharEffects({
+      fx: this.fx, manifest: art.manifest, flip: art.flip, lib: (n) => art.lib(n),
+      spritePos: (u) => {
+        const fr = this.frame;
+        return fr && fr.battle.units.includes(u) && u.state !== ST_DEAD ? [fr.ux(u), fr.uy(u), fr.uz(u)] : null;
+      },
+      sprite: (u) => this.sprites.get(u.id),
+      isWater: (x, y) => this.frame?.battle.arena.isWaterAt(x, y) ?? false,
+      tunnelEnd: (u) => {
+        // vt+0x170 0x845a8c -> vt+0x138(0): the summon reveal (UseAnimator) or its SpawnEffect now
+        const v = this.views.get(u.id) ?? this.newView(u);
+        v.summon = true;
+        v.index = 0;
+        v.deployTime = u.deployTotal * 50;
+        v.filterStart = null;
+        this.viewDelay(u, v, 0);
+      },
+    });
     this.ui = new BattleUi(art);
     cam.aspectY = art.yScale;
     cam.mirrorX = art.flip; // the blue player's native view runs logic x right-to-left
@@ -239,7 +275,7 @@ export class ArtWorld implements WorldRenderer {
     for (const e of b.events) {
       const team = e.team as Team;
       if (e.type === 'spawn') {
-        this.onSpawn(b, e.id, e.name, team, e.x, e.y, e.tick);
+        this.onSpawn(b, e.id, e.name, team, e.x, e.y, e.tick, e.src, e.pid);
       } else if (e.type === 'hit' || e.type === 'impact') {
         // hit vector for the damage filter: melee = victim - attacker, projectile = travel direction
         // into the impact point (or impact -> victim for splash)
@@ -258,11 +294,18 @@ export class ArtWorld implements WorldRenderer {
           if (dx || dy) this.hitVec.set(v.id, [dx, dy]);
         }
       }
+      if (e.type === 'hit' || e.type === 'shoot') {
+        // AttackComp_execute 0xfc619c: TargetedHitEffect (view vt+0x90) and a melee splash's DamageEffect
+        // at its centre (sc/char_effects.ts); the victims' effects come with the 'damage' events
+        this.charFx.onAttack(e.tick, this.byId.get(e.id), e.src !== undefined ? this.byId.get(e.src) : undefined,
+          e.type === 'hit', e.fx === 1, e.x, e.y);
+      } else if (e.type === 'damage') {
+        this.charFx.onDamage(e.tick, this.byId.get(e.id), e.fx ?? 0, e.name, e.src !== undefined ? this.byId.get(e.src) : undefined);
+      } else if (e.type === 'shieldLost') {
+        this.charFx.onShieldLost(this.byId.get(e.id));
+      }
       if (e.type === 'hit') {
         const u = b.units.find((q) => q.id === e.id);
-        const ca = u ? m.characters[u.def.name] : null;
-        const eff = ca?.effects?.damageEffect;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
         // single-target melee (0xfc7080): the damage carries (target snapshot − attacker); a melee splash
         // goes through World_areaDamage 0xf97be8, which passes none
         if (u && u.def.areaDamageRadius <= 0) {
@@ -279,9 +322,15 @@ export class ArtWorld implements WorldRenderer {
         const pv = this.projViews.get(e.id);
         const p = (pv ? m.projectiles[pv.name] : undefined) ?? m.projectiles[e.name] ??
           (m.spells[e.name] ? m.projectiles[m.spells[e.name].projectile ?? ''] : undefined);
-        const eff = p?.hitEffect;
+        // a piercing projectile (0xe5a908) plays its DeathEffect there instead (0xf9188c +0x130)
+        const eff = p && isRolling(p) ? p.deathEffect : p?.hitEffect;
         const ang = pv && (e.x !== pv.startX || e.y !== pv.startY) ? nativeAngle(e.x - pv.startX, e.y - pv.startY) : 0;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, angle: ang });
+        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, angle: ang, z: e.z ?? 0, loop: false });
+        // chain beam of a single-target hit (0xf8f618: TargettedEffect from the previous hit position)
+        if (p?.targettedEffect && !((p.radius as number | undefined) ?? 0) && e.src !== undefined && e.src >= 0) {
+          if (pv) this.charFx.onProjectile(e.id, pv.startX, pv.startY, pv.startZ, pv.shooter);
+          this.charFx.onChainHit(e.id, p.targettedEffect as string, team, this.byId.get(e.src));
+        }
         // a single-target hit (0xf9188c -> 0xf8f618) carries (aim − start); a splash (0xf8f03c ->
         // World_areaDamage) passes none
         if (pv && !((p?.radius as number | undefined) ?? 0)) {
@@ -292,11 +341,12 @@ export class ArtWorld implements WorldRenderer {
       } else if (e.type === 'death' || e.type === 'tower') {
         this.deathEffect(b, e.id, e.name, e.type === 'tower', team, e.x, e.y);
       } else if (e.type === 'aoe') {
+        // the world adds the area effect object at the end of the tick: view factory 0x84fc88 -> 0x833b84
         const a = b.areaEffects.find((q) => q.id === e.id);
-        const h = this.art.playAreaEffect(this.fx, e.name, e.x, e.y, {
-          team, radius: a?.def.radius, durationMs: a ? a.def.lifeDuration : undefined,
-        });
-        if (h.handles.length) this.aeoFx.set(e.id, h);
+        const life = a ? a.def.lifeDuration : (m.areaEffects?.[e.name]?.lifeDuration ?? 0);
+        this.areaViews.create(b, e.id, e.name, team, e.x, e.y, 0, life);
+      } else if (e.type === 'aoePulse') {
+        this.areaViews.pulse(e.id);
       } else if (e.type === 'appear' || e.type === 'hide') {
         // view vt+0x80 with AppearEffect (0xf8247c) / HideEffect (0xf81b3c)
         const eff = m.characters[e.name]?.effects?.[e.type === 'appear' ? 'appearEffect' : 'hideEffect'] as string | undefined;
@@ -312,15 +362,18 @@ export class ArtWorld implements WorldRenderer {
       } else if (e.type === 'path') {
         if (!this.pathFacing.has(e.id)) this.pathFacing.set(e.id, [e.x, e.y]);
       } else if (e.type === 'cast') {
-        const sp = m.spells[e.name];
-        const eff = sp?.effect;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        // Tower_castSpell 0xf9f47c: SpellData +0x110 Effect through the world listener vt+0x48 0x850258 ->
+        // 0x82dc54 (setLoop 0) at the target, z 0, angle 0, no parent; every card (troops: CharacterDeploy)
+        const eff = (m.spells[e.name]?.effect ?? m.cards[e.name]?.effect) as string | undefined;
+        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, loop: false });
         this.cast = { tick: e.tick, team: e.team, card: e.name, x: e.x, y: e.y, next: 0 };
       }
     }
     this.ui.onEvents(b);
     this.byId.clear();
     for (const u of b.units) this.byId.set(u.id, u);
+    this.projById.clear();
+    for (const p of b.projectiles) this.projById.set(p.id, p);
     // the client's view update runs at least once per tick; several engine steps per rendered frame
     // (speed > 1) must not skip a reveal: run it here too, at the time this tick starts showing
     this.updateViews(b, b.tick * 50, 0);
@@ -333,9 +386,10 @@ export class ArtWorld implements WorldRenderer {
    * other plays its SpawnEffect now (vt+0xc0 0x84f11c: the actor's x, y, z). A member waiting out
    * SummonDeployDelay (state 11) gets vt+0x138(0) when it leaves that state. Other spawns (spawners,
    * death spawns, projectile spawns) come through 0xd35ab4 with param 7 clear: the world listener vt+0x48
-   * plays the SpawnEffect at (x, y, FlyingHeight), angle 0, not attached.
+   * plays the SpawnEffect at (x, y, FlyingHeight), angle 0, not attached; for a spawner's or a dying
+   * character's spawn (0xf8aac8, `src`) its SpawnCharacterEffect replaces it when set (sc/char_effects.ts).
    */
-  private onSpawn(b: Battle, id: number, name: string, team: Team, x: number, y: number, tick: number): void {
+  private onSpawn(b: Battle, id: number, name: string, team: Team, x: number, y: number, tick: number, src?: number, pid?: number): void {
     const m = this.art.manifest;
     const u = b.units.find((q) => q.id === id);
     const c = this.cast;
@@ -344,8 +398,9 @@ export class ArtWorld implements WorldRenderer {
       const index = c.next++;
       const card = b.defs.card(c.card, b.levels[u.team]);
       const sp = card.spec;
-      // SpawnPathfindSpeed: 0xd423bc calls vt+0x168 (the tunnel view, not ported) instead of vt+0x138, and
-      // 0xd35ab4 plays no SpawnEffect (param 7 set); the view keeps the filter from its deploy start (A)
+      // SpawnPathfindSpeed: 0xd423bc calls vt+0x168 (the tunnel view: SpawnPathfindEffect, sc/char_effects.ts)
+      // instead of vt+0x138, and 0xd35ab4 plays no SpawnEffect (param 7 set); the tunnel's end gives
+      // vt+0x138(0) (charFx tunnelEnd)
       if (u.def.spawnPathfindSpeed !== 0) return;
       v.summon = true;
       v.index = index;
@@ -354,10 +409,17 @@ export class ArtWorld implements WorldRenderer {
       if (u.waitTicks <= 0) this.summonDelay(u, v, b, c, sp, v.index);
       return;
     }
-    this.newView(u);
-    const eff = m.characters[name]?.effects?.spawnEffect;
+    const v = this.newView(u);
+    const from = src !== undefined ? this.byId.get(src) : undefined;
+    // the deploy filter of vt+0x140, which updateViews starts with the member's deploy (state 4): a dying
+    // character's spawn (sc/char_effects.ts deathSpawnFilter); a projectile's (0xf9188c) its
+    // SpawnDeployBaseAnim (+0x158) or none
+    if (u && from && from.state === ST_DEAD) v.filter = deathSpawnFilter(m, u.def.name, from.def.name);
+    const proj = pid !== undefined ? this.projById.get(pid) : undefined;
+    if (u && pid !== undefined) v.filter = (proj && m.projectiles[proj.def.name]?.spawnDeployBaseAnim) ?? null;
+    const eff = this.charFx.spawnEffectFor(name, from);
     const ch = u ? u.def.flyingHeight : 0;
-    if (eff && this.fx.has(eff)) this.fx.play(eff, x, y, { team, z: ch });
+    if (eff && this.fx.has(eff)) this.fx.play(eff, x, y, { team, z: ch, loop: false });
   }
 
   private stateFor: unknown = null;
@@ -368,7 +430,9 @@ export class ArtWorld implements WorldRenderer {
     this.stateFor = b;
     this.views.clear();
     this.byId.clear();
+    this.projById.clear();
     this.muzzled.clear();
+    this.charFx.reset();
     this.cast = null;
   }
 
@@ -431,12 +495,15 @@ export class ArtWorld implements WorldRenderer {
       const live = f && f.battle.units.includes(u) && u.state !== ST_DEAD;
       return live && f ? [f.ux(u), f.uy(u), f.uz(u)] as [number, number, number] : null;
     } : undefined;
-    this.fx.play(eff, u.x, u.y + front, { team: u.team as Team, z: u.z, follow });
+    this.fx.play(eff, u.x, u.y + front, { team: u.team as Team, z: u.z, follow, filterParent: u.id });
   }
 
-  /** View vt+0xc0 (0x84f11c): an effect at the actor's logic x, y and z, enemy version for the opponent, not following it. */
+  /**
+   * View vt+0xc0 (0x84f11c -> 0x82dc54 with the actor as parent, p13 set): like vt+0x80 (the actor's
+   * sprite, following it with FollowParent) but always once (setLoop 0); sc/char_effects.ts.
+   */
   private playOnActor(u: Unit, eff: string | undefined, angle?: number): void {
-    if (eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: u.z, angle });
+    this.charFx.playOnActor(u, eff, angle);
   }
 
   /**
@@ -444,7 +511,8 @@ export class ArtWorld implements WorldRenderer {
    * projectile's OverrideShooterProjectileEffect (projectile data +0x348), else the shooter's
    * ProjectileEffect (character data +0x108; +0x110 ProjectileEffectSpecial for a special attack,
    * 0xde0438), played by the world listener vt+0x48 (0x850258) at the projectile's x, y, z right after
-   * Projectile_init (its start) with the shooter's facing angle (0x1294e04 on actor +0xf8), not attached.
+   * Projectile_init (its start) with the shooter's facing angle (0x1294e04 on actor +0xf8), not attached,
+   * once (0x850258 plays through 0x82dc54, setLoop 0).
    * Crown towers use their building row (KingTower: King_attack, PrincessTower: ArcherTowerAttack).
    */
   private shooterEffects(b: Battle, id: number): void {
@@ -456,9 +524,10 @@ export class ArtWorld implements WorldRenderer {
     for (const p of b.projectiles) {
       if (p.sourceId !== id || p.spell || this.muzzled.has(p.id)) continue;
       this.muzzled.add(p.id);
+      this.charFx.onProjectile(p.id, p.startX, p.startY, p.startZ, p.shooter ?? u);
       const eff = (m.projectiles[p.def.name]?.overrideShooterProjectileEffect as string | undefined) ?? fx?.projectileEffect;
       if (eff && this.fx.has(eff)) {
-        this.fx.play(eff, p.startX, p.startY, { team: u.team as Team, z: p.startZ, angle: nativeAngle(u.dirX, u.dirY) });
+        this.fx.play(eff, p.startX, p.startY, { team: u.team as Team, z: p.startZ, angle: nativeAngle(u.dirX, u.dirY), loop: false });
       }
     }
   }
@@ -468,7 +537,8 @@ export class ArtWorld implements WorldRenderer {
    * ends there too in this mode): the first DeathEffectOverride among the actor's buffs (0xfc2288, buff
    * data +0x1b0) else its DeathEffect (vt+0x158), at the actor's x, y and z (0xf942a8: FlyingHeight for a
    * flyer), angle = health +0x18 (0xfcc040), the native angle of the lethal damage's direction
-   * (0xfcb29c); none when the damage carried no direction. Tower rubble is drawn by drawTowerRuin, so a
+   * (0xfcb29c); none when the damage carried no direction; once (0x850504 plays through 0x82dc54,
+   * setLoop 0). Tower rubble is drawn by drawTowerRuin, so a
    * tower's effect skips its permanent particles.
    */
   private deathEffect(b: Battle, id: number, name: string, tower: boolean, team: Team, x: number, y: number): void {
@@ -482,7 +552,7 @@ export class ArtWorld implements WorldRenderer {
     }
     const v = this.stepVec.get(id);
     const angle = v ? nativeAngle(v[0], v[1]) : 0;
-    if (eff && this.fx.has(eff)) this.fx.play(eff, x, y, { team, z: u ? u.z : 0, angle, skipPersistent: tower });
+    if (eff && this.fx.has(eff)) this.fx.play(eff, x, y, { team, z: u ? u.z : 0, angle, skipPersistent: tower, loop: false });
   }
 
   // ---------------------------------------------------------------- frame
@@ -500,6 +570,15 @@ export class ArtWorld implements WorldRenderer {
     this.updateProjectiles(f);
     const fxDt = this.lastFxSim < 0 ? 0 : Math.min(250, Math.max(0, sim - this.lastFxSim));
     this.lastFxSim = sim;
+    // area-effect views: per-frame update 0x8342c8, removal 0x834038 for objects that left the world
+    // (the tiebreak's field clear 0x10cad30 sets their expire flag)
+    this.areaViews.update(b, b.areaEffects, b.tiebreakMs > 0 && b.tiebreakMs <= 1500);
+    // buff views (0x839b08 -> 0x835788): each new buff instance starts its Effect on the actor's sprite,
+    // deleted with the instance (0x8348c8 / 0x834e54); the filter clock starts with the view
+    this.buffViews.sync(b, b.units, sim, (q) => {
+      const fr = this.frame, u = q as Unit;
+      return fr && fr.battle.units.includes(u) && u.state !== ST_DEAD ? [fr.ux(u), fr.uy(u), fr.uz(u)] : null;
+    });
     this.fx.update(fxDt);
     // battle layer update (0x856f28): cloud shadows, then the screen shake (SC px)
     if (this.cloudsFor !== b) { this.cloudsFor = b; this.clouds = new Clouds(art, this.ui.layout.stageW); }
@@ -508,6 +587,9 @@ export class ArtWorld implements WorldRenderer {
     const [shx, shy] = this.fx.shakeOffset(fxDt / 1000);
     this.updateViews(b, sim, f.alpha);
     this.updateAnims(f, sim);
+    // ContinuousEffect and the Inferno beam slots (sc/char_effects.ts)
+    this.charFx.update(b.units);
+    this.filterParents = this.fx.filterParents();
     this.ui.update(fxDt / 1000, f);
     const dpr = this.cam.dpr;
 
@@ -527,10 +609,6 @@ export class ArtWorld implements WorldRenderer {
     // effect layers in the client's order (0xe22490 / 0x856f28): Base (3) under the shadow composite
     // (4), then Ground (8), GroundAbility (9), Object (10, sorted with the actors), Above (11)
     this.fx.draw(r, 'Base');
-    // stop area-effect visuals whose engine object has expired
-    if (this.aeoFx.size) {
-      for (const [id, h] of this.aeoFx) if (!b.areaEffects.some((q) => q.id === id)) { h.stop(); this.aeoFx.delete(id); }
-    }
 
     // shadow layer: decorations, crown towers, units (one silhouette buffer, one composite)
     r.beginShadows();
@@ -622,7 +700,8 @@ export class ArtWorld implements WorldRenderer {
       // sort key: ground-projected y, +48 px for an air actor (0x851b84: vt+0x108 0xf826e8 = FlyingHeight > 0
       // without the TAG_FORCE_IS_AIR / _GROUND status tags; a river jump's z does not count)
       const py = ypx(x, y) + (flying ? 48 : 0);
-      const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: (b.tick - q.startTick) * 50 + f.alpha * 50 })) : undefined;
+      // buff filters run on their view's clock (0x82ebdc: t from the buff view's creation)
+      const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: this.buffViews.filterTime(q, sim) })) : undefined;
       const hit = this.hits.get(u.id);
       const damage = hit ? { dir: hit.dir, ms: sim - hit.start } : undefined;
       // GO_SPRITE at the interpolated actor z (0x84d738), which the river jump lifts (0xfd0320); the
@@ -634,9 +713,9 @@ export class ArtWorld implements WorldRenderer {
       const view = this.views.get(u.id);
       const deployMs = view?.filterStart != null ? sim - view.filterStart : undefined;
       const alpha = view?.waiting ? SUMMON_WAIT_ALPHA : undefined;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { z: lift, deployMs, alpha, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
+      const o: Parameters<BattleArt['drawUnit']>[8] = { z: lift, deployMs, deployFilter: view?.filter, alpha, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
         face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9,
-        clipFrame: this.clipFrames.get(u.id) };
+        clipFrame: this.clipFrames.get(u.id), color: this.effectFilters(u) };
       items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
     }
     // projectiles: Object layer, sorted by the ground-projected y like the actors (setPos3D 0x851b84;
@@ -710,6 +789,20 @@ export class ArtWorld implements WorldRenderer {
     r.textStageScale = null; // the HUD's view is the stage scale itself
     this.ui.drawStage(r, dpr);
     r.end();
+  }
+
+  /**
+   * Effect Filter components recolouring this actor's sprites (0x82ebdc, e.g. the ChargeEffect's
+   * filter_protection): each multiplies the colour in with the buff filters' arithmetic
+   * (sc/area_view.ts applyFilterColor; alpha kept for crown towers). Undefined: none.
+   */
+  private effectFilters(u: Unit): Col | undefined {
+    if (!this.filterParents.has(u.id)) return undefined;
+    const fs = this.fx.filters(u.id);
+    if (!fs.length) return undefined;
+    let c: Col = [1, 1, 1, 1, 0, 0, 0];
+    for (const q of fs) c = applyFilterColor(c, q, u.tower !== TOWER_NONE);
+    return c;
   }
 
   /**
@@ -887,10 +980,12 @@ export class ArtWorld implements WorldRenderer {
       // of data +0x3d4 are not in the engine) when the swing flag rises, via vt+0xc0 at the actor's x, y,
       // z (the tower princess: her tower's x, y at AttachedCharacterHeight); its buff-scaled speed
       // (0x82ccf0, effect +0xb0) only changes the effect's sound (0x82bf10)
+      // ChargeEffect on entering the charge clip (0x840d44 @0x841c78, sc/char_effects.ts)
+      if (u.tower === TOWER_NONE) this.charFx.viewUpdate(u, af);
       if (af?.attackStart) {
         const eff = ca.effects?.attackStartEffect;
         if (u.tower === TOWER_PRINCESS) {
-          if (eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: (m.towers.princess.attachedHeight as number | undefined) ?? 0 });
+          if (eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: (m.towers.princess.attachedHeight as number | undefined) ?? 0, loop: false });
         } else {
           this.playOnActor(u, eff);
         }
@@ -1025,7 +1120,8 @@ export class ArtWorld implements WorldRenderer {
         pv = {
           name: p.def.name, state: newProjectileViewState(), z: z0, prevZ: z0, tick: b.tick,
           startX: p.startX, startY: p.startY, startZ,
-          clip: null, ageMs: 0, v: null, x: p.x, y: p.y, trail: 0, seen: true,
+          clip: null, ageMs: 0, v: null, x: p.x, y: p.y, trail: 0, seen: true, shooter: p.shooter,
+          team: p.team as Team,
         };
         if (isRolling(pa)) pv.clip = new ClipPlayer(frames, pa.fps || 30);
         this.projViews.set(p.id, pv);
@@ -1066,14 +1162,18 @@ export class ArtWorld implements WorldRenderer {
     for (const [id, pv] of this.projViews) {
       if (pv.seen) continue;
       this.projViews.delete(id);
-      // a rolling projectile ends with its DeathEffect where it stopped (A: the death call site is not traced)
+      this.charFx.dropProjectile(id);
+      // (a piercing projectile's DeathEffect plays at its last hit, the 'impact' event: 0xf9188c)
+      // an out-and-back projectile back at its start without its shooter (Projectile_update 0xf90708,
+      // p->shooter cleared) plays PingpongDeathEffect (+0x1c8) through its view's vt+0x80 0x84e784: at the
+      // projectile's sprite, not following it (the view goes with the projectile)
       const pa = m.projectiles[pv.name];
-      const de = pa?.deathEffect;
-      if (de && this.fx.has(de)) {
-        const ang = nativeAngle(pv.x - pv.startX, pv.y - pv.startY);
-        this.fx.play(de, pv.x, pv.y, { team: 0, angle: pv.x !== pv.startX || pv.y !== pv.startY ? ang : 0 });
+      const pde = pa?.pingpongDeathEffect as string | undefined;
+      if (pde && this.fx.has(pde) && (!pv.shooter || pv.shooter.state === ST_DEAD)) {
+        this.fx.play(pde, pv.x, pv.y + (this.art.flip ? -5 : 5), { team: pv.team, z: pv.v ? pv.v.height / 0.002 : 0 });
       }
     }
+    this.charFx.pruneProjectiles(b.projectiles);
   }
   private lastProjSim = -1;
 

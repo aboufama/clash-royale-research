@@ -10,11 +10,11 @@ import type { Col, Mat } from './math.ts';
 import { colMul, matMul, WHITE } from './math.ts';
 import { emptyLibrary, ScLibraryCache } from './library.ts';
 import type { ScLibrary, ShapeCmd } from './library.ts';
-import type { BuildingClip, CharacterArt, Manifest } from './manifest.ts';
+import type { BuildingClip, CharacterArt, ClipRef, Manifest } from './manifest.ts';
 import { loadManifest } from './manifest.ts';
 import type { DrawOptions } from './renderer.ts';
 import { ScRenderer } from './renderer.ts';
-import type { EffectPlayer } from './effects.ts';
+import { applyFilterColor, filterClipLength, filterFrame } from './area_view.ts';
 import { turretFrame, unitSprite } from './units.ts';
 import { newProjectileViewState, projectileMatrix, projectileView } from './projectile_view.ts';
 import type { ProjectileViewFrame } from './projectile_view.ts';
@@ -53,6 +53,9 @@ export type Team = 0 | 1;
 export interface UnitDrawOptions {
   z?: number; // game units above ground (FlyingHeight is added automatically)
   deployMs?: number; // ms since deploy start: plays the deploy filter clip while < its length
+  /** the clip view vt+0x140 put in the filter slot (a death spawn, 0xf8aac8 -> 0x846e6c); undefined:
+   * DeployBaseAnimExportName (vt+0x138 0x846b2c), null: none */
+  deployFilter?: ClipRef | null;
   alpha?: number;
   color?: Col;
   loop?: boolean;
@@ -74,12 +77,6 @@ export interface UnitDrawOptions {
   /** facing vector (actor +0xf8/+0xfc) for turrets, and seconds since the last attack (recoil) */
   face?: [number, number];
   sinceAttackS?: number;
-}
-
-export interface AreaEffectHandle {
-  handles: number[];
-  /** stop everything now (clips fade out) */
-  stop(): void;
 }
 
 export class BattleArt {
@@ -488,8 +485,9 @@ export class BattleArt {
       const ref = art.damageFilters[o.damage.dir];
       f = this.filterAt(ref.sc, ref.export, o.damage.ms);
     }
-    if (!f && !o.damage && o.deployMs !== undefined && art.deployBaseAnimExportName) {
-      f = this.filterAt(art.deployBaseAnimExportName.sc, art.deployBaseAnimExportName.export, o.deployMs);
+    const deploy = o.deployFilter !== undefined ? o.deployFilter : art.deployBaseAnimExportName;
+    if (!f && !o.damage && o.deployMs !== undefined && deploy) {
+      f = this.filterAt(deploy.sc, deploy.export, o.deployMs);
     }
     if (!f) return m;
     const local: Mat = [m[0], m[1], m[2], m[3], 0, 0];
@@ -501,26 +499,30 @@ export class BattleArt {
     let c: Col = o.color ? [...o.color] as Col : [1, 1, 1, 1, 0, 0, 0];
     if (o.alpha !== undefined) c[3] *= o.alpha;
     for (const b of o.buffs ?? []) {
+      // each buff view's filter multiplies its colour in (0x82ebdc, sc/area_view.ts applyFilterColor)
       const bc = this.buffColor(b.name, b.ms);
-      if (bc) c = colMulTo(c, bc);
+      if (bc) c = applyFilterColor(c, bc);
     }
     return c;
   }
 
   /**
-   * Colour transform of a buff's filter clip (character_buffs FilterExportName: filter_cold for
-   * Freeze / Zap stun / Ice Wizard slow, filter_rage, filter_poison) `ms` after it was applied.
-   * Pulsing filters loop; easing ones hold their last frame. Null if the buff has no filter.
+   * Colour of a buff's filter clip (character_buffs FilterFile / FilterExportName: filter_cold for
+   * Freeze / Zap stun / Ice Wizard slow, filter_rage, filter_poison) `ms` after the buff's view was
+   * made: the filter object 0x82ea34 / 0x82ebdc loops over the clip's length (frame ⌊t·n / D⌋) unless
+   * FilterInheritLifeDuration, which plays it once over the buff's time `buffMs`; the colour is its
+   * first child's at that frame. Null without a filter, or once a non-looping one has ended.
    */
-  buffColor(buff: string, ms: number): Col | null {
+  buffColor(buff: string, ms: number, buffMs = 0): Col | null {
     const b = this.manifest.buffs?.[buff];
     const f = b?.filter;
     if (!f) return null;
     const lib = this.libs.get(f.sc);
     const clip = lib?.clip(f.export);
     if (!lib || !clip) return null;
-    let fr = Math.floor((Math.max(0, ms) * clip.fps) / 1000);
-    fr = f.loop ? fr % clip.frameCount : Math.min(clip.frameCount - 1, fr);
+    const inherit = !!b.filterInheritLifeDuration;
+    const fr = filterFrame(Math.max(0, Math.trunc(ms)), clip.frameCount, inherit ? buffMs : filterClipLength(clip.frameCount, clip.fps), !inherit);
+    if (fr === null) return null;
     const i = clip.frameStart[fr];
     if (clip.frameStart[fr + 1] === i) return null;
     const ci = clip.elements[i * 3 + 2];
@@ -595,38 +597,6 @@ export class BattleArt {
     if (top && !o.shadow) r.draw(lib, top.export, 0, m, c);
     return { export: clip.export, frame, mirror: false, dir: 0, action: o.state ?? 'clip', frames: clip.frames, fps,
       done };
-  }
-
-  /**
-   * Area effect object visuals (manifest.areaEffects): OneShotEffect + SpawnEffect once, the
-   * radius-scaled ground circle (ScaledEffect, authored for the data Radius) and the LoopingEffect for
-   * `durationMs` (default LifeDuration; one-shot AEOs like Zap ignore it). Death explosions without
-   * own visuals play `sourceEffect` if given (e.g. the dying unit's deathEffect, see sourceEffects).
-   */
-  playAreaEffect(fx: EffectPlayer, name: string, x: number, y: number,
-    o: { team?: Team; radius?: number; durationMs?: number; z?: number; sourceEffect?: string } = {}): AreaEffectHandle {
-    const a = this.manifest.areaEffects?.[name];
-    const handles: number[] = [];
-    if (a) {
-      const ref = a.radius ?? o.radius ?? 1000;
-      const radius = o.radius ?? ref;
-      const life = o.durationMs ?? a.lifeDuration ?? 0;
-      const longLived = life > 50;
-      const e = a.effects;
-      const base = { team: o.team ?? 0, z: o.z };
-      for (const k of ['oneShotEffect', 'spawnEffect']) {
-        if (e[k]) handles.push(fx.play(e[k], x, y, { ...base, radius, refRadius: ref }));
-      }
-      if (e.scaledEffect) {
-        handles.push(fx.play(e.scaledEffect, x, y, { ...base, radius, refRadius: ref, durationMs: longLived ? life : undefined }));
-      }
-      if (e.loopingEffect && longLived) {
-        handles.push(fx.play(e.loopingEffect, x, y, { ...base, radius, refRadius: ref, durationMs: life }));
-      }
-    }
-    if (o.sourceEffect) handles.push(fx.play(o.sourceEffect, x, y, { team: o.team ?? 0, z: o.z }));
-    const hs = handles.filter((h) => h > 0);
-    return { handles: hs, stop: () => { for (const h of hs) fx.stop(h, true); } };
   }
 
   /** Deploy countdown clock over a deploying unit (ui.sc troopDeployTimer_player / _enemy); frac 0..1. */
@@ -1258,11 +1228,6 @@ function idBounds(lib: ScLibrary, id: number, m: Mat, depth = 0): [number, numbe
   };
   visit(id, m, depth);
   return b[0] <= b[2] ? b : null;
-}
-
-function colMulTo(p: Col, q: Col): Col {
-  return [p[0] * q[0], p[1] * q[1], p[2] * q[2], p[3] * q[3],
-    Math.min(255, p[4] + q[4] * p[0]), Math.min(255, p[5] + q[5] * p[1]), Math.min(255, p[6] + q[6] * p[2])];
 }
 
 function spriteOf(sp: { export: string; frame: number; mirror: boolean }): UnitSprite {

@@ -165,7 +165,8 @@ export class Announcements {
 
   /** Battle phase like 0xd56070: section ms left, overtime, elixir rate x10 and its notify flag. */
   private phase(b: Battle): { msLeft: number; ot: boolean; rate: number; notify: boolean; sectionSec: number } {
-    const reg = b.regulationTicks, ot = b.tick >= reg;
+    // the timeline's section (0xd56738): overtime only if regulation ran out with equal crowns (Battle.overtime)
+    const reg = b.regulationTicks, ot = b.overtime;
     const end = ot ? reg + b.overtimeTicks : reg;
     const msLeft = Math.max(0, (end - b.tick) * 50);
     const raw = (b as unknown as { timeline?: { raw?: Record<string, unknown> } }).timeline?.raw ?? {};

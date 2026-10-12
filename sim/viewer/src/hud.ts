@@ -17,9 +17,11 @@ import type { ScLibrary } from './sc/library.ts';
 import type { DrawOptions, ScRenderer } from './sc/renderer.ts';
 import { ClipPlayer } from './sc/anim.ts';
 import { CrownFly, CrownPanelFade, crownTowerGone } from './sc/crown_fly.ts';
+import { HandSounds, sound } from './sc/sound.ts';
 import {
-  barTipX, type CardStart, cardEntry, cardRaise, cardSlot, dropWaitStep, elixirDropXs, ElixirBar, HandCard, HandWiggle,
-  nextCardTimer, PanelFlash, refundBar, regenBadgeText, rotScale, spellInstanceId, type StageLayout, stageLayout, UiBar,
+  barTipX, battleClock, type CardStart, cardEntry, cardRaise, cardSlot, dropWaitStep, elixirDropXs, ElixirBar, HandCard,
+  HandPanelSlide, HandWiggle, nextCardTimer, PanelFlash, refundBar, regenBadgeText, rotScale, spellInstanceId,
+  type StageLayout, stageLayout, topRightFade, UiBar,
 } from './sc/ui_port.ts';
 
 type Rect = [number, number, number, number];
@@ -133,6 +135,8 @@ export interface HudDrag {
 
 export class Hud {
   readonly art: BattleArt;
+  /** hand card / panel sounds (sc/sound.ts) */
+  readonly handSounds = new HandSounds();
   layout: StageLayout = stageLayout(400, 800);
   /** whose hand and elixir the bottom HUD shows */
   team: 0 | 1 = 0;
@@ -201,6 +205,24 @@ export class Hud {
   /** the time update's previous seconds (+0x288) and visible elixir rate (+0x370) */
   private prevSecs = -1;
   private prevRate = 0;
+  /** the clock of the last time update (0x8d38c4): section and seconds left */
+  private clock = { ot: false, secs: 0 };
+  /** HUD_topRight's alpha byte (0x8d1e6c; 0 at the setup 0x8cf3b8) */
+  private topAlpha = 0;
+  /**
+   * Set by the owner each frame before update(): battle input blocked (battle screen 0xbe4400: the intro
+   * before its actionFrame, the result screen, the battle over), the HUD shown (not hidden by the intro,
+   * +0x29c) and the simulation ms of the frame (the timeline runs on after the end).
+   */
+  blocked = false;
+  hudShown = true;
+  simMs = 0;
+  /** HUD_player's slide-in and the hand update gate (0x8db8e0 / 0x8dc37c) */
+  readonly slide = new HandPanelSlide();
+  /** HUD_player's bounds height at setup (vt+0x68 of the panel, the slide distance) */
+  private slideDist = 0;
+  /** what the gated hand update last gave the next card (0x909fbc) and NextSpellTimer */
+  private nextShown: { card: string | null; gray: boolean; text: string | null } = { card: null, gray: false, text: null };
 
   constructor(art: BattleArt) {
     this.art = art;
@@ -227,6 +249,7 @@ export class Hud {
         main: uiBar(body, end.bounds[2] - end.bounds[0]), ghostBar: uiBar(ghost, 0), refund };
     }
     this.amountTxt = childInfo(ui, 'HUD_player', ['elixir_bar', 'elixirBarLeftNumbers', 'elixirAmount', 'txt'])?.m ?? null;
+    this.slideDist = this.panelHeight(ui);
     const hp = ui.clip('HUD_player');
     if (hp?.names) {
       const only: NonNullable<DrawOptions['named']> = {};
@@ -276,6 +299,34 @@ export class Hud {
     return clip?.frameCount ?? 1;
   }
 
+  /**
+   * vt+0x68 of the HUD_player panel at the end of its setup 0x8da088 (0x123ca58 -> 0x125a0f4): the height
+   * of its visible content: HUD_player's frame-0 children with `panel` replaced by panel_ingame_blue and
+   * the children the setup leaves hidden (ability_location, NextSpellTimer, bar_refund) left out; the hand
+   * cards (scale 0 at the next card) and the empty next card add nothing (which children count is A).
+   */
+  private panelHeight(ui: ScLibrary): number {
+    const clip = ui.clip('HUD_player');
+    if (!clip) return 0;
+    const skip = new Set(['ability_location', 'NextSpellTimer', 'bar_refund']);
+    const bm = ui.banks[clip.bank].m;
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const ci = clip.elements[i * 3];
+      const name = clip.names?.[ci];
+      if (name && skip.has(name)) continue;
+      const mi = clip.elements[i * 3 + 1];
+      const m: Mat = mi >= 0 ? [...bm.subarray(mi * 6, mi * 6 + 6)] as Mat : [1, 0, 0, 1, 0, 0];
+      const local = name === 'panel' && ui.has('panel_ingame_blue') ? ui.frameBounds('panel_ingame_blue', 0) as Rect | null
+        : boundsOf(ui, clip.children[ci]);
+      if (!local) continue;
+      const r = xform(m, local);
+      if (r[1] < y0) y0 = r[1];
+      if (r[3] > y1) y1 = r[3];
+    }
+    return y1 > y0 ? f32(y1 - y0) : 0;
+  }
+
   private text(id: string, vars: Record<string, string | number> = {}): string {
     let s = this.art.manifest.hud.texts?.[id] ?? '';
     for (const [k, v] of Object.entries(vars)) s = s.replace(`<${k}>`, String(v));
@@ -293,7 +344,8 @@ export class Hud {
 
   /** HUD_player origin on the stage. */
   private get playerOrigin(): [number, number] {
-    return [this.layout.stageW * 0.5, this.layout.stageH];
+    // the panel sits at (stageW / 2, stageH) (0x8da088); its HUD_player clip slides by +0x24 (0x8db8e0)
+    return [this.layout.stageW * 0.5, this.layout.stageH + this.slide.offset(this.slideDist)];
   }
 
   /**
@@ -374,6 +426,7 @@ export class Hud {
 
   /** New battle: cards cycle in again with the start delays (0x8e0aa8: 0.6 + 0.18 i s). */
   reset(): void {
+    this.handSounds.reset();
     this.cards = dealHand();
     this.selected = -1;
     this.drag = null;
@@ -398,6 +451,11 @@ export class Hud {
     for (const r of this.regen) { r.visible = false; r.clip.gotoAndStop(0); r.text = ''; }
     this.prevSecs = -1;
     this.prevRate = 0;
+    this.clock = { ot: false, secs: 0 };
+    this.topAlpha = 0;
+    this.slide.t = 0;
+    this.slide.shown = false;
+    this.nextShown = { card: null, gray: false, text: null };
   }
 
   /**
@@ -477,6 +535,7 @@ export class Hud {
       if (!crownTowerGone(!!king && king.state !== ST_DEAD, f.king, f.unit.state !== ST_DEAD)) continue;
       const [sx, sy] = this.project ? this.project(f.x, f.y) : [0, 0];
       f.fly.start(sx, sy);
+      sound.ui(f.fly.player ? 'crownPlayer' : 'crownEnemy'); // 0x8dd90c's first update (+0xb1)
     }
     const inAir = [0, 0];
     for (const f of flies) {
@@ -506,6 +565,7 @@ export class Hud {
   }
 
   select(slot: number): void {
+    if (slot >= 0 && slot !== this.selected) this.handSounds.select(slot); // 0x8e12e4 (sc/sound.ts)
     for (let i = 0; i < 4; i++) this.cards[i].select(i === slot);
     this.selected = slot;
   }
@@ -569,8 +629,14 @@ export class Hud {
     // Before each card's update its full-elixir wiggle entry is added or removed (0x907654 / 0x9077f0);
     // the elixir the hand sees is hundredths (0xfa1d10). A card waiting for elixir is released at the
     // end of its update once affordable (cost · 100 <= hundredths, +0x31a) or out of time.
+    // HUD_player shown and slide (0x8db8e0, after the elixir bar): blocked input drops the selection
+    // (0x8e11b4 on each card); the hand update below runs its per-card part only once the panel is 40 % in
+    const shown = !this.blocked && this.hudShown;
+    if (!shown && this.selected >= 0) this.select(-1);
+    this.slide.update(dt, shown);
+    this.handSounds.slide(this.slide.t);
     const maxHundredths = Math.trunc(b.maxElixir / 100);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 4 && this.slide.handLive; i++) {
       const c = this.cards[i];
       const card = p.hand[i] ?? -1;
       if (card < 0 || hundredths < maxHundredths || !this.area) this.wiggle.remove(i);
@@ -578,7 +644,11 @@ export class Hud {
         const s = cardSlot(this.area, i, this.cardH).s;
         this.wiggle.add(i, s, s, spellInstanceId(p.deck[card]?.name ?? ''));
       }
+      const tBefore = c.t, cardBefore = c.card;
       if (c.update(dt, card, this.dragOf(i) !== null) && this.selected === i) this.selected = -1;
+      const sdef = card >= 0 ? p.deck[card] : undefined; // card sounds of 0x8e1408 (sc/sound.ts)
+      this.handSounds.card(i, tBefore, cardBefore, c.armed, c.t, card, !!sdef && (b.infiniteElixir || sdef.cost * 100 <= hundredths),
+        sdef ? (this.art.manifest.cards[sdef.name] as { rarity?: string } | undefined)?.rarity : undefined);
       if (c.waitT > 0) {
         const def = card >= 0 ? p.deck[card] : undefined;
         const affordable = !!def && (b.infiniteElixir || def.cost * 100 <= hundredths);
@@ -587,11 +657,21 @@ export class Hud {
         if (st.release) this.onRelease?.(i);
       }
     }
+    // next card (0x909fbc with the queue's head 0xfa4170) and NextSpellTimer, also behind the gate
+    if (this.slide.handLive) {
+      const nt = nextCardTimer(p.cycleTimer);
+      this.nextShown = { card: p.queue.length ? p.deck[p.queue[0]]?.name ?? null : null, gray: nt.gray, text: nt.text };
+    }
     this.wiggle.update(dt);
     // the spend drops: deleted once stopped (0x8db8e0 after the hand update), advanced as clips
     this.drops = this.drops.filter((d) => { const was = d.clip.playing; d.clip.advance(dt); return was; });
     this.updateCrowns(dt, b);
-    const ot = b.tick >= b.regulationTicks;
+    // HUD_topRight's fade (0x8d1e6c), then the time update 0x8d38c4 on the timeline's section and clock
+    this.topAlpha = topRightFade(this.topAlpha, dt, this.blocked);
+    const sinceEnd = b.result ? Math.floor((this.simMs - (b.result.tick + 1) * 50) / 50 + 1e-6) : 0;
+    const clock = battleClock(b, sinceEnd);
+    this.clock = { ot: clock.ot, secs: clock.secs };
+    const ot = clock.ot;
     if (ot !== this.wasOvertime) {
       this.wasOvertime = ot;
       const ui = this.ui;
@@ -606,8 +686,7 @@ export class Hud {
     }
     // elixir badge of the time update 0x8d38c4 (skipped while the battle is over and on its first update)
     const rate10 = elixirRateX10(b);
-    const reg = b.regulationTicks;
-    const secs = Math.floor((Math.max(0, ((ot ? reg + b.overtimeTicks : reg) - b.tick) * 50) + 999) / 1000);
+    const secs = clock.secs;
     const badge = this.regen[ot ? 1 : 0];
     if (badge && !b.result && this.prevSecs >= 0) {
       if (rate10 < 11) badge.visible = false;
@@ -641,11 +720,8 @@ export class Hud {
         enemyRankedLeague: { hide: true }, clan_icon: { hide: true } },
       text: { enemyName: this.opponentName, enemyClan: this.text('TID_NO_CLAN') },
     });
-    // top right: time left / overtime
-    const reg = b.regulationTicks;
-    const ot = b.tick >= reg;
-    const leftMs = Math.max(0, ((ot ? reg + b.overtimeTicks : reg) - b.tick) * 50);
-    const secs = Math.floor((leftMs + 999) / 1000);
+    // top right: time left / overtime, as the last time update left them (0x8d38c4)
+    const { ot, secs } = this.clock;
     const ss = secs % 60 < 10 ? `0${secs % 60}` : String(secs % 60);
     const time = this.text('TID_TIME_M_S', { M: Math.floor(secs / 60), S: ss }) || `${Math.floor(secs / 60)}:${ss}`;
     // 0x8d38c4: the time text's green and blue bytes (+0xa / +0xb) are -(secs & 1) below 31 s, else 0xff:
@@ -661,7 +737,9 @@ export class Hud {
         text: { timeLeft: time, TID_TIME_LEFT: this.text('TID_TIME_LEFT'), TID_OVERTIME: this.text('TID_OVERTIME') },
       };
     };
-    if (!ot || this.topRight.playing) r.draw(ui, 'HUD_topRight', this.topRight.frame, [1, 0, 0, 1, L.stageW, 0], WHITE, trOpts(0));
+    // HUD_topRight at its fade alpha (0x8d1e6c); HUD_topRight_overtime has none
+    const trCol: Col = [1, 1, 1, this.topAlpha / 255, 0, 0, 0];
+    if ((!ot || this.topRight.playing) && this.topAlpha > 0) r.draw(ui, 'HUD_topRight', this.topRight.frame, [1, 0, 0, 1, L.stageW, 0], trCol, trOpts(0));
     if (ot) r.draw(ui, 'HUD_topRight_overtime', this.ot.frame, [1, 0, 0, 1, L.stageW, 0], WHITE, trOpts(1));
     // right middle: crowns at the river line, x and y floored (0x123c550 from 0x8cd4ec / 0x8d1e6c), at
     // the alpha of 0x8d1e6c (hidden until a crown flies); counters minus the flights in the air
@@ -677,7 +755,7 @@ export class Hud {
     }
     // bottom: HUD_player and the hand; the result screen hides the hand panels (0xbe0100 ->
     // 0x8d5ff8(hud, 0 / 1, 0): HUD +0x90 / +0x98 invisible)
-    if (!this.handHidden) this.drawHandPanel(r, b, ui, p);
+    if (!this.handHidden && this.slide.visible) this.drawHandPanel(r, b, ui, p);
     // emote button
     r.draw(ui, 'HUD_taunt', 0, [1, 0, 0, 1, L.stageW * 0.5, L.stageH], WHITE, {
       named: { buttons: { frame: 0 }, mute_btn: { hide: true }, muted: { hide: true } },
@@ -703,8 +781,8 @@ export class Hud {
   private drawHandPanel(r: ScRenderer, b: Battle, ui: ScLibrary, p: Battle['players'][number]): void {
     const [ox, oy] = this.playerOrigin;
     const hm: Mat = [1, 0, 0, 1, ox, oy];
-    // next card and NextSpellTimer follow the hand timer (0x8dc37c)
-    const nt = nextCardTimer(p.cycleTimer);
+    // next card and NextSpellTimer as the gated hand update last set them (0x8dc37c)
+    const nt = this.nextShown;
     const named: NonNullable<DrawOptions['named']> = {
       // NextSpellTimer is drawn after the next card (below); `darken` shows at graphics level 2
       // (0x8da088), assumed (A)
@@ -760,7 +838,7 @@ export class Hud {
     // grayscale while the hand timer runs
     if (this.next) {
       const nr = this.next;
-      const card = p.queue.length ? p.deck[p.queue[0]]?.name : undefined;
+      const card = nt.card;
       const s = (nr[3] - nr[1]) / 1.34 / this.cardH;
       const cx = (nr[0] + nr[2]) / 2, cy = (nr[1] + nr[3]) / 2;
       if (card) this.art.drawCard(r, card, matMul(hm, [s, 0, 0, s, cx, cy]), { noCost: true, grayscale: nt.gray });
@@ -776,7 +854,7 @@ export class Hud {
     const avail = p.elixir - p.pending;
     const shown = avail < 1 ? 0 : Math.trunc(Math.min(avail, b.maxElixir) / 100);
     for (let i = 0; i < 4; i++) {
-      const def = p.deck[p.hand[i]];
+      const def = p.deck[this.cards[i].card];
       const m = this.slotMatrix(i);
       if (!def || !m) continue;
       if (this.dragOf(i)) continue; // drawn at the pointer

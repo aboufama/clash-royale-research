@@ -69,3 +69,35 @@ export function rotate1024(x: number, y: number, deg: number): [number, number] 
   const s = sin1024(deg);
   return [Math.trunc((c * x - s * y) / 1024), Math.trunc((s * x + c * y) / 1024)];
 }
+
+/** atan(i / 128) in whole degrees for i = 0..128: the int8 table at libg 0x3432d8. */
+const ATAN_DEG: readonly number[] = [
+  0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 9, 10, 10, 11, 11, 11, 12, 12, 13, 13, 14, 14, 14,
+  15, 15, 16, 16, 17, 17, 17, 18, 18, 19, 19, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23, 23, 24, 24, 24, 25, 25, 25, 26,
+  26, 27, 27, 27, 28, 28, 28, 29, 29, 29, 30, 30, 30, 31, 31, 31, 32, 32, 32, 33, 33, 33, 34, 34, 34, 35, 35, 35, 35,
+  36, 36, 36, 37, 37, 37, 37, 38, 38, 38, 39, 39, 39, 39, 40, 40, 40, 40, 41, 41, 41, 41, 42, 42, 42, 42, 43, 43, 43,
+  43, 44, 44, 44, 44, 45, 45, 45,
+];
+
+/**
+ * Angle of the vector (x, y) in whole degrees 0..359 (0 = +x, 90 = +y), integer math exactly as
+ * 0x12946d4 (reached through 0x1294e04 on a facing vector) [STAT].
+ */
+export function angleOf(x: number, y: number): number {
+  if (x === 0 && y === 0) return 0;
+  const t = Math.trunc;
+  if (x > 0 && y >= 0) return y < x ? ATAN_DEG[t((y << 7) / x)] : 90 - ATAN_DEG[t((x << 7) / y)];
+  const ax = x < 0 ? -x : x;
+  if (x < 1 && y > 0) return ax < y ? ATAN_DEG[t((ax << 7) / y)] + 90 : 180 - ATAN_DEG[t((y << 7) / ax)];
+  const ay = y < 0 ? -y : y;
+  if (x >= 0 || y > 0) {
+    if (ax < ay) return ATAN_DEG[t((ax << 7) / ay)] + 270;
+    if (x === 0) return 0;
+    let v = 360 - ATAN_DEG[t((ay << 7) / ax)];
+    if (v > 359) v = -ATAN_DEG[t((ay << 7) / ax)];
+    return v < 0 ? v + 360 : v;
+  }
+  if (ay < ax) return ATAN_DEG[t((ay << 7) / ax)] + 180;
+  if (y !== 0) return 270 - ATAN_DEG[t((ax << 7) / ay)];
+  return 0;
+}

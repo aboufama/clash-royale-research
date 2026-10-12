@@ -7,6 +7,7 @@
 Output (gitignored, fully rebuildable): sim/viewer/assets/
     sc/<name>.json      one per .sc file: shapes, movie clips, matrix banks, exports
     sc/<name>_<i>.png   texture atlases (decoded from .sctx; tree-shaken + repacked)
+    audio/              sounds (tools/audio/bake_audio.py): one .ogg per FMOD sample used + sounds.json
     manifest.json       game names -> art (characters, projectiles, effects, towers,
                         arena + alignment constants, cards, HUD)
 
@@ -110,10 +111,15 @@ CHAR_EFFECT_FIELDS = ("SpawnEffect", "DeathEffect", "AttackStartEffect", "Damage
                       "TargettedDamageEffect2", "TargettedDamageEffect3", "DamageLevelTransitionEffect12",
                       "DamageLevelTransitionEffect23", "SpawnCharacterEffect", "SpawnPathfindEffect",
                       "IngamePathfindEffect", "ProjectileEffectSpecial", "AttackStartEffect2", "LandingEffect",
-                      "ReflectedAttackEffect", "ReflectedAttackTargetedEffect", "BuffWhenNotAttackingEffect")
+                      "ReflectedAttackEffect", "ReflectedAttackTargetedEffect", "BuffWhenNotAttackingEffect",
+                      # read by the views too (sc/char_effects.ts, docs/EFFECTS.md); no supported card sets them
+                      "TakeDamageEffect", "TargetedHitEffectSpecial", "AttackStartEffectSpecial", "AttackStartEffect3")
+# Effects the client plays by a static name (Tables +0xec0 "Damage": World_areaDamage 0xf97be8, fallback
+# damage effect of characters, spells and spawned projectiles; sc/char_effects.ts).
+GLOBAL_EFFECTS = ("Damage",)
 CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim", "DeathSpawnDeployBaseAnim")
 PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect",
-                      "OverrideShooterProjectileEffect")
+                      "OverrideShooterProjectileEffect", "ChainedHitEndEffect")
 
 # Common UI pieces (sc/ui_common.sc: 9-slice buttons and popup backgrounds) for the simulator's own
 # side panel, so its controls use the game's art.
@@ -164,7 +170,7 @@ RESULT_EXPORT = "pvp_battle_end_new"
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
              "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
-             "TID_MATCH_OVER", "TID_TIME_M_S", "TID_YOU", "TID_ENEMY", "TID_NOT_ENOUGH_MANA")
+             "TID_MATCH_OVER", "TID_TIME_M_S", "TID_YOU", "TID_ENEMY", "TID_NOT_ENOUGH_MANA", "TID_INVALID_SPELL_POSITION")
 
 
 def r2(v: float) -> float | int:
@@ -564,6 +570,7 @@ class Baker:
         self.m_effects: dict[str, dict] = {}
         self.m_emitters: dict[str, dict] = {}
         self.missing_effects: set[str] = set()
+        self.effect_sounds: set[str] = set()  # resource names of the baked effects' sound components
         self.warnings: list[str] = []
 
     # -- helpers ---------------------------------------------------------------------------------
@@ -611,6 +618,14 @@ class Baker:
         out = {k: e[k] for k in ("Loop", "FollowParent", "Scale", "ShakeScreen", "ForcedLength", "EnemyVersion",
                                  "PivotClip", "ShakeMaxIntensity") if k in e}
         self.m_effects[name] = out
+        # sound components (tools/audio): each component's Sound starts with the component (age >= Time,
+        # 0x82bf10), visual or not; KillLoopingSoundsOnEnd (data +0xae) keys them off when it stops
+        snd = [[c.get("Time") or 0, c["Sound"]] for c in e.get("RenderableComponents", []) if c.get("Sound")]
+        if snd:
+            out["sounds"] = snd
+            self.effect_sounds.update(s for _t, s in snd)
+        if e.get("KillLoopingSoundsOnEnd"):
+            out["KillLoopingSoundsOnEnd"] = True
         comps = []
         for c in e.get("RenderableComponents", []):
             t = c.get("Type")
@@ -786,7 +801,9 @@ class Baker:
                   "LoopMoveEffect", "WalkingSpeedTweakPercentage", "StopMovementAfterMS", "WaitMS",
                   "RotateAngleSpeed", "AttackFinishTime", "JumpEnabled", "SpawnEffectOnce",
                   # client-action health bar (healthbars.toml parts, view 0x8405c4 / 0x853574)
-                  "OnStartingClientActions", "NewHealthBarOffsetX", "NewHealthBarOffsetXBlue", "NewHealthBarOffsetXRed"):
+                  "OnStartingClientActions", "NewHealthBarOffsetX", "NewHealthBarOffsetXBlue", "NewHealthBarOffsetXRed",
+                  # targeted effects' source offset (0xde1220) and the fallback damage effect flag (+0x138)
+                  "TargetEffectY", "UseFallbackDamageEffect"):
             if k in row:
                 entry[k[0].lower() + k[1:]] = row[k]
         if not entry.get("healthBar"):
@@ -887,7 +904,8 @@ class Baker:
         d: dict = {}
         self.m_aeos[name] = d
         for k in ("Radius", "LifeDuration", "HitSpeed", "HitSpeedOffset", "Buff", "BuffTime", "Pushback",
-                  "ProjectileStartHeight", "MaximumTargets", "ScaledEffectFollowAeO", "ParentLoopingEffectToSelf"):
+                  "ProjectileStartHeight", "MaximumTargets", "ScaledEffectFollowAeO", "ParentLoopingEffectToSelf",
+                  "Clone", "FollowBehaviour"):
             if k in row:
                 d[k[0].lower() + k[1:]] = row[k]
         fx = {}
@@ -915,9 +933,8 @@ class Baker:
         if isinstance(row.get("SpawnCharacter"), str):
             self.unit(row["SpawnCharacter"])
             d["spawnCharacter"] = row["SpawnCharacter"]
-        # Is the scaled effect authored at this radius? Effect units are SC px (radius clips match
-        # Radius / 1000 * 29.85 px at scale 1, e.g. Freeze 3000 -> spell_freeze_radius_blue 178 px wide).
-        d["scaleNote"] = "ScaledEffect is authored for `radius`; scale it by radius_now / radius"
+        # the view 0x833b84 plays the effects unscaled; "Scaled" is the ScaledEffect's time, stretched over
+        # the object's life (sc/area_view.ts)
 
     def buff(self, name: str | None):
         if not name or not isinstance(name, str) or name in self.m_buffs:
@@ -937,24 +954,18 @@ class Baker:
             lib = self.want(rel, row["FilterExportName"])
             if lib:
                 f = {"sc": lib, "export": row["FilterExportName"], **self.clip_info(rel, row["FilterExportName"])}
-                # loop if the clip ends where it starts (filter_rage pulses; filter_cold/poison ease in and hold)
-                src = self.source(rel)
-                mc = src.sc.movieclips.get(src.sc.exports[row["FilterExportName"]])
-                f["loop"] = False
-                if mc and len(mc.frames) > 2:
-                    _m, cols = src.sc.banks[mc.bank]
-
-                    def col_at(fi):
-                        st = mc.frame_starts[fi]
-                        els = mc.elements[st:st + mc.frames[fi].count]
-                        if not els or els[0][2] == NO_INDEX:
-                            return (1, 1, 1, 1, 0, 0, 0)
-                        c = cols[els[0][2]]
-                        return (c.r_mul, c.g_mul, c.b_mul, c.a_mul, c.r_add, c.g_add, c.b_add)
-                    a, b = col_at(0), col_at(len(mc.frames) - 1)
-                    f["loop"] = all(abs(x - y) < (0.05 if i < 4 else 8) for i, (x, y) in enumerate(zip(a, b)))
+                # the buff view 0x8348c8 makes the filter 0x82ea34 with loop = !FilterInheritLifeDuration
+                # (looping over the clip's length; with the flag it plays once over the buff's time)
+                f["loop"] = not row.get("FilterInheritLifeDuration")
                 d["filter"] = f
-        for k in ("Effect", "MarkEffect", "BuffEffect", "RemoveEffect", "DeathEffectOverride"):
+        # buff view flags (BuffData reader 0xddb0d8; sc/area_view.ts)
+        for k in ("FilterInheritLifeDuration", "FilterAffectsTransformation", "EffectScale", "Scale", "ShadowAlpha",
+                  "LoopContinuousEffect", "ContinuousEffectScale", "PreContinuousEffectScale",
+                  "TopEffectVerticalOffset", "TopEffectDisabledForAttachedCharacters", "HideEffectWhenUnderground"):
+            if k in row:
+                d[k[0].lower() + k[1:]] = row[k]
+        for k in ("Effect", "MarkEffect", "BuffEffect", "RemoveEffect", "DeathEffectOverride", "HitEffect",
+                  "ContinuousEffect", "PreContinuousEffect", "TopEffect"):
             if isinstance(row.get(k), str) and row[k]:
                 self.effect(row[k])
                 d[k[0].lower() + k[1:]] = row[k]
@@ -1261,13 +1272,6 @@ class Baker:
                 ch = c.get(k)
                 if isinstance(ch, str) and ch in characters and "card" not in characters[ch]:
                     characters[ch]["card"] = cname
-        # area effects created by deaths get the dying unit's DeathEffect as their visual source
-        for cname, ch in characters.items():
-            dae = ch.get("deathAreaEffect")
-            if isinstance(dae, str) and dae in self.m_aeos:
-                srcfx = self.m_aeos[dae].setdefault("sourceEffects", {})
-                if ch.get("effects", {}).get("deathEffect"):
-                    srcfx[cname] = ch["effects"]["deathEffect"]
         spells = {}
         for cname, c in cards.items():
             if c.get("table") != "spells_other":
@@ -1283,7 +1287,7 @@ class Baker:
         towers = self.towers(self.m_projs)
         arena = self.arena(a.location)
         hud = self.hud()
-        extra_fx = [s for s in (a.effects or "").split(",") if s.strip()]
+        extra_fx = list(GLOBAL_EFFECTS) + [s for s in (a.effects or "").split(",") if s.strip()]
         for e in extra_fx:
             self.effect(e.strip())
 
@@ -1338,6 +1342,15 @@ class Baker:
                            "left-facing = horizontal mirror of 2..N-1; N dirs span 180 degrees"),
             "missingEffects": sorted(self.missing_effects),
         }
+        # sounds (tools/audio/bake_audio.py): the effects' sound components, the cards' CastSound
+        # (King view 0x85b058), the battle UI's client-table sounds, time sounds and music
+        if a.audio:
+            sys.path.insert(0, str(ROOT / "tools" / "audio"))
+            import bake_audio  # noqa: E402
+            cast = {c: self.spells.get(c, {}).get("CastSound") for c in cards}
+            manifest["audio"] = bake_audio.bake(OUT, self.effect_sounds, {c: s for c, s in cast.items() if s},
+                                                {c.get("rarity") for c in cards.values() if c.get("rarity")},
+                                                a.location, self.log)
         (OUT / "manifest.json").write_text(json.dumps(manifest, indent=1))
         self.log(f"manifest: {len(characters)} characters/buildings, {len(projectiles)} projectiles, "
                  f"{len(self.m_aeos)} area effects, {len(self.m_buffs)} buffs, {len(self.m_effects)} effects, "
@@ -1377,6 +1390,7 @@ def main():
     ap.add_argument("--format", choices=["webp", "png"], default="webp", help="atlas format (lossless either way)")
     ap.add_argument("--downscale", type=float, default=1.0, help="atlas scale factor, e.g. 0.5 for small bundles")
     ap.add_argument("--no-fonts", dest="fonts", action="store_false", help="do not copy the HUD fonts")
+    ap.add_argument("--no-audio", dest="audio", action="store_false", help="do not bake the sounds (tools/audio)")
     ap.add_argument("--out", type=Path, default=None, help="output dir (default sim/viewer/assets)")
     ap.add_argument("--list-chars", action="store_true")
     args = ap.parse_args()

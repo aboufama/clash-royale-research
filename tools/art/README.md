@@ -67,11 +67,12 @@ Princess exports, `chr_king.sc` King, destroyed exports), the arena (`locations.
 `health_bars.csv`, `healthbars.toml`). Buildings: labelled single clips (`clip`: Tesla
 deploy/idle/appear/hide, Tombstone, bombs, Rage bottle, Elixir Collector), clips with a `turret`
 child (Cannon, X-Bow: 19 aim frames over 180 degrees) or direction exports (Inferno Tower, Mortar).
-`areaEffects` (`area_effect_objects`: radius, lifetime, Scaled/Looping/OneShot/Spawn/Hit effects,
-`sourceEffects` = the dying unit's DeathEffect for death explosions) and `buffs`
-(`character_buffs`: filter clip + loop flag, attached effect). Scaled ground circles are authored
-at the data radius in SC pixels (Freeze 3000 -> `spell_freeze_radius_blue` 178 px wide = 2 x 3 x
-29.85), which independently confirms the arena scale. Tower ruins come from the permanent particle
+`areaEffects` (`area_effect_objects`: radius, lifetime, Scaled/Looping/OneShot/Spawn/Hit/NoFollowObject
+effects; played by the client's area-effect view, `sim/viewer/src/sc/area_view.ts`) and `buffs`
+(`character_buffs`: filter clip with loop = !FilterInheritLifeDuration, the buff view's effects and
+flags). Scaled ground circles are drawn at the data radius in SC pixels without any scaling
+(Freeze 3000 -> `spell_freeze_radius_blue` 178 px wide = 2 x 3 x 29.85), which independently
+confirms the arena scale. Tower ruins come from the permanent particle
 of the tower DeathEffect (`Tower_destroyed_ground2` King, `Tower_destroyed_ground1` Princess).
 
 ### Arena alignment (client projection, libg 0x857ffc)

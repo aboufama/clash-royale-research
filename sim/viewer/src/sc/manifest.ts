@@ -59,6 +59,8 @@ export interface CharacterArt {
   hideHealthbar?: boolean;
   effects?: Record<string, string>; // spawnEffect, deathEffect, attackStartEffect, ...
   deployBaseAnimExportName?: ClipRef; // deploy "filter" clip (unit drop + flash)
+  spawnDeployBaseAnim?: ClipRef; // +0x278: the filter a spawned copy of this character takes (0xf8aac8)
+  deathSpawnDeployBaseAnim?: ClipRef; // +0x288: the filter for this character's death spawn (0xf83990)
   projectile?: string;
   customFirstProjectile?: string;
   // character data read by the client's view update (sc/anim.ts)
@@ -108,6 +110,8 @@ export interface ProjectileArt {
   hideWhenDelayed?: boolean;
   alwaysResetAnimation?: boolean;
   spawnProjectile?: string;
+  /** +0x158: the filter of the characters it spawns at its hit (0xf9188c -> view vt+0x140) */
+  spawnDeployBaseAnim?: ClipRef;
   [k: string]: unknown;
 }
 
@@ -123,6 +127,8 @@ export interface EffectComponent {
   labels?: Record<string, string>;
   effect?: string;
   emitter?: string;
+  /** SWF FlashWidth: the beam clip's authored length (targeted SWF, sc/beam.ts); −1 rotate only */
+  flashWidth?: number;
 }
 
 export interface EffectDef {
@@ -255,7 +261,7 @@ export interface CardArt {
 }
 
 export interface AreaEffectArt {
-  radius?: number; // game units the ScaledEffect is authored for
+  radius?: number; // game units (engine data; the view does not scale by it)
   lifeDuration?: number; // ms
   hitSpeed?: number;
   buff?: string;
@@ -264,12 +270,11 @@ export interface AreaEffectArt {
   projectile?: string; // e.g. Lightning bolts
   spawnAreaEffectObject?: string;
   spawnCharacter?: string;
-  /** scaledEffect (ground circle, scale by radius), loopingEffect (for the lifetime), oneShotEffect,
-   * spawnEffect, hitEffect */
+  /** the view's effects (sc/area_view.ts, 0x833b84): scaledEffect (time stretched over the life),
+   * loopingEffect, oneShotEffect, hitEffect (each pulse), noFollowObjectEffect; spawnEffect (spawned
+   * characters') */
   effects: Record<string, string>;
   clip?: ClipRef;
-  /** deathEffect of units whose DeathAreaEffect is this AEO (the visual of e.g. GolemDeathExplosion) */
-  sourceEffects?: Record<string, string>;
   [k: string]: unknown;
 }
 
@@ -278,9 +283,10 @@ export interface BuffArt {
   hitSpeedMultiplier?: number;
   spawnSpeedMultiplier?: number;
   damagePerSecond?: number;
-  /** colour filter clip applied to the buffed unit (loop = pulses, else eases in and holds) */
+  /** colour filter clip applied to the buffed unit (loop = !FilterInheritLifeDuration, 0x8348c8) */
   filter?: ClipRef & { loop: boolean };
-  effect?: string; // effect attached to the unit while buffed (FollowParent)
+  filterInheritLifeDuration?: boolean;
+  effect?: string; // started on the unit with the buff view, deleted with it (0x8348c8 / 0x834e54)
   markEffect?: string;
   [k: string]: unknown;
 }

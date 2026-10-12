@@ -11,6 +11,7 @@ import { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
 import { Frame, type WorldRenderer } from './frame.ts';
 import { Overlay } from './overlay.ts';
 import { PlaceholderRenderer } from './placeholder.ts';
+import { sound } from './sc/sound.ts';
 import { affordableSoon, dropWaits, MAX_SPELL_PENDING_TIME_S } from './sc/ui_port.ts';
 
 export { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
@@ -123,6 +124,7 @@ class App {
 
   async init(): Promise<void> {
     document.body.classList.toggle('dev', DEV);
+    sound.attach('assets'); // audio/ (bake_audio.py), loaded on the first user gesture
     this.art = await loadArt();
     // the decks' unit art loads with the core libraries; any other card's on first use
     if (this.art) this.prewarmDecks();
@@ -174,6 +176,9 @@ class App {
   /** One Bot per AI side, seeded from the battle seed so a restart replays the same match. */
   private makeBots(): void {
     this.bots = [0, 1].map((t) => this.aiLevel[t] > 0 ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null) as [Bot | null, Bot | null];
+    // the play check's reactions for a human player only (0xf941ec): the AI sides are not human
+    const ui = this.ui;
+    if (ui) ui.isHuman = (t) => this.aiLevel[t] === 0;
   }
 
   resize(): void {
@@ -210,10 +215,13 @@ class App {
     this.world.draw(this.frame);
     this.overlay.draw(this.frame);
     if (DEV) this.updateDevHud();
+    sound.update();
     requestAnimationFrame((tt) => this.loop(tt));
   }
 
   stepOnce(): void {
+    // an ended battle does not step: its last tick's events must not be handed to the views again
+    if (this.battle.ended) return;
     this.frame.snapshot(this.battle);
     // AI sides decide on the state before the tick, blue then red; their plays take the hand path
     for (const bot of this.bots) {
@@ -580,10 +588,12 @@ class App {
     btnPlay.onclick = () => {
       this.paused = !this.paused;
       btnPlay.textContent = this.paused ? 'Play' : 'Pause';
+      sound.setPaused(this.paused);
     };
     $<HTMLButtonElement>('btnStep').onclick = () => {
       this.paused = true;
       btnPlay.textContent = 'Play';
+      sound.setPaused(true);
       this.stepOnce();
     };
     // speed cycles 0.25x .. 10x
@@ -603,6 +613,10 @@ class App {
       this.battle.infiniteElixir = this.infinite;
       inf.classList.toggle('on', this.infinite);
     };
+    // game sound (sc/sound.ts): on by default, starts with the first click (browser autoplay rule)
+    const snd = $<HTMLButtonElement>('btnSound');
+    snd.classList.toggle('on', sound.enabled);
+    snd.onclick = () => { sound.setEnabled(!sound.enabled); snd.classList.toggle('on', sound.enabled); };
     // AI toggles cycle off -> easy -> medium -> hard; a change applies from the next tick
     const aiNames = ['off', 'easy', 'medium', 'hard'];
     for (const [id, t] of [['aiBlue', 0], ['aiRed', 1]] as const) {

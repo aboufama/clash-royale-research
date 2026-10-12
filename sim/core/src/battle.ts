@@ -25,7 +25,7 @@ import {
 } from './entities.ts';
 import { clamp, Hasher, idiv, isqrt, NativeRng, Rng } from './math.ts';
 import { formationOffset } from './formation.ts';
-import { cos1e6, rotate1024, sin1024, sin1e6 } from './trig.ts';
+import { angleOf, cos1e6, rotate1024, sin1024, sin1e6 } from './trig.ts';
 
 export interface BattleConfig {
   seed?: number;
@@ -123,6 +123,12 @@ export class Battle {
    * on, step() runs the battle manager's tiebreak branch (0x10ca9a0) instead of the world tick.
    */
   timeUp = false;
+  /**
+   * The battle timeline entered its overtime section (0xd56738): 0xd33f74 sets the timeline's
+   * "may enter overtime" flag to "crowns equal" (0xd56764) before advancing it (0xd56070), so a battle
+   * that ends at the end of regulation stays in regulation. Bookkeeping for the HUD, not hashed.
+   */
+  overtime = false;
   /** Tiebreak clock, battle manager +0x1f4 (ms): +50 per tiebreak tick. The HUD shows print_tiebreaker past 1000. */
   tiebreakMs = 0;
   /** Draw clock, battle manager +0x1f8 (ms, BestOfGame only): +50 per tick while <= 2499. The HUD shows duel_battle_draw while non-zero. */
@@ -153,6 +159,14 @@ export class Battle {
   private dmgBuff: (BuffDef | null)[] = [];
   private dmgBuffTime: number[] = [];
   private dmgSrc: number[] = [];
+  /**
+   * Queued damage without an owner (damage event +0xc = -1: the tiebreak's queued kill 0xfca24c); all
+   * other damage is the target's opponent's, who gets the kill reward of 0xfca5ec.
+   */
+  private dmgNoOwner: boolean[] = [];
+  /** Recorded only: the entry's view effect kind and its source data name (BattleEvent 'damage'). */
+  private dmgFx: number[] = [];
+  private dmgFxSrc: string[] = [];
   private dmgN = 0;
   /** Projectile damage-key counter (ctx +800). */
   private nextKey = 0;
@@ -539,6 +553,8 @@ export class Battle {
       this.tick++;
       return;
     }
+    if (!this.overtime && this.overtimeTicks > 0 && this.tick + 1 >= this.regulationTicks
+      && this.players[0].crowns === this.players[1].crowns) this.overtime = true;
     this.commitCommands();
     this.worldTick();
     this.checkEnd();
@@ -643,6 +659,9 @@ export class Battle {
     const pos = this.deployPlace(c.team, card, c.x, c.y);
     if (pos === null) {
       p.pending -= c.cost;
+      // the commit run's deploy check failed (0xd77504 -> 0xf9e16c): a human player's battle screen
+      // gets vt+0x230 0xbe8910 with TID_INVALID_SPELL_POSITION
+      if (this.recordEvents) this.events.push({ tick: this.tick, type: 'reject', team: c.team, x: c.x, y: c.y, name: card.name, id: -1 });
       return;
     }
     if (c.cost > 0) {
@@ -651,7 +670,8 @@ export class Battle {
       p.elixir -= debit;
       p.pending -= c.cost;
     }
-    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: pos.x, y: pos.y, name: card.name, id: -1 });
+    const pid = card.spellProjectile ? this.nextProjId : -1; // Tower_castSpell's (first) projectile
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'cast', team: c.team, x: pos.x, y: pos.y, name: card.name, id: -1, pid });
     this.castSpell(c.team, card, pos.x, pos.y);
     if (c.deck >= 0) this.cycleOut(p, c.deck);
   }
@@ -890,7 +910,7 @@ export class Battle {
    * as hint for summons and projectile spawns (`hint`, -1 = none). It joins the live list at the end
    * of this tick.
    */
-  private createUnit(team: number, card: string, def: UnitDef, x: number, y: number, deployTicks: number, hint = -1): Unit {
+  private createUnit(team: number, card: string, def: UnitDef, x: number, y: number, deployTicks: number, hint = -1, src = -1): Unit {
     const xm = this.boundW - 250;
     const ym = this.boundH - 250;
     if (x < 251) x = 250;
@@ -902,7 +922,7 @@ export class Battle {
     u.deployTicks = deployTicks;
     u.deployTotal = deployTicks;
     this.newUnits.push(u);
-    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'spawn', team, x, y, name: def.name, id: u.id });
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'spawn', team, x, y, name: def.name, id: u.id, src: src >= 0 ? src : undefined });
     return u;
   }
 
@@ -916,18 +936,103 @@ export class Battle {
   }
 
   /**
-   * Death spawns: DeathSpawnCount units on a circle of DeathSpawnRadius (centre for one),
-   * deploying for DeathSpawnDeployTime or their own DeployTime (D; positions A).
+   * Death spawn: the spawn request 0xf83990 builds (source = the dying actor at its x, y, z; count =
+   * DeathSpawnCount; radius = DeathSpawnRadius; deploy time = DeathSpawnDeployTime, loader default 0),
+   * executed by 0xf8aac8 [STAT]. Member i (0..n-1) takes the step (n-1-i)·360/n:
+   * - radius > 0: angle = step (+ the source facing's angle 0x1294e04 + its SpawnAngleShift when that is
+   *   non-zero), position = source + (sin1024(a+90)·r, sin1024(a)·r) / 1024 truncated, no team mirror;
+   * - radius 0, one member: the source position when 0x11d950c accepts it (else x + 1), and a 0-HP
+   *   member moves back half its Range along the source facing (y only);
+   * - radius 0, several: the first of (0, R) rotated 0/90/180/270 (0x1295174) that 0x11d950c accepts,
+   *   R = source + member CollisionRadius, x mirrored right of the centre, y negated for team 1 (else
+   *   x + 1); every member gets the same point.
+   * 0xd35ab4 clamps the point. A member with hitpoints is active at once (state 1 from its movement
+   * component) unless the request has a deploy time >= 1 (0xf85324: deploying that long, facing copied
+   * from the source); a 0-HP member (bombs) deploys for the request time, else its DeployTime. With
+   * DeathSpawnPushback and a radius the member slides out from the death point (0xfcff3c). Every member
+   * gets the LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK targeting immunity (0xf7e058). DeathSpawnMinRadius,
+   * SpawnConstPriority, DeathSpawnCharacter2 and the clone rules have no supported user.
    */
   private deathSpawn(t: Unit): void {
     const ds = t.def.deathSpawn!;
-    const ticks = Math.round((ds.deployTime >= 0 ? ds.deployTime : ds.unit.deployTime) / TICK_MS);
-    for (let i = 0; i < ds.count; i++) {
-      const [x, y] = ds.count > 1 && ds.radius > 0
-        ? this.ringPos(t.team, t.x, t.y, ds.radius, 180 + Math.floor((i * 360) / ds.count), ds.unit.flyingHeight > 0)
-        : [t.x, t.y];
-      this.createUnit(t.team, t.card, ds.unit, x, y, ticks);
+    const d = ds.unit;
+    const n = ds.count;
+    const r = ds.radius;
+    if (n < 1) return;
+    const req = ds.deployTime >= 1 ? ds.deployTime : 0; // the data's -1 (absent) is the loader's 0
+    const hasHp = d.hitpoints > 0; // !0xde07cc
+    const dt = req >= 1 ? req : d.deployTime;
+    const deployMs = hasHp ? req : (dt > 0 && d.spawnPathfindSpeed === 0 ? dt : 0);
+    const shift = t.def.spawnAngleShift;
+    const base = shift !== 0 ? angleOf(t.dirX, t.dirY) + shift : 0;
+    const push = r !== 0 && this.defs.data.units[t.def.name]?.DeathSpawnPushback === true;
+    const immune = this.defs.data.globals.LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK === true;
+    for (let i = 0; i < n; i++) {
+      const step = Math.trunc(((n - 1 - i) * 360) / n);
+      let x: number;
+      let y: number;
+      if (r !== 0) {
+        const a = base + step;
+        x = t.x + Math.trunc((sin1024(a + 90) * r) / 1024);
+        y = t.y + Math.trunc((sin1024(a) * r) / 1024);
+      } else if (n === 1) {
+        if (this.canSpawnAt(t.x, t.y, d)) {
+          x = t.x;
+          y = t.y;
+          if (!hasHp) y -= Math.trunc((Math.trunc(d.range / 2) * t.dirY) / 256);
+        } else {
+          x = t.x + 1;
+          y = t.y;
+        }
+      } else {
+        x = t.x + 1;
+        y = t.y;
+        const R = t.radius + d.collisionRadius;
+        for (let k = 0; k < 4; k++) {
+          let [lx, ly] = rotate1024(0, R, k * 90);
+          if ((this.arena.w * CELL) >> 1 < t.x) lx = -lx;
+          const px = t.x + lx;
+          const py = t.y + (t.team === 1 ? -ly : ly);
+          if (this.canSpawnAt(px, py, d)) { x = px; y = py; break; }
+        }
+      }
+      const u = this.createUnit(t.team, t.card, d, x, y, Math.round(deployMs / TICK_MS), -1, t.id);
+      if (deployMs <= 0) u.state = ST_ACTIVE;
+      if (push && this.mobile(u)) {
+        // 0xfcff3c: back to the death point, then (m+0x1f8) dist / 250 steps of 250 toward the spawn point
+        u.kbX = u.x;
+        u.kbY = u.y;
+        u.x = t.x;
+        u.y = t.y;
+        const ex = u.kbX - t.x;
+        const ey = u.kbY - t.y;
+        u.slideN = idiv(isqrt(ex * ex + ey * ey), 250);
+        u.kbStep = 250;
+      }
+      if (req !== 0) { u.dirX = t.dirX; u.dirY = t.dirY; }
+      if (immune) { u.spawnImmune = true; u.spawnImmuneMs = 0; }
     }
+  }
+
+  /**
+   * 0x11d950c [STAT]: the point, widened by 1 for a member with a collision radius, lies inside the map
+   * and on no bit-32 (water) tile.
+   */
+  private canSpawnAt(x: number, y: number, d: UnitDef): boolean {
+    const A = this.arena;
+    const r = d.collisionRadius > 0 ? 1 : d.collisionRadius;
+    if (x - r < 0 || y - r < 0 || A.w * CELL <= x + r || A.h * CELL <= y + r) return false;
+    const cx0 = trunc((x - r) / CELL);
+    const cx1 = Math.max(cx0, trunc((x + r - 1) / CELL));
+    const cy0 = trunc((y - r) / CELL);
+    const cy1 = trunc((y + r - 1) / CELL);
+    if (trunc((x + r - 1) / CELL) < cx0 || cy1 < cy0) return true;
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        if (cx >= A.w || cy >= A.h || A.waterCell(cx, cy)) return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -969,7 +1074,7 @@ export class Battle {
       [x, y] = [clamp(u.x + side, 0, this.boundW - 1), clamp(u.y + (u.team === 0 ? off : -off), 0, this.boundH - 1)];
       if (!air && !this.fixture && !this.arena.walkableAt(x, y)) { x = u.x; y = u.y; }
     }
-    this.createUnit(u.team, u.card, sp.unit, x, y, Math.round(sp.unit.deployTime / TICK_MS));
+    this.createUnit(u.team, u.card, sp.unit, x, y, Math.round(sp.unit.deployTime / TICK_MS), -1, u.id);
   }
 
   private spawnDelta(u: Unit): number {
@@ -1050,6 +1155,7 @@ export class Battle {
     if (t.state === ST_DEAD || t.maxHp <= 0) return false;
     if (t.team === u.team) return false;
     if (t.hidden || t.tunneling || t.waitTicks > 0) return false;
+    if (t.spawnImmune) return false; // death spawn's first ticks (actor +0x174, vt+0x148 0xf825e4)
     const d = u.def;
     if (d.targetOnlyBuildings && !t.isBuilding && !(d.attacksAir && !d.attacksGround && t.isAir)) return false;
     if (d.targetOnlyTroops && t.isBuilding) return false;
@@ -1538,7 +1644,10 @@ export class Battle {
     // LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE: target beyond range + 1500 -> no damage
     const cancelled = !u.isBuilding && t !== null && !this.pointInRange(t, u.x, u.y, 1500 + this.getRange(u), 0, false);
     u.load = d.loadTime; // !LoadFirstHit
-    if (this.recordEvents && t) this.events.push({ tick: this.tick, type: d.projectile ? 'shoot' : 'hit', team: u.team, x: t.x, y: t.y, name: d.name, id: u.id });
+    if (this.recordEvents && t) {
+      this.events.push({ tick: this.tick, type: d.projectile ? 'shoot' : 'hit', team: u.team, x: t.x, y: t.y, name: d.name, id: u.id,
+        src: t.id, fx: u.charge >= 10000 ? 1 : 0 });
+    }
     if (!cancelled && t) {
       if (d.projectile) {
         this.fireProjectile(u, t, d.projectile);
@@ -1562,7 +1671,8 @@ export class Battle {
           }
         } else {
           // BuffOnDamage lands with the damage (flush callback 0xfd09ac)
-          this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id);
+          this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id,
+            u.charge >= 10000 ? 3 : 2, d.name);
           if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
         }
       }
@@ -1592,7 +1702,7 @@ export class Battle {
       }
       if (best === null) break;
       picked.push(best);
-      this.queueDamage(best, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id);
+      this.queueDamage(best, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id, 2, d.name);
     }
   }
 
@@ -1748,7 +1858,7 @@ export class Battle {
    * 0xfd09ac), applied only if the damage lands.
    */
   private queueDamage(t: Unit, amount: number, towerDamage: number, pct: number, key = 0,
-    buff: BuffDef | null = null, buffTime = 0, srcId = -1): void {
+    buff: BuffDef | null = null, buffTime = 0, srcId = -1, fx = 0, fxSrc = ''): void {
     const i = this.dmgN++;
     this.dmgTarget[i] = t;
     this.dmgAmount[i] = amount;
@@ -1758,6 +1868,8 @@ export class Battle {
     this.dmgBuff[i] = buff;
     this.dmgBuffTime[i] = buffTime;
     this.dmgSrc[i] = srcId;
+    this.dmgFx[i] = fx;
+    this.dmgFxSrc[i] = fxSrc;
   }
 
   /** Actor_circleOverlapSq 0xf95084 [STAT]: circles overlap strictly; buildings by the closest point of their square. */
@@ -1809,7 +1921,7 @@ export class Battle {
     for (let i = 0; i < n; i++) {
       const t = hits[i];
       hits[i] = null as unknown as Unit;
-      if (damage > 0) this.queueDamage(t, damage, towerDamage, pct, key, buff, buffTime, sourceId);
+      if (damage > 0) this.queueDamage(t, damage, towerDamage, pct, key, buff, buffTime, sourceId, 1);
       if (pushback > 0) this.applyPushback(t, x, y, pushback, pushAll);
     }
   }
@@ -1838,6 +1950,8 @@ export class Battle {
     // pending-damage duration (actor +0x118) drops by 50.
     if (u.waitTicks > 0) u.waitTicks--;
     else u.pendingDur = (u.pendingDur > 50 ? u.pendingDur : 50) - 50;
+    // death-spawn immunity (0xf800bc): +0x178 += 50, cleared once past ATTACK_FINISH_TIME_MS (250)
+    if (u.spawnImmune && (u.spawnImmuneMs += 50) > 250) u.spawnImmune = false;
     if (u.tunneling) { this.tunnel(u); return; }
     if (u.state === ST_DEPLOYING) {
       if (u.deployTicks > 0) u.deployTicks--;
@@ -1935,6 +2049,7 @@ export class Battle {
    */
   private movementUpdate(u: Unit): void {
     if (u.state === ST_DEAD || u.tunneling || !this.mobile(u)) return;
+    if (u.slideN > 0) { this.slideStep(u); return; }
     if (u.kbActive) { this.knockbackStep(u); return; }
     const st = this.nativeState(u);
     if (st === 5) { this.jumpStep(u); return; }
@@ -2600,6 +2715,16 @@ export class Battle {
     t.kbActive = true;
   }
 
+  /**
+   * Death-spawn slide of 0xfcc578 (m+0x1f8 > 0) [STAT]: collision push while the step (m+0x1ec) is > 0,
+   * geometricStep toward (m+0x1e4, m+0x1e8) without facing or flags; the step is cleared with the last.
+   */
+  private slideStep(u: Unit): void {
+    if (u.kbStep > 0) this.collidePush(u);
+    this.geometricStep(u, u.kbX, u.kbY, u.kbStep, false, false);
+    if (--u.slideN === 0) u.kbStep = 0;
+  }
+
   /** Knockback phase of 0xfcc578 [STAT]: push + dry-land snap while stepping, step -= 25 (ends after -25). */
   private knockbackStep(u: Unit): void {
     if (u.kbStep > 0) {
@@ -2856,7 +2981,7 @@ export class Battle {
               : idiv(idiv((pct + 100) * dps + 99, 100) * (hf > 0 ? hf : 0), 1000);
             heal = 0;
           }
-          if (dmg > 0) this.queueDamage(u, dmg, dmg, 0, 0, null, 0, b.sourceId);
+          if (dmg > 0) this.queueDamage(u, dmg, dmg, 0, 0, null, 0, b.sourceId, 5, d.name);
           if (heal > 0) u.hp = Math.min(u.maxHp, u.hp + heal);
         }
       }
@@ -2994,6 +3119,8 @@ export class Battle {
       left--;
     }
     targets.length = 0;
+    // end of the pulse (0xf7a34c, with or without targets): the view's HitEffect (vt+0x80) [STAT]
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'aoePulse', team: a.team, x: a.x, y: a.y, name: def.name, id: a.id });
     // end of the pulse (0xf7a34c, with or without targets): Pushback > 0 without the NO_AOE_PUSHBACK_VFX
     // tag (data +0xf8 bit 2, loader 0xdc3700) calls the battle screen's vt+0x3b0 0xbe7980 [STAT]
     if (this.recordEvents && def.pushback > 0) {
@@ -3017,6 +3144,8 @@ export class Battle {
       const p = ps[i];
       if (p.born !== this.tick && p.alive) this.moveProjectile(p);
       if (p.alive) ps[w++] = p;
+      // removed from the world (0xf96dd0 -> listener vt+0x28 0x84fdcc -> battle screen vt+0xd8 0xbe4340)
+      else if (this.recordEvents) this.events.push({ tick: this.tick, type: 'projEnd', team: p.team, x: p.x, y: p.y, name: p.def.name, id: p.id });
     }
     ps.length = w;
   }
@@ -3134,7 +3263,7 @@ export class Battle {
     if (a.tunneling) return false; // the engine's Miner tunnel (A: native state 6 is not modelled)
     p.hitIds.push(a.id);
     const hp = a.hp;
-    this.queueDamage(a, p.damage, p.towerDamage, p.crownPct, p.key, null, 0, p.id);
+    this.queueDamage(a, p.damage, p.towerDamage, p.crownPct, p.key, null, 0, p.id, 4, p.shooter ? p.shooter.def.name : '');
     if (this.mobile(a) && def.pushback >= 1) {
       if (def.directionalPushback) this.directionalPushback(a, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
       else this.applyPushback(a, p.x, p.y, def.pushback, def.pushbackAll);
@@ -3244,6 +3373,7 @@ export class Battle {
     for (let i = 0; i < n; i++) {
       const [ox, oy] = formationOffset(i, n, r, 0, p.team === 0, lane, u.spawnAngleShift, 0, this.laneSeqDeploy);
       const m = this.createUnit(p.team, p.spell || u.name, u, ix + ox, iy + oy, ticks, ix);
+      if (this.recordEvents) this.events[this.events.length - 1].pid = p.id; // its 'spawn' (viewer: vt+0x140)
       if (def.spawnConstPriority) m.prio = (20 * i) * (20 * i);
       if (u.flyingHeight === 0 && !this.fixture) {
         // after 0xd35ab4 (whose lane stays): z == 0 -> nearest dry position (0xd392c8)
@@ -3266,11 +3396,14 @@ export class Battle {
    */
   private applyHit(p: Projectile): void {
     const def = p.def;
-    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id });
+    if (this.recordEvents) {
+      this.events.push({ tick: this.tick, type: 'impact', team: p.team, x: p.x, y: p.y, name: p.spell || p.def.name, id: p.id,
+        src: p.target ? p.target.id : -1, z: p.z });
+    }
     if (def.radius < 1) {
       const t = p.target;
       if (t !== null) {
-        if (p.damage > 0) this.queueDamage(t, p.damage, p.towerDamage, p.crownPct, p.key, def.targetBuff, def.buffTime, p.id);
+        if (p.damage > 0) this.queueDamage(t, p.damage, p.towerDamage, p.crownPct, p.key, def.targetBuff, def.buffTime, p.id, 4, p.shooter ? p.shooter.def.name : '');
         if (def.pushback > 0) {
           if (def.directionalPushback) this.directionalPushback(t, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
           else this.applyPushback(t, p.tx, p.ty, def.pushback, def.pushbackAll);
@@ -3432,17 +3565,28 @@ export class Battle {
       if (t.tower === TOWER_KING && t.kingState === KING_INACTIVE) this.activateKing(t);
       t.lastHurtTick = this.tick;
       // Shield absorbs first; excess damage on the breaking hit is lost [STAT 0xfcb29c].
+      const shielded = t.shield > 0;
       if (t.shield > 0) {
         t.shield = Math.max(0, t.shield - amount);
       } else {
         t.hp -= amount;
       }
-      if (t.hp <= 0) this.kill(t);
+      if (this.recordEvents && shielded && t.shield === 0) {
+        this.events.push({ tick: this.tick, type: 'shieldLost', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id });
+      }
+      if (t.hp <= 0) {
+        this.kill(t);
+        this.killReward(t, this.dmgNoOwner[i] ? -1 : 1 - t.team);
+      }
+      if (this.recordEvents) {
+        this.events.push({ tick: this.tick, type: 'damage', team: t.team, x: t.x, y: t.y, name: this.dmgFxSrc[i], id: t.id,
+          fx: this.dmgFx[i], src: this.dmgSrc[i] });
+      }
       const buff = this.dmgBuff[i];
       if (buff !== null && this.dmgBuffTime[i] > 0) this.applyBuff(t, buff, this.dmgBuffTime[i], this.dmgSrc[i]);
     }
     // release references
-    for (let i = 0; i < this.dmgN; i++) { this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; }
+    for (let i = 0; i < this.dmgN; i++) { this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; this.dmgNoOwner[i] = false; }
     this.dmgN = 0;
   }
 
@@ -3456,17 +3600,16 @@ export class Battle {
     if (t.state === ST_DEAD) return;
     t.state = ST_DEAD;
     if (this.recordEvents) this.events.push({ tick: this.tick, type: t.tower ? 'tower' : 'death', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id });
-    if (t.def.deathAreaEffect) this.spawnAreaEffect(t.team, t.def.deathAreaEffect, t.x, t.y);
-    if (t.def.deathSpawn) this.deathSpawn(t);
+    // Character death 0xf83990 [STAT]: ManaOnDeath to the owner's King (0xfa1bb8, x10000, clamped to
+    // MAX_MANA) with the listener vt+0x398 (x, y, amount, -1: elixir_float_txt), then the death effects,
+    // DeathAreaEffect and the death spawn
     if (t.def.manaOnDeath > 0 && !this.fixture) {
       const p = this.players[t.team];
       p.elixir = Math.min(this.maxElixir, p.elixir + t.def.manaOnDeath);
+      if (this.recordEvents) this.events.push({ tick: this.tick, type: 'elixir', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id, amount: t.def.manaOnDeath, side: -1 });
     }
-    if (t.def.manaOnDeathForOpponent > 0 && !this.fixture) {
-      // ManaOnDeathForOpponent read as elixir x1000 (A)
-      const p = this.players[1 - t.team];
-      p.elixir = Math.min(this.maxElixir, p.elixir + t.def.manaOnDeathForOpponent * 10);
-    }
+    if (t.def.deathAreaEffect) this.spawnAreaEffect(t.team, t.def.deathAreaEffect, t.x, t.y);
+    if (t.def.deathSpawn) this.deathSpawn(t);
     if (t.tower !== TOWER_NONE) {
       const owner = this.players[t.team];
       const other = this.players[1 - t.team];
@@ -3476,6 +3619,22 @@ export class Battle {
         this.activateKing(owner.king);
       }
     }
+  }
+
+  /**
+   * Kill reward 0xfca5ec, run by Damage_apply 0xfcaeec after Health_applyHit killed `t` (its death
+   * 0xf83990 already ran inside the hit) [STAT]: a non-neutral actor's ManaOnDeathForOpponent (loader
+   * 0xdde888 stores value x 10, so 1000 = 1 elixir) goes to the King of the damage's owner (0xd35d5c:
+   * none for owner -1) through 0xfa153c (raw 1/10000 units, clamped to MAX_MANA), then the battle
+   * screen's listener vt+0x398 0xbe4a8c gets (x, y, amount, that King's owner) and the killer's view
+   * vt+0x130. Neutral actors (owner 100: ManaOnDeath and the killer-side death spawn) do not occur.
+   */
+  private killReward(t: Unit, owner: number): void {
+    const amount = t.def.manaOnDeathForOpponent * 10;
+    if (amount < 1 || owner < 0 || this.fixture) return;
+    const p = this.players[owner];
+    p.elixir = Math.min(this.maxElixir, p.elixir + amount);
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'elixir', team: owner, x: t.x, y: t.y, name: t.def.name, id: t.id, amount, side: owner });
   }
 
   private removeDead(): void {
@@ -3593,12 +3752,14 @@ export class Battle {
   private tiebreakClear(): number {
     let n = this.areaEffects.length + this.projectiles.length;
     this.areaEffects.length = 0;
+    if (this.recordEvents) for (const p of this.projectiles) this.events.push({ tick: this.tick, type: 'projEnd', team: p.team, x: p.x, y: p.y, name: p.def.name, id: p.id });
     this.projectiles.length = 0;
     for (const u of this.units) {
       if (u.tower !== TOWER_NONE) continue;
       if (u.state !== ST_DEAD) {
         this.resetAttack(u);
         this.queueDamage(u, u.hp, -1, 0);
+        this.dmgNoOwner[this.dmgN - 1] = true; // 0xfca24c(health, 0, -1): no owner
       }
       n++;
     }

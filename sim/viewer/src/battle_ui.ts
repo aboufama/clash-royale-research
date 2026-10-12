@@ -17,10 +17,11 @@ import { ClipPlayer, vecSetLength } from './sc/anim.ts';
 import { Announcements } from './sc/announce.ts';
 import { Floaters, floaterParts, measureFieldText, NOT_ENOUGH_MANA_COLOR, NotEnoughManaGate } from './sc/floater.ts';
 import { BattleScreens } from './sc/result.ts';
+import { battleClockSounds, BattleSounds, ScreenSounds, sound, timerSounds } from './sc/sound.ts';
 import { AreaRings } from './sc/area_rings.ts';
 import {
-  type AreaActor, CLIENT_GLOBALS, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
-  elixirGainExport, elixirGainText, indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
+  type AreaActor, CLIENT_GLOBALS, defaultFloaterPos, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown,
+  DeployTimer, elixirGainExport, elixirGainText, indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
 } from './sc/ui_port.ts';
 
 type Team = 0 | 1;
@@ -86,6 +87,11 @@ interface PendingGhost {
   awaitSpawn: boolean;
   /** that character's unit id: the leftover goes when it stops tunnelling (0x845a8c -> 0xbe5b0c) */
   unitId: number;
+  /**
+   * +0x30: the cast projectile's id a projectile spell without a summon whose projectile spawns no
+   * character waits for (0xbe5b4c); the projectile leaving the world removes it (vt+0xd8 0xbe4340). -1 none.
+   */
+  projId: number;
 }
 
 const num = (r: Row | undefined, k: string): number => (r && typeof r[k] === 'number' ? r[k] as number : 0);
@@ -118,6 +124,9 @@ export class BattleUi {
   private manaGate = new NotEnoughManaGate();
   /** battle intro banner (game layer +0x168) and end-of-battle result screen (+0x170): sc/intro.ts, sc/result.ts */
   readonly screens = new BattleScreens();
+  /** the battle screen's and HUD's sounds (sc/sound.ts) */
+  readonly sounds = new BattleSounds();
+  private screenSounds = new ScreenSounds();
   /** area-damage indicator rings (battle screen list +0x2d0, sc/area_rings.ts) */
   readonly rings = new AreaRings();
 
@@ -152,6 +161,7 @@ export class BattleUi {
 
   /** New battle: drop timers, pending marks and the overlay state. */
   reset(): void {
+    this.tunnels.clear();
     this.timers = [];
     this.floats = [];
     this.announce = null;
@@ -163,6 +173,8 @@ export class BattleUi {
     this.manaGate = new NotEnoughManaGate();
     this.rings.reset();
     this.screens.reset();
+    this.sounds.reset();
+    this.screenSounds.reset();
     this.areaAlpha = 0;
     this.grid.blocked.fill(0);
     this.grid.timer.fill(0);
@@ -244,8 +256,32 @@ export class BattleUi {
   // ---------------------------------------------------------------- per frame
 
   /** Engine events of the last tick: card commits start deploy timers (0xbe5b4c -> 0x8d5d24). */
+  /** tunnelling units by id (a Miner-type summon's view between its spawn and 0x845a8c) */
+  private tunnels = new Set<number>();
+
+  /**
+   * A tunnelling character surfacing: the view's tunnel-end method 0x845a8c gets a deploy clock at the
+   * unit's position (0x8d5d24 with DeployTime / 1000 s, the own or enemy clip by 0x84ddcc), the only
+   * deploy clock a spawn-pathfind summon gets (its cast shows none, 0xbe5b4c).
+   */
+  private tunnelEnds(b: Battle): void {
+    const ui = this.ui;
+    for (const u of b.units) {
+      if (u.tunneling) { this.tunnels.add(u.id); continue; }
+      if (!this.tunnels.delete(u.id) || !ui) continue;
+      const own = u.team === this.hud.team;
+      const exp = own ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
+      if (!ui.has(exp) || u.def.deployTime <= 0) continue;
+      const end = ui.labels(exp).end ?? ui.frameCount(exp) - 1;
+      this.timers.push({ t: new DeployTimer(u.def.deployTime / 1000, 0, end, ui.frameCount(exp), ui.fps(exp)), x: u.x, y: u.y,
+        team: u.team as Team, seq: this.hudSeq++ });
+    }
+    if (this.tunnels.size) for (const id of this.tunnels) if (!b.units.some((q) => q.id === id)) this.tunnels.delete(id);
+  }
+
   onEvents(b: Battle): void {
     this.battleRef = b;
+    this.tunnelEnds(b);
     this.rings.onEvents(b.events); // listener vt+0x3a8 / vt+0x3b0
     this.screens.onEvents(b.events);
     const ui = this.ui;
@@ -261,6 +297,23 @@ export class BattleUi {
         }
         continue;
       }
+      if (e.type === 'elixir') {
+        // death elixir (0xf83990 ManaOnDeath, side -1; 0xfca5ec ManaOnDeathForOpponent, side = the
+        // receiving owner) -> battle screen vt+0x398 0xbe4a8c at the dying unit
+        if (e.amount !== undefined) this.gainFloat(e.x, e.y, e.amount, e.side ?? -1);
+        continue;
+      }
+      if (e.type === 'projEnd') {
+        // a projectile left the world (0xf96dd0 -> view listener vt+0x28 0x84fdcc -> battle screen vt+0xd8
+        // 0xbe4340): the first leftover not yet removed that waits for this projectile goes
+        const g = this.pending.find((q) => !q.removed && q.projId === e.id);
+        if (g) this.removeGhost(g);
+        continue;
+      }
+      if (e.type === 'reject') {
+        if (this.isHuman(e.team)) this.invalidPosition();
+        continue;
+      }
       if (e.type === 'collect') {
         // an Elixir Collector's collection (0xf800bc -> battle screen vt+0x398 0xbe4a8c with
         // ManaCollectAmount * 10000 and side -1): elixir_float_txt at the collector, for either team
@@ -269,11 +322,13 @@ export class BattleUi {
         continue;
       }
       if (e.type !== 'cast') continue;
+      // the King view's cast callback 0x85b058 plays the spell's CastSound (data +0xd0) for either side
+      sound.play(sound.doc?.cast?.[e.name], 1, 'cast');
       const card = b.defs.card(e.name, b.levels[e.team]);
       const d = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
       const n = card.spec.main ? card.spec.number : card.spec.second ? card.spec.secondCount : card.spec.list.length;
       const own = e.team === this.hud.team;
-      if (own) this.castArrived(card, e.x, e.y);
+      if (own) this.castArrived(card, e.x, e.y, e.pid ?? -1);
       if (!d || n <= 0 || d.spawnPathfindSpeed !== 0) continue;
       const exp = own ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
       if (!ui.has(exp)) continue;
@@ -290,10 +345,11 @@ export class BattleUi {
    * SummonCharacter has SpawnPathfindSpeed (and no projectile, 0x8dd5ac false): it waits for that
    * character (+0x34) to end its spawn pathfinding (0x845a8c -> 0xbe5b0c), and (b) a projectile spell
    * with no summon whose projectile has a SpawnProjectile without SpawnCharacter (the Log): it waits for
-   * the battle screen's vt+0xd8 (0xbe4340) with the projectile's id, which is not mapped to an engine
-   * event here (A: it lasts until the 3 s cap). Every leftover then loses its indicator clips (0x8dd62c).
+   * the battle screen's vt+0xd8 (0xbe4340) with the cast projectile's id (+0x30, kept if already set),
+   * sent when that projectile leaves the world (engine event `projEnd`). Every leftover then loses its
+   * indicator clips (0x8dd62c).
    */
-  private castArrived(card: CardDef, x: number, y: number): void {
+  private castArrived(card: CardDef, x: number, y: number, projId = -1): void {
     const b = this.battleRef;
     if (!b) return;
     const data = b.defs.data as unknown as { projectiles: Record<string, Row> };
@@ -306,7 +362,7 @@ export class BattleUi {
     for (const g of this.pending) {
       if (g.removed || g.card !== card.name || Math.abs(g.x - x) >= 5 || Math.abs(g.y - y) >= 5) continue;
       if (summons && !projectileSpell && main && main.spawnPathfindSpeed !== 0) { g.awaitSpawn = true; continue; }
-      if (!summons && card.spellProjectile && !projectileSpell) continue;
+      if (!summons && card.spellProjectile && !projectileSpell) { if (g.projId < 0) g.projId = projId; continue; }
       this.removeGhost(g);
     }
     for (const g of this.pending) g.indicator = null;
@@ -339,7 +395,7 @@ export class BattleUi {
       this.pending.push({
         team: pv.team, card: pv.card, x: play.x, y: play.y, px: pv.x, py: pv.y,
         ghosts: this.ghosts(b, card, pv.team, pv.x, pv.y), ring: this.ringOf(card), indicator: view.indicator,
-        name: nm, t: 0, removed: false, awaitSpawn: false, unitId: -1,
+        name: nm, t: 0, removed: false, awaitSpawn: false, unitId: -1, projId: -1,
       });
     }
     this.views[which] = null;
@@ -355,6 +411,7 @@ export class BattleUi {
   notEnoughElixir(x: number, y: number): void {
     const ui = this.ui;
     const text = this.art.manifest.hud.texts?.TID_NOT_ENOUGH_MANA;
+    sound.ui('spellNotReady'); // vt+0xd0 with the client table's +0xcc0, before the floater gate
     if (!ui || !this.manaGate.fail() || !text) return;
     if (!this.floaters) {
       const parts = floaterParts(ui);
@@ -363,6 +420,33 @@ export class BattleUi {
     }
     const [sx, sy] = this.toStage(...this.art.gameToPx(x, y));
     this.floaters.show(0, [Math.trunc(sx), Math.trunc(sy)], text, NOT_ENOUGH_MANA_COLOR,
+      measureFieldText(this.floaters.parts.text, text, this.layout.k * this.lastDpr), this.layout.stageW);
+  }
+
+  /**
+   * Whether a side is a human player (0xf941ec: the player object's vt+0x30 false). The play command's
+   * commit run shows TID_INVALID_SPELL_POSITION only for human players' plays; the owner may set it
+   * (the viewer's AI sides are not human).
+   */
+  isHuman: (team: number) => boolean = () => true;
+
+  /**
+   * A play's commit run failed its deploy check (0xd77504 with flag bit 1 -> 0xf9e16c false): battle
+   * screen vt+0x230 0xbe8910 shows TID_INVALID_SPELL_POSITION in white (0xffffffff) at the popup
+   * manager's default point (0x88ca58), delay 0 (0x88cb54). The battle screen vt+0x280 0xbe72a0
+   * (TID_BATTLE_HAS_COOLDOWN at the play, 0xffff3366) answers the 0x16 return, which needs a battle
+   * cooldown mode (0xd36720 / 0xd36098) the ladder battle does not have.
+   */
+  invalidPosition(): void {
+    const ui = this.ui;
+    const text = this.art.manifest.hud.texts?.TID_INVALID_SPELL_POSITION;
+    if (!ui || !text) return;
+    if (!this.floaters) {
+      const parts = floaterParts(ui);
+      if (!parts) return;
+      this.floaters = new Floaters(parts);
+    }
+    this.floaters.show(0, defaultFloaterPos(this.layout.stageW, this.layout.stageH), text, 0xffffffff,
       measureFieldText(this.floaters.parts.text, text, this.layout.k * this.lastDpr), this.layout.stageW);
   }
 
@@ -416,12 +500,14 @@ export class BattleUi {
   /**
    * Elixir gain float (battle screen listener vt+0x398 0xbe4a8c): `amount` in 1/10000 elixir at logic
    * (x, y); `side` -1 (the collector) shows elixir_float_txt, else blue for the HUD player's side and red
-   * for the other, and the receiving side's HUD_player flashes (0x8dce48). Of its sources only the Elixir
-   * Collector's collection has an engine event (`collect`); the death gains of 0xfca5ec (ManaOnDeath /
-   * ManaOnDeathForOpponent) have none yet. The sound is not played.
+   * for the other, and the receiving side's HUD_player flashes (0x8dce48). Sources: the Elixir Collector's
+   * collection (engine event `collect`) and the death elixir (`elixir`: 0xf83990 ManaOnDeath, side -1;
+   * 0xfca5ec ManaOnDeathForOpponent, side = the receiving owner). Then it plays the sound object of the
+   * client tables +0xe00 (0xe1a8dc, 0xcba648; not played here).
    */
   gainFloat(x: number, y: number, amount: number, side: number): void {
     this.pushFloat(x, y, elixirGainExport(side, this.hud.team), elixirGainText(amount));
+    sound.ui('collectorGet'); // the client table's +0xe00 (0xbe4a8c)
     // 0xbe4a8c -> 0x8dce48 on the panels (0x8d1580) of the receiving side's player
     if (side >= 0 && side === this.hud.team) this.hud.flash.start();
   }
@@ -513,12 +599,22 @@ export class BattleUi {
     this.grid.update(dt, actors, team, this.art.flip, { fullLane });
     this.areaAlpha = deployAreaAlpha(this.areaAlpha, deployAreaShown(sel ? this.spellOf(sel) : null), dt);
     // deploy timers (0x8d9ad0)
-    this.timers = this.timers.filter((tm) => tm.t.update(simDt));
+    this.timers = this.timers.filter((tm) => {
+      const ticks = tm.t.ticks, st = tm.t.state;
+      const keep = tm.t.update(simDt);
+      timerSounds(ticks, st, tm.t, tm.team === team); // tick / ding (0x8d9ad0)
+      return keep;
+    });
     // cost texts: UI clips on the wall clock, removed once played through
     this.floats = this.floats.filter((fl) => { const was = fl.clip.playing; fl.clip.advance(dt); return was; });
     // drag previews first: a hand card updates its preview (0x8e1fb8 -> vt+0x68 0x8e5ccc) before its
     // elixir wait may release it (0x8e1408)
     this.updateViews(dt, b);
+    // battle screen 0xbe4400: input blocked by the intro before its actionFrame, the result screen or the
+    // battle being over; the HUD hidden by the intro (+0x29c)
+    this.hud.blocked = this.screens.inputBlocked || !!b.result;
+    this.hud.hudShown = this.screens.hudShown;
+    this.hud.simMs = f.simMs;
     this.hud.update(dt, b, simDt);
     this.announcer()?.update(dt, b, team);
     // popup manager floaters (0x88bce4 -> 0x88c7fc), UI time
@@ -528,6 +624,10 @@ export class BattleUi {
     // battle intro (0x8ca764, HUD gate +0x468) and the end screen after EndScreenDelay (0xd3581c -> 0xbe0100)
     this.screens.update(this.art, dt, f.simMs, b, team, this.hud.opponentName);
     this.hud.handHidden = this.screens.result !== null;
+    // sounds of the battle screen (0xbdf1b0), the HUD time update (0x8d38c4) and the intro / result screens
+    this.sounds.update(battleClockSounds(b));
+    this.screenSounds.update(this.screens.intro, this.screens.result, this.screens.result?.kind ?? 0,
+      b.players[1 - team]?.crowns ?? 0, this.sounds.ambientId);
     // released plays' leftovers (battle screen update 0xbe1d3c, last to first): 0x8dd4cc deletes one
     // removed on an earlier frame, else adds the frame dt and removes it at 3 s; a spawn-pathfind
     // summon's goes when its character stops tunnelling (0xbe5b0c). Simulation time, like the cast.

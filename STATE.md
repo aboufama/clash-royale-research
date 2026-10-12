@@ -51,6 +51,7 @@ Last updated 2026-10-11 (native movement, spells and formations ported; 70 cards
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
 | Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map. 67 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
 | Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. Area-damage indicator rings (World_areaDamage 0xf97be8 and area-effect pulses → battle screen listener 0xbe76e8 / 0xbe7980, ring class 0xcf0464, fade 0xbe1d3c; `sc/area_rings.ts`), footstep MoveEffects on the run clips' action_frame labels (0x840d44, `sc/unit_fx.ts`, called from art.ts) and the river-jump LandingEffect (0xf7f2c8 → view vt+0x80) are ported from engine events `areaRing` / `pushRing` / `landing` (decompiles in `work/native/decomp_rings/`). The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup). Text is the client's own text path (sc/text.ts, sc/freetype.ts: the two game fonts, FreeType 2.9 unhinted glyphs with the post-processed outline channel, HarfBuzz kerning, the TextField layout and two-pass drawing of 0x126ab4c; the battle layer should set `ScRenderer.textStageScale` to the HUD's scale) |
+| Sound | ✅ The client's FMOD sounds in the viewer (`sim/viewer/src/sc/sound.ts`, WebAudio, Battle panel toggle): `tools/audio/` reads the FMOD Studio banks and rebuilds the used FSB5 Vorbis samples as Ogg in pure Python during the bake (`sim/viewer/assets/audio/`, ignored); effect sound components, cast sounds, HUD / hand / timer / crown sounds, the battle screen's clock sounds and music (0xbdf1b0), overtime, end horn and the result screen's music, as traced in docs/FIDELITY.md (Sound row; A: modulator ranges, playlist modes, stealing; –: buses, snapshots, emotes). BattleMusic layers under 60sec_loop / 30sec_loop as the code and banks say: owner to judge by ear |
 | Demo (GitHub Pages) | ✅ Live at https://aboufama.github.io/clash-royale-research/ . `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on every push to `main` (Pages source: GitHub Actions). The repository was made public by the owner (2026-10-11) to serve Pages; the Checks workflow flags `game-files/` in a public repo by design |
 | AI opponent | ✅ `sim/core/src/bot.ts`: deterministic scripted bot for either side and any supported deck (`new Bot(team, { seed, level })`, `bot.act(battle)` each tick; in the viewer the panel's Blue AI / Red AI buttons pick off / easy / medium / hard); card roles from the data and a coarse fight estimate drive defence, pushes, spells and elixir management. Not a native port ([docs/DECISIONS.md](docs/DECISIONS.md)). About 87% wins against `randomPolicy` with mixed random decks, 100% against a passive side, ~2 µs per tick; `node sim/bench/bot.ts` evaluates it. Viewer toggle not wired yet |
 | Training bridge | ❌ Not started |
@@ -127,7 +128,7 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    is not yet identified), King activation conditions (TOML scripting), the
    buff add/refresh rules (Buff_add 0xfc0e08 is decompiled in
    `work/native/decomp_eng/`) with the attack stun field (attack +0x74), damage
-   over time first-tick timing, spawner and death-spawn placement, the Miner
+   over time first-tick timing, spawner placement (0xf8aac8, as death spawns), the Miner
    state machine, area-effect candidate grid order, the world-list interleaving
    of characters, projectiles and area effects in the actor-update phase.
    Done 2026-10-11 (third pass, PORT_NOTES §9, `projectiles.test.ts`,
@@ -142,6 +143,15 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    rule (0xf94824), projectile flight/hit/chain (0xf90708, 0xf9188c), damage
    apply and key window (0xfcaeec), deploy check and zones (0xf9e16c, 0xfa2c0c,
    0xfa023c); see `sim/core/test/ported.test.ts`.
+   Done 2026-10-12 (golem, `death_spawn.test.ts`, decompiles in `work/native/decomp_golem/`):
+   death spawns from the spawn request of 0xf83990 run by 0xf8aac8 (ring step (n−1−i)·360/n,
+   no team mirror, the source facing + SpawnAngleShift, 0x11d950c point check without a radius),
+   members with hitpoints active at once unless DeathSpawnDeployTime >= 1 (the engine used to make
+   Golemites, Elixir Golem parts, Lava Pups and Tombstone Skeletons deploy for 1 s), the
+   DeathSpawnPushback slide (0xfcff3c) and the LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK targeting
+   immunity; ManaOnDeathForOpponent as the kill reward 0xfca5ec (loader ×10, to the damage's owner,
+   none for the tiebreak's kill) and ManaOnDeath in the death 0xf83990, both with the engine event
+   `elixir`. State hashes of matches with death spawners change; others are unchanged.
 2. **Differential checks:** ask the owner to run the Mac harness on a few
    scripted matches (two knights crossing, Arrows on Skeleton Army, Giant vs
    Cannon, Hog Rider jump) and record per-tick positions/HP; add them as tests.
@@ -150,16 +160,20 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the play check's other reactions in 0xd77504 (its spell path's
-   TID_INVALID_SPELL_POSITION via battle screen vt+0x230, the vt+0x280 listener
-   of its 0x16 return; not traced) and sounds (none are played), the own
+5. **HUD left:** the own
    back-row line of 0xbe1500 / 0x8e1fb8
-   (logic Globals +0x1c8 rows, not written by the Globals loaders), the Log
-   leftover's end event (battle screen vt+0xd8 0xbe4340 by projectile id,
-   reached from view method 0x84fdcc), the death-elixir floats (0xfca5ec calls the battle screen's
-   vt+0x398 0xbe4a8c for ManaOnDeath / ManaOnDeathForOpponent: the engine needs an event with the
-   receiving team, the dying unit's x/y and the amount; viewer hook `BattleUi.gainFloat`), the gain
-   flash on the hand cards (BattleArt.drawCard takes no colour) and the crown sound. Training bridge (M3) and
+   (logic Globals +0x1c8 rows, not written by the Globals loaders), the gain
+   flash on the hand cards (BattleArt.drawCard takes no colour), the killer view's vt+0x130 on a
+   kill reward, `BattleUi.isHuman` (the viewer's AI sides should not show the invalid-position
+   floater; main.ts does not set it yet). Done 2026-10-12 (golem): the
+   death-elixir floats (engine event `elixir` -> `BattleUi.gainFloat`), the Log leftover's end
+   (engine events `cast.pid` / `projEnd` -> battle screen vt+0xd8 0xbe4340), the commit-run
+   TID_INVALID_SPELL_POSITION floater (vt+0x230 0xbe8910 at the popup manager's default point
+   0x88ca58; engine event `reject`; the vt+0x280 cooldown text needs a mode ladder lacks), the HUD
+   clock after the end (timeline section `Battle.overtime`, the clock running on during
+   EndScreenDelay, HUD_topRight's fade 0x8d1e6c, the renderer now applies a named colour to text so
+   the red last-30-s seconds show) and HUD_player's slide-in / slide-out with the 0.4 hand-update
+   gate (0x8db8e0 / 0x8dc37c). Training bridge (M3) and
    the fidelity pass (M5); see [GOAL.md](GOAL.md). Done 2026-10-12 (hud3): crown flights to the counter
    and its fade (0x8d0dd8 / 0x8d2de0 / 0x8dd90c / 0x8d1e6c, `sc/crown_fly.ts`, effects.sc star_appear*
    in the bake), the spend drops and the "-cost" float at the play's pending run (0xd77504 -> 0xfa35c4 ->
@@ -189,7 +203,7 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    screen after EndScreenDelay (0xd3581c → 0xbe0100 → 0x8bc564 / 0x8c2b80,
    `sc/result.ts`), both on the client's MovieClip runtime (`sc/movieclip.ts`,
    per-instance playheads); decompiles in `work/native/decomp_intro/`. Left:
-   the result's confetti and the HUD hand panel's slide-in / hide around them.
+   the result's confetti (the hand panel's slide-in / slide-out is done, item 5).
    Done 2026-10-12 (units3, `sc/unit_view.ts`, decompiles in
    `work/native/decomp_units3/`): health bars per frame as 0x83c268 (enemy
    NoDamage badge always, own bars only once damaged, LifeTime buildings always,
@@ -200,17 +214,52 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    (0x850504 / 0xfc2288), AttackStartEffect (0x83e524), view effect calls
    vt+0x80 / vt+0xc0; the frame clock keeps running after the battle end
    (0xbe1d3c → 0x856f28). Left (A): the bar holder's visibility in state 11,
-   Underground read as tunnelling, the tunnel view vt+0x168 of Miner summons.
-   Seen in the browser: a battle won at the end of regulation shows the
-   overtime clock ("Overtime 2:00") under the result, because the HUD reads
-   the tick after the last step; trace what the client's time update shows
-   once the battle has ended (0x8d1e6c's end fade of HUD_topRight is not
-   ported either).
+   Underground read as tunnelling (the Miner's tunnel view vt+0x168 is ported, fx2 below).
    The battle layer's placement (content scale 0x772a70, layer scale and
    position 0xbdefac, `sc/ui_port.ts` stageLayout) and the drag preview's
    snap (deploy check 0xf9e16c) are ported. 0x83c0ac is the HideBeforeFirstHit
    scale, which no unit in this build uses. Decompiles for the view work are in
    `work/native/decomp_shadow/` and `decomp_anim/`.
+   Done 2026-10-12 (aoe, `sc/area_view.ts`, decompiles in `work/native/decomp_aoe/`,
+   coverage in [docs/EFFECTS.md](docs/EFFECTS.md) "Spells"): the client's area-effect
+   object view (factory 0x84fc88 → 0x833b84 / 0x8342c8 / 0x834038) replaces the
+   radius-scaled, 300 ms-faded approximation: LoopingEffect attached and stopped
+   by the parent-removed notice, OneShot once, ScaledEffect once with its SWF clips
+   stretched over life − 200 ms and faded over 200 ms (effect +0x98 / +0x9c,
+   0x82a994 hold path, now in `sc/effects.ts`), pulse HitEffect from the new
+   recorded engine event `aoePulse`; buff views (0x8348c8: the buff's Effect on
+   the unit, deleted with the buff) and the buff filter's clock and colour
+   arithmetic (0x82ea34 / 0x82ebdc: filters loop over their clip, so the cold tint
+   cycles); the cast effect plays once (0x850258 → 0x82dc54) for every card. Left
+   (–): followed targets / Clone mode / the AEO's own clip (no supported user),
+   crown towers drawn without buff filters, a frozen unit's idle clip (anim.ts).
+   Finding for the engine: AreaEffectData's TargetProjectiles defaults to true in
+   the loader (0xdc2e74), which is what the engine's Lightning heuristic assumes.
+   Done 2026-10-12 (fx2, `sc/char_effects.ts`, `sc/beam.ts`, decompiles in
+   `work/native/decomp_fx2/`, coverage per unit / field / projectile in
+   [docs/EFFECTS.md](docs/EFFECTS.md) "Units and buildings"): every effect field of
+   the 64 characters and buildings the 70 cards create is played at its client call
+   site or marked: damage entries' effects on the victim (0xfcb29c → vt+0xc0, incl.
+   the global "Damage" spark of splash, spell and fallback hits), the melee splash's
+   centre effect, TargetedHitEffect beams (Tesla, Electro Wizard: 0x84e8e0 + the
+   0x82a994 beam), Inferno beam / flame / level-transition slots (0x83b6d8),
+   ContinuousEffect, ChargeEffect with its Filter component recolouring the unit
+   (0x82ebdc), ShieldLostEffect, SpawnCharacterEffect (Witch, Night Witch), the
+   Miner's tunnel effect and tunnel-end reveal (vt+0x168 / vt+0x170), chain beams
+   (Electro Dragon / Spirit, 0xf8f618 → 0x84ef20), piercing projectiles' DeathEffect
+   at their last hit and the axe's PingpongDeathEffect, the deploy filter of death
+   and projectile spawns (view vt+0x140: only members that deploy, e.g. Balloon
+   bombs with their carrier's clip, Barbarian Barrel's filter_deploy_unit_miner,
+   none for Goblin Barrel). Filter components share the buff filter's code
+   (`sc/area_view.ts`); world-listener effects play once. New recorded engine
+   events `damage`, `shieldLost` and fields `spawn.src` / `pid`, `hit.src` / `fx`,
+   `impact.src` / `z` (no simulation change). Finding for the engine: 0xf8aac8
+   puts a spawner's member with hitpoints in state 4 only with
+   SpawnCharacterWithDeploy (request +0x68), but the engine deploys Witch /
+   Tombstone / hut members for their DeployTime (not verified against a trace).
+   Left: Tesla's AttackStartEffect (single-clip
+   buildings), Electro Dragon's LoadAttackEffects (sound only), the Inferno view's
+   +0x4cc sync to the attack clip (A), the sprite recoils (vt+0xf8).
 
 ## Open questions for the owner
 

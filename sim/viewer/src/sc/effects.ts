@@ -15,9 +15,13 @@
 // take the parent sprite's position each update with y ± 0.01 world (in front of the parent). The
 // enemy's effects use EnemyVersion (0x82dcb0 → 0xe22124) and their emitters' EnemyVersion (0xe56cbc).
 //
-// SWF component (0x82a360, update 0x82a994): the clip lasts D = frames · frame time; while not looping
-// it is done once t >= D, frame ⌊t·frames / D⌋ (looping: t mod D); scale RenderableScale% × effect
-// Scale; placed at the effect position (setPos3D 0x851b84).
+// SWF component (0x82a360, update 0x82a994): the clip lasts D = frames · frame time, or the length the
+// effect instance carries (+0x98, set by 0x82ccd8; −1 = the clip's), plus a hold time E (+0x9c, set by
+// 0x82ccd0; 0 by default; both read when the component is made, so only the effect's own SWF
+// components get them, not those of nested effects); while not looping it is done once t >= D + E;
+// frame ⌊t·frames / D⌋ (looping: t mod D); once t >= D (clips of 2+ frames) it holds the last frame
+// with alpha (D + E − t) / E (0x123cbc0: clamped to 0..1, stored as a byte); scale RenderableScale% ×
+// effect Scale; placed at the effect position (setPos3D 0x851b84).
 //
 // Particle emitter (SpecialEffect None; ctor 0x830b90, update 0x8319e8, spawn 0x831b90, new particle
 // 0x8311e8): life = MinLife' + rand(MaxLife − MinLife') with MinLife' = max(MinLife, 1) (setLoop:
@@ -56,8 +60,7 @@
 // Approximations (A): the client's Mersenne-Twister effect RNG is replaced by a seeded xorshift;
 // emitter modifiers (EmitterReplaceType), trails (TrailSWF), SpecialEffect emitter types 1/2,
 // ResourceFromAngle, AngularSpeed spirals around a parent and the 3D/light paths are
-// not ported; area effects can be scaled by radius (`radius`/`refRadius`) and cut off (`durationMs`)
-// by the caller.
+// not ported.
 
 import type { Col, Mat } from './math.ts';
 import type { ScLibrary } from './library.ts';
@@ -65,6 +68,9 @@ import type { ClipRef, EffectComponent, EffectDef, EmitterDef } from './manifest
 import type { ScRenderer } from './renderer.ts';
 import type { BattleArt } from './battle_art.ts';
 import { ClipPlayer } from './anim.ts';
+import { beamMatrix } from './beam.ts';
+import { filterClipLength, filterFrame } from './area_view.ts';
+import { fxSoundStop, fxSoundUpdate } from './sound.ts';
 
 /** logic units → world units */
 const W = 0.002;
@@ -79,16 +85,33 @@ export interface PlayOptions {
   follow?: () => [number, number, number] | null;
   /** the parent's angle in degrees (ParticleAngleRelativeToParent), e.g. a projectile's flight */
   parentAngle?: () => number;
-  /** end the effect after this many ms (area effects): it is stopped and its clips fade over `fadeMs` */
-  durationMs?: number;
-  fadeMs?: number;
-  /** area effects: scale by radius / refRadius (ScaledEffects are authored at refRadius) */
-  radius?: number;
-  refRadius?: number;
+  /** setLoop right after creation: 0x82dedc plays looping (true), 0x82dc54 once (false); unset = the
+   * effect's own Loop (0x82dcb0) */
+  loop?: boolean;
+  /** SWF length D for the effect's own SWF components (effect +0x98, 0x82ccd8; −1 = each clip's length) */
+  swfLength?: number;
+  /** hold-and-fade time E after D for the effect's own SWF components (effect +0x9c, 0x82ccd0) */
+  swfFade?: number;
   /** skip emitters whose particles are permanent (ParticleMinLife >= 100 s), e.g. tower rubble */
   skipPersistent?: boolean;
   /** draw nothing (HideWhenDelayed parents) while this returns true */
   hidden?: () => boolean;
+  /**
+   * Beam target (0x82d484 → each SWF component's +0x190, sc/beam.ts): the target actor's logic
+   * [x, y, z + 2·CollisionRadius] each frame; null once it is gone (the last point is kept, A).
+   */
+  target?: () => [number, number, number] | null;
+  /** the target view's damage pivot in battle-layer px (0x84eb7c(view, −1, 1)), added to the beam end */
+  targetPivot?: () => [number, number] | null;
+  /** fixed beam end (0x82d508 → SWF +0x158..+0x164): logic [x, y, z] */
+  targetPoint?: [number, number, number];
+  /** source offset in battle-layer px (effect vt+0x48 0x82d204 → each component's vt+0x48) */
+  offset?: [number, number];
+  /**
+   * The parent actor of Filter components (0x82c58c type 1 → 0x82ea34 with the effect's parent +0x48):
+   * the filter recolours that actor's sprites while it runs (0x82ebdc); see EffectPlayer.filters.
+   */
+  filterParent?: number;
 }
 
 export interface DrawItem {
@@ -526,38 +549,48 @@ class SwfComp {
   readonly lib: ScLibrary;
   readonly c: EffectComponent;
   readonly frames: number;
+  /** D (+0x148) and the hold-and-fade time E (+0x14c) */
   readonly dur: number;
+  readonly hold: number;
   readonly seq: number;
   loop = false;
   t = 0;
   frame = 0;
   done = false;
+  /** the display object's alpha byte / 255, written only by the hold path (0x123cbc0) */
+  alpha = 1;
   x = 0; y = 0; z = 0;
   readonly scale: number;
-  constructor(ctx: Ctx, c: EffectComponent, lib: ScLibrary, scale: number) {
+  constructor(ctx: Ctx, c: EffectComponent, lib: ScLibrary, scale: number, len = -1, hold = 0) {
     this.scale = scale;
     this.c = c;
     this.lib = lib;
     this.frames = Math.max(1, c.frames ?? lib.frameCount(c.export!) ?? 1);
     const fps = c.fps || 30;
-    this.dur = Math.trunc(Math.fround(1 / fps) * this.frames * 1000);
+    // 0x82a360: D = −1 becomes (int)(frame time · (frames · 1000)) in float32
+    this.dur = len !== -1 ? len : Math.trunc(Math.fround(Math.fround(1 / fps) * (this.frames * 1000)));
+    this.hold = hold;
     this.seq = ctx.seq();
   }
   setLoop(loop: boolean): void { this.loop = loop; }
   stop(): void { this.loop = false; }
   setPos(x: number, y: number, z: number): void { this.x = x; this.y = y; this.z = z; }
   isDone(): boolean { return this.done; }
-  /** 0x82a994 */
+  /** 0x82a994 (no forced frame percent +0x154, no beam targets +0x188 / +0x190) */
   update(dt: number): boolean {
-    const D = this.dur;
+    const D = this.dur, E = this.hold;
     if (!this.loop) {
-      if (D <= this.t) { this.done = true; return true; }
+      if (E + D <= this.t) { this.done = true; return true; }
     } else if (D) {
       this.t %= D;
     }
     if (this.frames >= 2) {
       let f = D ? Math.trunc((this.t * this.frames) / D) : 0;
-      if (D <= this.t) f = this.frames - 1;
+      if (D <= this.t) {
+        f = this.frames - 1;
+        // vt+0x58 setAlpha((D − t + E) / E) (float32; E = 0 gives ±inf / NaN, handled by the clamp)
+        this.alpha = alphaByte(Math.fround((D - this.t + E) / E)) / 255;
+      }
       this.frame = f;
     }
     this.t += dt;
@@ -565,9 +598,70 @@ class SwfComp {
   }
 }
 
+/** 0x123cbc0: alpha clamped to 0..1 (NaN → 0) and stored as a byte. */
+export function alphaByte(v: number): number {
+  const a = v <= 1 ? v : 1;
+  return Math.trunc(0 <= v ? a * 255 : 0);
+}
+
+// ---------------------------------------------------------------------------------- filter component
+
+/**
+ * Filter component (0x82c58c type 1 → ctor 0x82ea34, update 0x82ebdc, stop 0x82ebc4): a clip whose
+ * first element's colour transform multiplies the parent view's sprite colours (rgb·a ×, rgb +, clamped)
+ * each update. It lasts D = the effect instance's +0x98 or, at −1, the clip's frames · frame time; it
+ * loops with the effect data's Loop (+0xb), else it is done once t >= D; frame ⌊t·frames / D⌋ clamped
+ * to the last. The filter's matrix flag (+0x31, the instance's +8) is never set: colour only. The
+ * clip length and frame step are the buff filter's (sc/area_view.ts filterClipLength / filterFrame),
+ * one implementation for both users of the class.
+ */
+class FilterComp {
+  readonly kind = 'filter';
+  readonly lib: ScLibrary;
+  readonly exp: string;
+  readonly frames: number;
+  readonly dur: number;
+  readonly loopData: boolean;
+  readonly parent: number;
+  t = 0;
+  frame = 0;
+  done = false;
+  constructor(lib: ScLibrary, exp: string, frames: number, fps: number, len: number, loopData: boolean, parent: number) {
+    this.lib = lib;
+    this.exp = exp;
+    this.frames = Math.max(1, frames);
+    this.dur = len !== -1 ? len : filterClipLength(this.frames, fps);
+    this.loopData = loopData;
+    this.parent = parent;
+  }
+  setLoop(_loop: boolean): void { /* the loop flag is the effect data's, fixed at creation */ }
+  stop(): void { this.done = true; this.t = this.dur; }
+  setPos(_x: number, _y: number, _z: number): void { /* recolours its parent; no position */ }
+  isDone(): boolean { return this.done; }
+  /** 0x82ebdc */
+  update(dt: number): boolean {
+    if (!this.loopData && this.dur <= this.t) { this.done = true; return true; }
+    if (this.loopData && this.dur) this.t %= this.dur;
+    this.frame = filterFrame(this.t, this.frames, this.dur, this.loopData) ?? 0;
+    this.t += dt;
+    return false;
+  }
+  /** the first element's colour transform of the current frame (null: identity) */
+  color(): Col | null {
+    const clip = this.lib.clip(this.exp);
+    if (!clip || this.done) return null;
+    const fr = Math.min(this.frame, clip.frameCount - 1);
+    const i = clip.frameStart[fr];
+    if (clip.frameStart[fr + 1] === i) return null;
+    const ci = clip.elements[i * 3 + 2];
+    if (ci < 0) return null;
+    return [...this.lib.banks[clip.bank].c.subarray(ci * 7, ci * 7 + 7)] as Col;
+  }
+}
+
 // ---------------------------------------------------------------------------------- effect instance
 
-type CompObj = Emitter | SwfComp | Fx;
+type CompObj = Emitter | SwfComp | Fx | FilterComp;
 interface CompSlot { c: EffectComponent; started: boolean; obj: CompObj | null }
 
 class Fx {
@@ -585,9 +679,6 @@ class Fx {
   stopped = false;
   x: number; y: number; z: number; // world units
   slots: CompSlot[];
-  /** area effects: fade multiplier after durationMs */
-  fade = 1;
-  killAt: number;
   readonly depth: number;
   parentAngle: (() => number) | undefined;
 
@@ -604,7 +695,6 @@ class Fx {
     this.follow = !!opts.follow;
     this.parentAngle = opts.parentAngle;
     this.depth = depth;
-    this.killAt = opts.durationMs ?? Infinity;
     this.slots = def.components.map((c) => ({ c, started: false, obj: null }));
   }
 
@@ -616,6 +706,7 @@ class Fx {
   /** 0x82d074 */
   stop(): void {
     for (const s of this.slots) { s.obj?.stop(); s.started = true; }
+    fxSoundStop(this, this.def); // sound components (sc/sound.ts)
     this.setLoop(false);
     this.stopped = true;
   }
@@ -639,7 +730,18 @@ class Fx {
     if (c.type === 'SWF') {
       const lib = c.sc && c.export ? ctx.art.libs.get(c.sc) ?? (ctx.art.lib(c.sc), undefined) : undefined;
       if (!lib) return null;
-      return new SwfComp(ctx, c, lib, compScale * this.scale);
+      // 0x82c58c passes this instance's +0x98 / +0x9c; a nested effect's own are −1 / 0 (0x82b7ac)
+      const top = this.depth === 0;
+      return new SwfComp(ctx, c, lib, compScale * this.scale, top ? this.opts.swfLength ?? -1 : -1, top ? this.opts.swfFade ?? 0 : 0);
+    }
+    if (c.type === 'Filter') {
+      // 0x82c58c type 1: only with a parent actor (effect +0x48)
+      if (this.opts.filterParent === undefined || !c.sc || !c.export) return null;
+      const lib = ctx.art.libs.get(c.sc) ?? (ctx.art.lib(c.sc), undefined);
+      if (!lib) return null;
+      const top = this.depth === 0;
+      return new FilterComp(lib, c.export, c.frames ?? lib.frameCount(c.export), c.fps ?? lib.fps(c.export),
+        top ? this.opts.swfLength ?? -1 : -1, !!this.def.Loop, this.opts.filterParent);
     }
     if (c.type === 'ParticleEmitter' && c.emitter) {
       const m = ctx.art.manifest.emitters;
@@ -657,10 +759,12 @@ class Fx {
       if (!def) return null;
       if (this.enemy && def.EnemyVersion && effects[def.EnemyVersion]) { name = def.EnemyVersion; def = effects[name]; }
       // a nested effect keeps its own Scale (0x82b7ac reads it from its data); the caller's extra
-      // scale and the area-effect radius scale (A) carry over
-      const rs = this.opts.radius && this.opts.refRadius ? this.opts.radius / this.opts.refRadius : 1;
-      const fx = new Fx(ctx, name, def, this.x, this.y, this.z, { ...this.opts, durationMs: undefined },
-        effectScale(def) * (this.opts.scale ?? 1) * rs, this.depth + 1);
+      // scale carries over
+      // 0x82d484 sets the beam target on the instance's own SWF components only (type 0)
+      const nopts = this.opts.target || this.opts.targetPoint
+        ? { ...this.opts, target: undefined, targetPivot: undefined, targetPoint: undefined, offset: undefined } : this.opts;
+      const fx = new Fx(ctx, name, def, this.x, this.y, this.z, nopts,
+        effectScale(def) * (this.opts.scale ?? 1), this.depth + 1);
       ctx.shake(def);
       fx.parentAngle = this.parentAngle;
       return fx;
@@ -681,15 +785,13 @@ class Fx {
         if (this.loop) this.stop();
       }
     }
-    if (this.age >= this.killAt) {
-      if (!this.stopped) this.stop();
-      this.fade = Math.max(0, 1 - (this.age - this.killAt) / (this.opts.fadeMs ?? 300));
-    }
     const forced = this.def.ForcedLength ?? 0;
     if (forced && forced <= this.age && this.loop) {
       for (const s of this.slots) { s.obj = null; s.started = false; }
       this.age = 0;
     }
+    // sound components start with their component (0x82bf10, sc/sound.ts); pitch = effect +0xb0
+    fxSoundUpdate(this, this.def, this.age, this.stopped, (this.opts as { soundPitch?: number }).soundPitch ?? 1);
     for (const s of this.slots) {
       if ((s.c.time ?? 0) > this.age) continue;
       if (!s.started) {
@@ -714,25 +816,57 @@ class Fx {
       if (o.update(dt)) s.obj = null;
     }
     this.age += dt;
-    if (this.fade <= 0) return true;
     return this.isDone();
+  }
+
+  private lastTarget: [number, number, number] | null = null;
+
+  /** 0x82a994's beam matrix for a SWF component with FlashWidth and a target (sc/beam.ts), else null. */
+  private beam(c: EffectComponent, px: number, py: number, sc: number): Mat | null {
+    const flash = (c.flashWidth as number | undefined) ?? 0;
+    const o = this.opts;
+    if (!flash || (!o.target && !o.targetPoint)) return null;
+    let end: [number, number];
+    const art = this.ctx.art;
+    if (o.targetPoint) {
+      end = art.gameToPx(o.targetPoint[0], o.targetPoint[1], o.targetPoint[2]);
+    } else {
+      const t = o.target!() ?? this.lastTarget;
+      if (!t) return null;
+      this.lastTarget = t;
+      end = art.gameToPx(t[0], t[1], t[2]);
+      const pv = o.targetPivot?.();
+      if (pv) end = [end[0] + pv[0], end[1] + pv[1]];
+    }
+    return beamMatrix([px, py], o.offset ?? [0, 0], end, flash, sc);
+  }
+
+  /** this instance's running Filter components for `parent` (0x82ebdc), nested effects included */
+  filters(parent: number, out: Col[]): void {
+    for (const s of this.slots) {
+      const o = s.obj;
+      if (o instanceof Fx) o.filters(parent, out);
+      else if (o instanceof FilterComp && o.parent === parent) { const c = o.color(); if (c) out.push(c); }
+    }
   }
 
   collect(layer: string, out: DrawItem[], alphaMul: number): void {
     if (this.opts.hidden?.()) return;
-    const a = alphaMul * this.fade;
+    const a = alphaMul;
     for (const s of this.slots) {
       const o = s.obj;
       if (!o) continue;
       if (o instanceof Fx) { o.collect(layer, out, a); continue; }
+      if (o instanceof FilterComp) continue;
       if (o instanceof SwfComp) {
         if ((s.c.layer || 'Ground') !== layer || o.done) continue;
         const art = this.ctx.art;
         const [px, py] = art.gameToPx(o.x / W, o.y / W, o.z / W);
         const gy = art.gameToPx(o.x / W, o.y / W, 0)[1];
         const sc = o.scale, lib = o.lib, exp = s.c.export!, f = o.frame;
-        const col: Col = [1, 1, 1, a, 0, 0, 0];
-        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, f, [sc, 0, 0, sc, px, py], col) });
+        const col: Col = [1, 1, 1, a * o.alpha, 0, 0, 0];
+        const m = this.beam(s.c, px, py, sc);
+        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, f, m ?? [sc, 0, 0, sc, px, py], col) });
         continue;
       }
       const em = o;
@@ -745,6 +879,22 @@ class Fx {
       }
     }
   }
+}
+
+const filterMemo = new WeakMap<EffectDef, boolean>();
+
+/** The effect or one of its nested effects has a Filter component. */
+function hasFilter(effects: Record<string, EffectDef>, def: EffectDef, depth: number): boolean {
+  const m = filterMemo.get(def);
+  if (m !== undefined) return m;
+  let r = false;
+  for (const c of def.components) {
+    if (c.type === 'Filter') r = true;
+    else if (c.type === 'Effect' && c.effect && effects[c.effect] && depth < 8) r = hasFilter(effects, effects[c.effect], depth + 1);
+    if (r) break;
+  }
+  filterMemo.set(def, r);
+  return r;
 }
 
 function effectScale(def: EffectDef): number {
@@ -805,6 +955,21 @@ export class EffectPlayer {
 
   get count(): number { return this.list.length; }
 
+  /** Colour transforms the running Filter components apply to actor `parent` this frame (0x82ebdc). */
+  filters(parent: number): Col[] {
+    const out: Col[] = [];
+    for (const e of this.list) e.filters(parent, out);
+    return out;
+  }
+
+  /** The parents with running Filter components (effects played with `filterParent`), for a cheap skip. */
+  filterParents(): Set<number> {
+    const out = new Set<number>();
+    const effects = this.art.manifest.effects;
+    for (const e of this.list) if (e.opts.filterParent !== undefined && hasFilter(effects, e.def, 0)) out.add(e.opts.filterParent);
+    return out;
+  }
+
   has(name: string): boolean { return !!this.art.manifest.effects[name]; }
 
   /** Start an effect at logic (x, y); returns a handle for stop(). Unknown names return 0. */
@@ -813,27 +978,36 @@ export class EffectPlayer {
     let def = effects[name];
     if (!def) return 0;
     if (opts.team === 1 && def.EnemyVersion && effects[def.EnemyVersion]) { name = def.EnemyVersion; def = effects[name]; }
-    const radiusScale = opts.radius && opts.refRadius ? opts.radius / opts.refRadius : 1;
     let px = x, py = y, pz = opts.z ?? 0;
     const f = opts.follow?.();
     if (f) { px = f[0]; py = f[1]; pz = f[2]; }
-    const fx = new Fx(this.ctx, name, def, px * W, py * W, pz * W, opts, effectScale(def) * (opts.scale ?? 1) * radiusScale, 0);
+    const fx = new Fx(this.ctx, name, def, px * W, py * W, pz * W, opts, effectScale(def) * (opts.scale ?? 1), 0);
     this.ctx.shake(def);
+    // 0x82dedc / 0x82dc54: vt+0x38 setLoop(1 / 0) right after 0x82dcb0
+    if (opts.loop !== undefined) fx.setLoop(opts.loop);
     this.list.push(fx);
     const id = this.nextId++;
     this.handles.set(id, fx);
     return id;
   }
 
-  /** Stop an effect (0x82d074): no new particles or loops; live particles finish. With `fadeOut`,
-   * clips also fade out as when `durationMs` elapses (area effects, A). */
-  stop(handle: number, fadeOut = false): void {
+  /** Stop an effect (0x82d074): no new particles or loops; live particles and clips finish. */
+  stop(handle: number): void {
+    this.handles.get(handle)?.stop();
+  }
+
+  /** Delete an effect at once (manager 0x82e160: removed from the list, vt+8). */
+  remove(handle: number): void {
     const e = this.handles.get(handle);
-    if (e) {
-      e.stop();
-      if (fadeOut && e.killAt === Infinity) e.killAt = e.age;
-    }
+    if (!e) return;
     this.handles.delete(handle);
+    const i = this.list.indexOf(e);
+    if (i >= 0) this.list.splice(i, 1);
+  }
+
+  /** The effect with this handle is still running (manager 0x82e52c). */
+  alive(handle: number): boolean {
+    return this.handles.has(handle);
   }
 
   clear(): void {

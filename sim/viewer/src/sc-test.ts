@@ -14,6 +14,7 @@ import {
   BattleArt, EffectPlayer, ScRenderer, actionFrameMs, pickDirection,
 } from './sc/index.ts';
 import type { Col, Mat, Team } from './sc/index.ts';
+import { AreaViews, type AeoActor } from './sc/area_view.ts';
 
 const params = new URLSearchParams(location.search);
 const mode = params.get('mode') ?? 'arena';
@@ -453,6 +454,11 @@ function aeoCell(i: number): [number, number] {
   return [(i % 5) * AW + AW / 2, AEO_Y + Math.floor(i / 5) * AH + AH / 2];
 }
 
+// area-effect object views (sc/area_view.ts) on stand-in actors that live for their LifeDuration
+const aeoViews = new AreaViews(fx, m, art.flip);
+const aeoLive: (AeoActor & { until: number })[] = [];
+let aeoSeq = 1;
+
 function allEvents(t: number): void {
   aeoNames.forEach((n, i) => {
     let next = aeoNext.get(n) ?? 0;
@@ -460,13 +466,17 @@ function allEvents(t: number): void {
       const [cx, cy] = aeoCell(i);
       const [gx, gy] = art.pxToGame(cx, cy);
       const a = m.areaEffects![n];
-      const src = a.sourceEffects ? Object.values(a.sourceEffects)[0] : undefined;
-      art.playAreaEffect(fx, n, gx, gy, { team: 0, sourceEffect: src });
-      if (a.projectile && m.projectiles[a.projectile]?.hitEffect) fx.play(m.projectiles[a.projectile].hitEffect!, gx, gy);
+      const life = (a.lifeDuration as number | undefined) ?? 0;
+      const id = aeoSeq++;
+      aeoLive.push({ id, x: gx, y: gy, life, def: { name: n, lifeDuration: life }, until: next + life });
+      aeoViews.create(aeoViews, id, n, 0, gx, gy, 0, life);
+      if (a.projectile && m.projectiles[a.projectile]?.hitEffect) fx.play(m.projectiles[a.projectile].hitEffect!, gx, gy, { loop: false });
       next += aeoPeriod(n);
     }
     aeoNext.set(n, next);
   });
+  for (let k = aeoLive.length - 1; k >= 0; k--) if (aeoLive[k].until < t) aeoLive.splice(k, 1);
+  aeoViews.update(aeoViews, aeoLive);
 }
 
 function drawAllMode(t: number): void {

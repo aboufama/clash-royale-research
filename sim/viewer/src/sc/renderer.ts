@@ -532,6 +532,7 @@ export class ScRenderer {
           const tf = direct ? { def: direct, m: null } : this.findTextField(lib, cid);
           if (tf) {
             if (ov?.matrix) this.mulInPlace(cm, ov.matrix); // e.g. the HUD's elixir number bounce
+            if (ov?.color) colMul(cc, ov.color, cc); // e.g. the HUD clock's red seconds (0x8d38c4 +0xa / +0xb)
             this.drawText(tf.def, txt, tf.m ? this.tmpMul(cm, tf.m) : cm, cc, b);
             continue;
           }

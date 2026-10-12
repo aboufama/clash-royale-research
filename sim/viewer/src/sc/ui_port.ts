@@ -24,6 +24,10 @@
 //   PENDING_GHOST_S      lifetime cap of a released play's leftover preview (0x8dd4cc)
 //   radialFillStrip      RadialFill card mask while a card is unaffordable (ctor 0x89f9b4, draw 0x89fd24)
 //   elixirRequirement    selected card's cost on the elixir bar (0x8dbebc, elixirRequirementBar)
+//   battleClock          the HUD time update's clock (0x8d38c4 on the battle timeline 0xd56070)
+//   topRightFade         HUD_topRight's alpha in the HUD update 0x8d1e6c (fade out once input is blocked)
+//   HandPanelSlide       HUD_player's slide-in (0x8db8e0 +0x21c / +0x274) and the hand update gate (0x8dc37c)
+//   defaultFloaterPos    the popup manager's default floater point (0x88ca58)
 
 // -- stage --------------------------------------------------------------------------------------
 
@@ -1008,4 +1012,83 @@ export function radialFillStrip(verts: ArrayLike<number>, count: number, fill: n
     put(C);
   }
   return out;
+}
+
+// -- HUD clock, HUD_topRight fade, hand panel slide ----------------------------------------------
+
+/** What battleClock reads of the battle (core Battle fields). */
+export interface ClockBattle {
+  tick: number;
+  regulationTicks: number;
+  overtimeTicks: number;
+  /** the timeline entered its overtime section (Battle.overtime, 0xd56738) */
+  overtime: boolean;
+  result: { tick: number } | null;
+}
+
+/**
+ * The clock of the HUD time update 0x8d38c4: the timeline's section (0xd56738: overtime only once
+ * 0xd33f74 let it advance there with equal crowns) and its seconds left, ceil(max(0, len − elapsed) /
+ * 1000) (0xd566d8). The battle tick 0xd33f74, and with it the timeline (0xd56070), keeps running after
+ * the end until EndScreenDelay (the battle manager stops it at 0xd3581c), so `ticksSinceEnd` more ticks
+ * count after the engine's last step; a section that ran out stays at 0.
+ */
+export function battleClock(b: ClockBattle, ticksSinceEnd = 0): { ot: boolean; msLeft: number; secs: number } {
+  const ot = b.overtime;
+  const elapsed = b.tick + (b.result ? Math.max(0, ticksSinceEnd) : 0);
+  const end = ot ? b.regulationTicks + b.overtimeTicks : b.regulationTicks;
+  const msLeft = Math.max(0, (end - elapsed) * 50);
+  return { ot, msLeft, secs: Math.floor((msLeft + 999) / 1000) };
+}
+
+/**
+ * HUD_topRight's alpha byte in the HUD update 0x8d1e6c: byte / 255 − 2 dt while battle input is blocked
+ * (battle screen 0xbe4400: the intro before its actionFrame, the result screen, or the battle over), else
+ * byte / 255 + 4 dt, stored by 0x123cbc0 as (int)(clamp(a, 0, 1) · 255). The setup 0x8cf3b8 starts it at
+ * 0. HUD_topRight_overtime (+0x158) has no fade.
+ */
+export function topRightFade(byte: number, dt: number, blocked: boolean): number {
+  const a = blocked ? f32(f32(byte * f32(1 / 255)) - f32(dt + dt)) : f32(f32(dt * 4) + f32(byte * f32(1 / 255)));
+  if (a < 0) return 0;
+  return Math.trunc(f32((a > 1 ? 1 : a) * 255));
+}
+
+/**
+ * HUD_player's slide (0x8db8e0). The panel is shown (+0xea) unless battle input is blocked (0xbe4400 /
+ * 0xbe42e0 / 0xbe42f0) or the HUD is hidden (+0x29c); t (+0x21c, 0 at the setup 0x8da088) moves by
+ * speed (+0x274 = 4, 0x8d9d30) · dt toward 1 when shown and 0 when not, clamped. The panel clip's y is
+ * u²(3 − 2u) · dist with u = 1 − t (dist = vt+0x68: the panel's bounds height at setup, negative for a
+ * top panel) and its alpha 1 while t > 0, else 0. The hand update 0x8dc37c runs its per-card part (card
+ * updates, wiggle entries, next card, NextSpellTimer) only while t >= 0.4 and shown; otherwise only the
+ * wiggle list advances. The first time t reaches 0.3 (+0xeb) the panel plays a sound (not played here).
+ */
+export class HandPanelSlide {
+  t = 0; // +0x21c
+  shown = false; // +0xea
+  speed = 4; // +0x274
+
+  update(dt: number, shown: boolean): void {
+    this.shown = shown;
+    const v = f32(this.t + f32(this.speed * (shown ? dt : -dt)));
+    this.t = v < 0 ? 0 : v > 1 ? 1 : v;
+  }
+
+  /** the panel clip's y offset for a slide distance */
+  offset(dist: number): number {
+    const u = f32(1 - this.t);
+    return f32(f32(f32(u * u) * dist) * f32(3 - f32(u + u)));
+  }
+
+  get visible(): boolean { return this.t > 0; }
+
+  /** 0x8dc37c's gate for the per-card hand update */
+  get handLive(): boolean { return this.t >= 0.4 && this.shown; }
+}
+
+/**
+ * The popup manager's default floater point 0x88ca58 (used by battle screen vt+0x230 0xbe8910): stage
+ * size minus the safe-area insets (none here), times (0.5, 0.3), floored.
+ */
+export function defaultFloaterPos(stageW: number, stageH: number): [number, number] {
+  return [Math.floor(f32(Math.trunc(stageW) * 0.5)), Math.floor(f32(Math.trunc(stageH) * f32(0.3)))];
 }

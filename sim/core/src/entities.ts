@@ -86,6 +86,18 @@ export class Unit {
   kbY: number;
   /** Knockback ignores immunity (m+0x1fd, PushbackAll): no swing, keeps charge. */
   kbIgnore: boolean;
+  /**
+   * Death-spawn slide (DeathSpawnPushback, 0xfcff3c): steps left (m+0x1f8); each movement update moves
+   * the actor up to kbStep (250) toward (kbX, kbY) (0xfcc578), kbStep = 0 when it ends.
+   */
+  slideN: number;
+  /**
+   * LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK (actor +0x174, set by 0xf8aac8 for death spawns): characters and
+   * towers cannot target the actor (vt+0x148 0xf825e4) until the counter (+0x178, +50 per character
+   * update 0xf800bc) passes ATTACK_FINISH_TIME_MS.
+   */
+  spawnImmune: boolean;
+  spawnImmuneMs: number;
   /** River jump (state 5) and its total distance (m+0x204). */
   jumping: boolean;
   jumpTotal: number;
@@ -236,6 +248,9 @@ export class Unit {
     this.kbX = 0;
     this.kbY = 0;
     this.kbIgnore = false;
+    this.slideN = 0;
+    this.spawnImmune = false;
+    this.spawnImmuneMs = 0;
     this.jumping = false;
     this.jumpTotal = 0;
     this.walkMs = 0;
@@ -488,7 +503,8 @@ export interface Command {
 export interface BattleEvent {
   tick: number;
   type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path'
-    | 'areaRing' | 'pushRing' | 'landing';
+    | 'areaRing' | 'pushRing' | 'landing' | 'aoePulse' | 'elixir' | 'projEnd' | 'reject'
+    | 'damage' | 'shieldLost';
   team: number;
   x: number;
   y: number;
@@ -500,4 +516,32 @@ export interface BattleEvent {
   r2?: number;
   /** landing: actor z (game units). */
   z?: number;
+  /**
+   * elixir (battle screen listener vt+0x398 0xbe4a8c from 0xf83990 / 0xfca5ec): `team` receives
+   * `amount` (1/10000 elixir) at the dying unit's (x, y); `side` is the listener's owner argument
+   * (-1: ManaOnDeath, neutral colour; else the receiving owner). `id` = the dying unit.
+   */
+  amount?: number;
+  side?: number;
+  /** cast: id of the first projectile Tower_castSpell created (-1: none). spawn: the projectile whose
+   * hit made it (0xf9188c), else absent. */
+  pid?: number;
+  /**
+   * Character-view effect data (viewer sc/char_effects.ts):
+   * - damage: a queued damage entry was applied (World_flushDamageQueue 0xf992e0 -> Health_applyHit
+   *   0xfcb29c, which plays the entry's effect on the victim's view, vt+0xc0). `id`/`team`/`x`/`y` are the
+   *   victim; `fx` the entry's effect: 0 none (area-effect pulses 0xfd068c, tiebreak drains), 1 the global
+   *   "Damage" effect (World_areaDamage 0xf97be8; spell and spawned projectiles; Tables +0xec0), 2 the
+   *   attacker's DamageEffect, 3 its DamageEffectSpecial (charge hit, 0xfc619c), 4 the projectile's effect
+   *   (Projectile_init's: the shooter's DamageEffect, else "Damage"), 5 the buff's damage effect
+   *   (0xf86668: BuffData +0x248, else "Damage"); `name` is the attacker / shooter / buff data name ('' for
+   *   none); `src` the source actor or projectile id.
+   * - shieldLost: the entry broke the victim's shield (0xfcb29c -> 0xf85730 -> view vt+0x110 0x846850).
+   * - spawn: `src` = the source character of a spawner or death spawn (0xf8aac8 reads its
+   *   SpawnCharacterEffect), else absent.
+   * - hit / shoot: `src` = the target id; `fx` = 1 for a charged attack (movement +0x1e0 >= 10000).
+   * - impact: `src` = the projectile's target id (-1: none); `z` = the projectile's z (+0x8c) at the hit.
+   */
+  fx?: number;
+  src?: number;
 }
