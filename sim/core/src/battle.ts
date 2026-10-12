@@ -1553,6 +1553,13 @@ export class Battle {
           const cx = d.selfAsAoeCenter ? u.x : u.tsx;
           const cy = d.selfAsAoeCenter ? u.y : u.tsy;
           this.areaDamage(u.team, cx, cy, d.areaDamageRadius, d.attacksAir, d.attacksGround, dmg, -1, d.crownTowerDamagePercent, 0, false);
+          // 0xfc7080 passes CharacterData +0x976 DisableMeleeAeoDamageEffect as World_areaDamage's flags
+          // (bit 0: no ring); the sim export drops that column as visual and no supported character sets it.
+          // The pushback ring would start from the attacker (p11/p12), but this splash passes no pushback.
+          if (this.recordEvents) {
+            const flags = this.defs.data.units[d.name]?.DisableMeleeAeoDamageEffect === true ? 1 : 0;
+            this.areaDamageRings(u.team, cx, cy, d.areaDamageRadius, 0, flags, null, 0, u.x, u.y, u.id, d.name);
+          }
         } else {
           // BuffOnDamage lands with the damage (flush callback 0xfd09ac)
           this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id);
@@ -1807,6 +1814,22 @@ export class Battle {
     }
   }
 
+  /**
+   * World_areaDamage's battle-screen listener calls as events (only recorded; viewer sc/area_rings.ts):
+   * on entry, when it is not a pure heal (heal < 1 or damage != 0; the engine has no heal splash) and
+   * flags bit 0 is clear, vt+0x3a8 0xbe76e8 with (x, y, R, R2), or with the spell wave's circle
+   * (group x, y, r, 0) when the group's radius is > 0 (p24..p26); at the end, with pushback > 0 and
+   * flags bit 2 clear, vt+0x3b0 0xbe7980 with (pushback origin, pushback) [STAT].
+   */
+  private areaDamageRings(team: number, x: number, y: number, R: number, R2: number, flags: number, group: SpellGroup | null,
+    pushback: number, px: number, py: number, id: number, name: string): void {
+    if ((flags & 1) === 0) {
+      if (group !== null && group.r > 0) this.events.push({ tick: this.tick, type: 'areaRing', team, x: group.x, y: group.y, name, id, r: group.r, r2: 0 });
+      else this.events.push({ tick: this.tick, type: 'areaRing', team, x, y, name, id, r: R, r2: R2 });
+    }
+    if (pushback > 0 && (flags & 4) === 0) this.events.push({ tick: this.tick, type: 'pushRing', team, x: px, y: py, name, id, r: pushback });
+  }
+
   // ---------------------------------------------------------------- actors & movement
 
   private updateActor(u: Unit): void {
@@ -2021,7 +2044,14 @@ export class Battle {
     const m = n - k <= k ? n - k : k;
     let a = m * 2;
     if (a > 31) a = 32;
-    if (k < 2) { u.jumping = false; u.jumpZ = 0; return; }
+    if (k < 2) {
+      u.jumping = false;
+      u.jumpZ = 0;
+      // Actor_setState(1) from state 5 (0xf7f2c8): the view plays the character's LandingEffect (vt+0x80
+      // 0x84e784) at the actor's x, y and z (the z base recorded last tick)
+      if (this.recordEvents) this.events.push({ tick: this.tick, type: 'landing', team: u.team, x: u.x, y: u.y, z: u.z, name: u.def.name, id: u.id });
+      return;
+    }
     if (a < 0) a = 0;
     const h = (a - ((a * a) >> 6)) * u.def.jumpHeight;
     u.jumpZ = h >= 16 ? h >> 4 : 0;
@@ -2964,6 +2994,14 @@ export class Battle {
       left--;
     }
     targets.length = 0;
+    // end of the pulse (0xf7a34c, with or without targets): Pushback > 0 without the NO_AOE_PUSHBACK_VFX
+    // tag (data +0xf8 bit 2, loader 0xdc3700) calls the battle screen's vt+0x3b0 0xbe7980 [STAT]
+    if (this.recordEvents && def.pushback > 0) {
+      const tags = this.defs.data.areaEffects[def.name]?.Tags;
+      if (!(typeof tags === 'string' && tags.split(',').some((s) => s.trim() === 'NO_AOE_PUSHBACK_VFX'))) {
+        this.events.push({ tick: this.tick, type: 'pushRing', team: a.team, x: a.x, y: a.y, name: def.name, id: a.id, r: def.pushback });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- projectiles
@@ -3244,6 +3282,7 @@ export class Battle {
       // 0xf8f03c: PushbackAll is not passed to the splash (p21 = 0)
       this.areaDamage(p.team, p.tx, p.ty, def.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, false,
         def.targetBuff, def.buffTime, p.id, p.group, def.maxTargets, p.key);
+      if (this.recordEvents) this.projectileRings(p);
     }
     if (def.pierce) this.projCollide(p, p.x, p.y);
     if (def.spawnUnit) this.spawnFromProjectile(p);
@@ -3324,6 +3363,27 @@ export class Battle {
     p.alive = true;
     p.delay = 150;
     this.registerPending(p);
+  }
+
+  /**
+   * Area rings of a splash hit, 0xf8f03c [STAT]: World_areaDamage is not called at all without damage,
+   * heal (none in the engine) or pushback with AlwaysApplyPushback (Goblin Barrel shows no ring). R2 is
+   * the projectile's RadiusY (+0x180). A wave's projectiles share the group of its first one (0xf9f47c ->
+   * 0xf8f498 / 0xf93784): the first hit marks it (+0xc) and passes the group circle, later hits pass
+   * flags 1, so each wave shows one ring (Arrows: three). Pushback starts from the aim point.
+   */
+  private projectileRings(p: Projectile): void {
+    const def = p.def;
+    const raw = this.defs.data.projectiles[def.name];
+    if (p.damage < 1 && !(p.pushback > 0 && raw?.AlwaysApplyPushback === true)) return;
+    const g = p.group;
+    let flags = 0;
+    if (g !== null) {
+      if (g.ringShown) flags = 1;
+      else g.ringShown = true;
+    }
+    const r2 = typeof raw?.RadiusY === 'number' ? raw.RadiusY : 0;
+    this.areaDamageRings(p.team, p.tx, p.ty, def.radius, r2, flags, g, p.pushback, p.tx, p.ty, p.id, p.spell || def.name);
   }
 
   /** Directional pushback 0xfcfe18 [STAT]: origin 100 units behind the target along (dx, dy). */

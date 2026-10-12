@@ -429,6 +429,11 @@ export interface SpellGroup {
   x: number;
   y: number;
   r: number;
+  /**
+   * Group +0xc: set by the first hit of the wave (0xf8f03c); later hits pass World_areaDamage flag 1, so
+   * the wave shows one area ring. Only the event path reads it (no effect on the simulation).
+   */
+  ringShown?: boolean;
 }
 
 /** Area effect object (Zap, Freeze, Poison, Rage...). */
@@ -471,14 +476,28 @@ export interface Command {
   cost: number;
 }
 
-/** Visual events for the viewer (recorded only when enabled). */
+/**
+ * Visual events for the viewer (recorded only when enabled).
+ * - areaRing: World_areaDamage 0xf97be8 called the battle screen's vt+0x3a8 (0xbe76e8) with (x, y, r, r2):
+ *   r2 > 0 draws a rectangle frame, else an ellipse; name/id are the damage source (unit or projectile).
+ * - pushRing: vt+0x3b0 (0xbe7980) with (x, y, r): the pushback of World_areaDamage (r = pushback) or
+ *   of an area-effect pulse (0xf7a34c, r = its Pushback).
+ * - landing: Actor_setState 0xf7f2c8 left the jump state 5; the view plays LandingEffect (vt+0x80
+ *   0x84e784) at the actor's x, y, z.
+ */
 export interface BattleEvent {
   tick: number;
-  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path';
+  type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path'
+    | 'areaRing' | 'pushRing' | 'landing';
   team: number;
   x: number;
   y: number;
   /** Unit/card/projectile name. */
   name: string;
   id: number;
+  /** areaRing / pushRing: radius (game units); areaRing: second radius (0: none). */
+  r?: number;
+  r2?: number;
+  /** landing: actor z (game units). */
+  z?: number;
 }
