@@ -2,7 +2,7 @@
 // shows only what the client shows in a battle (the HUD is drawn with the game's own exports by
 // battle_ui.ts / hud.ts): drag a card from the hand, or tap a card and then the arena. The
 // simulator's own controls (pause/step/speed/restart, sandbox palette, the red player's hand for
-// local two-player testing) appear only with the `?dev` URL parameter.
+// local two-player testing) are shown unless the URL has `?clean`.
 import { Battle, type CardDef, type GameData, supportedCards } from '../../core/src/index.ts';
 import gameDataJson from '../../data/gamedata.json';
 import type { BattleUi, PreviewInput } from './battle_ui.ts';
@@ -16,7 +16,8 @@ export { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
 
 const data = gameDataJson as unknown as GameData;
 const TICK_MS = 50;
-const DEV = typeof location !== 'undefined' && new URLSearchParams(location.search).has('dev');
+// sandbox controls are on by default; `?clean` shows only what the client shows
+const DEV = typeof location === 'undefined' || !new URLSearchParams(location.search).has('clean');
 
 const DEFAULT_DECKS: [string[], string[]] = [FOCUS_DECKS[0].slice(), FOCUS_DECKS[1].slice()];
 
@@ -442,7 +443,9 @@ class App {
     const el = $('palette');
     el.innerHTML = '';
     const supported = new Set(supportedCards(this.battle.defs));
-    for (const name of FOCUS_CARDS.filter((n) => supported.has(n))) {
+    // any supported card, the focus decks' cards first
+    const names = [...FOCUS_CARDS.filter((n) => supported.has(n)), ...[...supported].filter((n) => !FOCUS_CARDS.includes(n))];
+    for (const name of names) {
       const card = this.battle.defs.card(name, 11);
       const c = document.createElement('div');
       c.className = 'card';
