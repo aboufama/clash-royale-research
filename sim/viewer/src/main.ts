@@ -145,7 +145,10 @@ class App {
     document.body.classList.toggle('dev', DEV);
     sound.attach('assets'); // audio/ (bake_audio.py), loaded on the first user gesture
     // ?vs=agent: red is played by the trained agent
-    if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('vs') === 'agent') this.aiLevel = [0, AGENT_LEVEL];
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('vs') === 'agent') {
+      this.aiLevel = [0, AGENT_LEVEL];
+      this.decks = [AGENT_DECK.slice(), AGENT_DECK.slice()];
+    }
     const rp = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('replay');
     if (rp) {
       try { this.useReplay(await (await assetFetch(rp)).json() as Replay); } catch (e) { console.warn('replay', rp, e); }
@@ -738,8 +741,15 @@ class App {
       labels.push(label);
       label();
       btn.onclick = () => {
+        const was = this.aiLevel[t];
         this.aiLevel[t] = (this.aiLevel[t] + 1) % aiNames.length;
-        this.makeBots();
+        if (this.aiLevel[t] === AGENT_LEVEL || was === AGENT_LEVEL) {
+          // the agent is trained on a mirror match: both sides get its deck while it plays (a new battle)
+          this.decks = this.aiLevel.includes(AGENT_LEVEL) ? [AGENT_DECK.slice(), AGENT_DECK.slice()]
+            : [DEFAULT_DECKS[0].slice(), DEFAULT_DECKS[1].slice()];
+          this.prewarmDecks();
+          this.newBattle();
+        } else this.makeBots();
         label();
       };
     }
@@ -784,6 +794,8 @@ class App {
 }
 
 const AGENT_LEVEL = 4;
+/** the deck the agent trains with on both sides (sim/rl/env.ts DEFAULT_ENV decks[0], --mirror) */
+const AGENT_DECK = FOCUS_DECKS[0];
 const AGENT_MODEL = 'models/agent.onnx';
 
 /** A recorded match (sim/rl/env.ts RlEnv.replay()). */

@@ -49,6 +49,7 @@ def parse(argv=None):
     a("--bot-level", type=int, default=3)
     a("--random-prob", type=float, default=0.0)
     a("--no-deck-swap", action="store_true", help="learner keeps deck 0 / team order fixed")
+    a("--mirror", action="store_true", help="mirror match: both sides play the first deck (sim/rl/env.ts DEFAULT_ENV)")
     a("--self-play-prob", type=float, default=0.5, help="py-vs-py episodes where both sides are the learner")
     # reward
     a("--shape-coef", type=float, default=0.5, help="crown-tower damage reward weight at the start")
@@ -297,7 +298,7 @@ def main(argv=None):
     rng = random.Random(args.seed)
 
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
-               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap}
+               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror}
     pool = EnvPool(args.workers, args.envs, args.seed, env_cfg)
     spec = pool.spec
     (out / "spec.json").write_text(json.dumps(spec))

@@ -115,7 +115,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
     torch.set_num_threads(1)
     rng = random.Random(args.seed * 7919 + cid)
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
-               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap}
+               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror}
     pool = EnvPool(n_workers, args.envs, args.seed * 101 + cid, env_cfg)
     n_tiles = spec["sizes"]["N_TILES"]
     rollout = max(1024, args.rollout // args.collectors)

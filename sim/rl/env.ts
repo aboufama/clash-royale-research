@@ -17,6 +17,8 @@ export interface EnvConfig {
   decks: [string[], string[]];
   /** Assign the two decks to the teams at random each episode. */
   deckSwap: boolean;
+  /** Mirror match: both teams play decks[0]. */
+  mirror?: boolean;
   decisionTicks: number;
   /** Per-tick discount used for the reward sums handed to the trainer. */
   gamma: number;
@@ -112,7 +114,7 @@ export class RlEnv {
     this.episode++;
     const seed = 1 + this.rng.int(0x7ffffffe);
     const swap = cfg.deckSwap && this.rng.next() < 0.5;
-    this.deckOf = swap ? [1, 0] : [0, 1];
+    this.deckOf = cfg.mirror ? [0, 0] : swap ? [1, 0] : [0, 1];
     this.b = new Battle(this.data, { seed, decks: [cfg.decks[this.deckOf[0]], cfg.decks[this.deckOf[1]]], level: cfg.level });
     this.seed = seed;
     this.plays = [];
