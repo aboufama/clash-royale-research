@@ -43,3 +43,6 @@ extracted/
 # Simulator viewer: baked original art (rebuilt by tools/art/bake_web.py) and bundles
 sim/viewer/assets/
 sim/viewer/dist/
+
+# agent git worktrees (Claude Code isolation)
+.claude/worktrees/
