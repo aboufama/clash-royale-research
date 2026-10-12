@@ -303,7 +303,9 @@ export interface Manifest {
     /** image/range.png copied by the bake (drag radius indicator texture) */
     rangeImage?: string;
     /** texts.csv EN strings the HUD fills in (TID_* -> text) */
-    texts?: Record<string, string> };
+    texts?: Record<string, string>;
+    /** sc/ui_common.sc 9-slice buttons and popup backgrounds (the simulator's side panel) */
+    common?: { sc: string; exports: string[] } };
   fonts: Record<string, string>;
 }
 

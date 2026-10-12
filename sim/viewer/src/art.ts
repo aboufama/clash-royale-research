@@ -21,6 +21,7 @@ import {
 import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
 import { BattleUi } from './battle_ui.ts';
 import { Clouds } from './sc/clouds.ts';
+import { applyPanelSkin } from './panel_skin.ts';
 import type { ProjectileViewFrame, ProjectileViewState } from './sc/projectile_view.ts';
 
 type Team = 0 | 1;
@@ -63,6 +64,8 @@ export function createArt(_manifest: unknown): ArtHooks {
           console.warn('font', fam, err);
         }
       }
+      // the simulator panel wears the game's ui_common buttons and popup bodies
+      try { applyPanelSkin(art); } catch (err) { console.warn('panel skin', err); }
       // original card art (frame + icon + elixir cost) for the DOM hands and palette
       await Promise.all(Object.keys(art.manifest.cards).map(async (card) => {
         try { thumbs.set(card, await art.cardThumbnail(card, 120)); } catch (err) { console.warn('card', card, err); }

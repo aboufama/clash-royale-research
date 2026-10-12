@@ -26,6 +26,8 @@ export interface Clip {
   labels: Map<string, number>; // label -> frame
   frameLabels: Map<number, string>;
   names: (string | null)[] | null;
+  /** 9-slice scaling grid: the stretched centre rect x0, y0, x1, y1 (clip space), or null */
+  grid: [number, number, number, number] | null;
 }
 
 export interface Bank {
@@ -48,7 +50,7 @@ interface LibJson {
   tex: { f: string; w: number; h: number }[];
   shapes: Record<string, [number, number[]][]>;
   clips: Record<string, { fps: number; n: number[]; e: number[]; c: number[]; k: number; b?: number[];
-    lb?: Record<string, string>; nm?: string[] }>;
+    lb?: Record<string, string>; nm?: string[]; g?: [number, number, number, number] }>;
   banks: { m: number[]; c: number[] }[];
   exports: Record<string, number>;
   mods?: Record<string, number>;
@@ -99,7 +101,7 @@ export class ScLibrary {
       this.clips.set(+k, {
         id: +k, fps: c.fps, frameCount: c.n.length, frameStart, elements: new Int32Array(c.e),
         children: new Int32Array(c.c), blend: c.b ? new Uint8Array(c.b) : null, bank: c.k,
-        labels, frameLabels, names: c.nm ? c.nm.map((s) => s || null) : null,
+        labels, frameLabels, names: c.nm ? c.nm.map((s) => s || null) : null, grid: c.g ?? null,
       });
     }
     this.banks = json.banks.map((b) => ({ m: new Float64Array(b.m), c: new Float32Array(b.c) }));

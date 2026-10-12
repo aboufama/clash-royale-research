@@ -113,6 +113,15 @@ CHAR_EFFECT_FIELDS = ("SpawnEffect", "DeathEffect", "AttackStartEffect", "Damage
 CHAR_FILTER_FIELDS = ("DeployBaseAnimExportName", "SpawnDeployBaseAnim", "DeathSpawnDeployBaseAnim")
 PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathEffect", "TargettedEffect")
 
+# Common UI pieces (sc/ui_common.sc: 9-slice buttons and popup backgrounds) for the simulator's own
+# side panel, so its controls use the game's art.
+UI_COMMON_EXPORTS = (
+    "btn_blue", "btn_green", "btn_orange", "btn_red", "btn_purple",
+    "btn_blue_big", "btn_green_big", "btn_orange_big", "btn_red_big", "btn_purple_big",
+    "bg_popup_01_1", "bg_popup_01_2", "bg_popup_01_title", "title_ribbon_blue", "bg_window9s",
+    "bg_r8", "bg_r12", "bg_r16", "bg_r20", "bg_r25", "bg_common", "time_bar_bg", "time_bar_fg_hl",
+)
+
 HUD_EXPORTS = (
     # bottom panel: hand, elixir bar, next card
     "HUD_player", "spell_card_ingame", "spell_card_ingame_reveal", "card_item_elixir_ingame",
@@ -418,6 +427,8 @@ def export_library(src: ScSource, export_names: set[str] | None, out_dir: Path, 
             d["lb"] = labels
         if any(mc.children_names):
             d["nm"] = list(mc.children_names)
+        if getattr(mc, "scaling_grid", None):
+            d["g"] = [round(v, 3) for v in mc.scaling_grid]  # 9-slice centre rect x0, y0, x1, y1
         clips_out[str(o)] = d
 
     mods_out = {str(o): sc.modifiers[o] for o in ids if o in sc.modifiers}
@@ -1093,6 +1104,14 @@ class Baker:
         for e in HUD_EXPORTS:
             if self.want(ui, e):
                 out["exports"].append(e)
+        common = {"sc": None, "exports": []}
+        for e in UI_COMMON_EXPORTS:
+            lib = self.want("sc/ui_common.sc", e)
+            if lib:
+                common["sc"] = lib
+                common["exports"].append(e)
+        if common["sc"]:
+            out["common"] = common
         # radius indicator texture of the spell drag (0xcf0464 loads image/range.png: a 2x32 white ramp)
         if apk.exists("image/range.png"):
             OUT.mkdir(parents=True, exist_ok=True)

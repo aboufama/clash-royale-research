@@ -338,7 +338,7 @@ class App {
     }
     const ex = document.createElement('div');
     ex.className = 'elixir';
-    ex.innerHTML = `<div class="num">6</div><div class="bar"><div class="fill"></div><div class="ticks"></div></div>`;
+    ex.innerHTML = `<div class="num gt">6</div><div class="bar"><div class="fill"></div><div class="ticks"></div></div>`;
     el.appendChild(ex);
     this.elixirFill = ex.querySelector('.fill') as HTMLElement;
     this.elixirNum = ex.querySelector('.num') as HTMLElement;
@@ -418,7 +418,13 @@ class App {
       btnPlay.textContent = 'Play';
       this.stepOnce();
     };
-    $<HTMLSelectElement>('speed').onchange = (e) => { this.speed = Number((e.target as HTMLSelectElement).value); };
+    // speed cycles 0.25x .. 10x
+    const speeds = [0.25, 0.5, 1, 2, 4, 10];
+    const sp = $<HTMLButtonElement>('speed');
+    sp.onclick = () => {
+      this.speed = speeds[(speeds.indexOf(this.speed) + 1) % speeds.length];
+      sp.textContent = `${this.speed}x`;
+    };
     $<HTMLButtonElement>('btnReset').onclick = () => {
       this.seed = Number($<HTMLInputElement>('seed').value) || 1;
       this.newBattle();

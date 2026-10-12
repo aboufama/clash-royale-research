@@ -16,26 +16,68 @@
   #panel, .hand { display: none; }
   body.dev #panel { display: flex; }
   body.dev .hand { display: flex; }
-  .hand { gap: 6px; align-items: flex-end; padding: 6px 8px; width: 100%; justify-content: center; background: linear-gradient(#462a2a, #301b1b); }
+  /* game typefaces (loaded by the art bundle); white with a black outline and a hard drop shadow, like the client's labels */
+  .gt { font-family: 'Supercell-Magic', system-ui, sans-serif; color: #fff; -webkit-text-stroke: 3px #000; paint-order: stroke fill;
+        text-shadow: 0 2px 0 #000; letter-spacing: .01em; }
+  .hand { gap: 6px; align-items: flex-end; padding: 6px 10px 8px; width: 100%; justify-content: center;
+          background: linear-gradient(#b8322f, #7c1c1d 70%, #5c1213); box-shadow: inset 0 -3px 0 rgba(0,0,0,.35), 0 2px 0 #2a0707; }
   .card { position: relative; width: 60px; height: 74px; border-radius: 8px; background: #2c3650 center/contain no-repeat; border: 0; cursor: grab; display: flex; align-items: flex-end; justify-content: center; font-size: 10px; text-align: center; color: #fff; overflow: hidden; }
-  .card.next { width: 40px; height: 50px; opacity: .85; cursor: default; }
-  .card.disabled { filter: grayscale(.9) brightness(.6); cursor: not-allowed; }
+  .card.next { width: 40px; height: 50px; opacity: .9; cursor: default; }
+  .card.disabled { filter: grayscale(1) brightness(.75); cursor: not-allowed; }
   .card.dragghost { position: fixed; pointer-events: none; opacity: .75; z-index: 10; transform: translate(-50%,-50%) scale(.8); }
   .card .cost { position: absolute; left: 0; top: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--elixir); font-weight: 700; display: flex; align-items: center; justify-content: center; }
   .card .name { padding: 2px; background: rgba(0,0,0,.35); width: 100%; }
-  .elixir { flex: 1; max-width: 160px; display: flex; flex-direction: column; gap: 3px; margin-left: 4px; }
-  .elixir .bar { height: 14px; border-radius: 7px; background: #2a1438; overflow: hidden; position: relative; }
-  .elixir .fill { position: absolute; inset: 0; width: 0; background: var(--elixir); }
-  .elixir .ticks { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(0,0,0,.45) calc(10% - 1px) 10%); }
-  .elixir .num { font-weight: 700; font-size: 14px; }
-  #panel { width: 280px; background: var(--panel); padding: 10px; overflow-y: auto; flex-direction: column; gap: 10px; }
-  #panel h3 { margin: 4px 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  body.skinned .card { background-color: transparent; }
+  .elixir { flex: 1; max-width: 170px; display: flex; flex-direction: column; gap: 2px; margin-left: 6px; }
+  .elixir .bar { height: 18px; border-radius: 9px; background: #1d2a17; overflow: hidden; position: relative; box-sizing: border-box; }
+  .elixir .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 6px;
+                  background: linear-gradient(#f39cff, #d93cf7 45%, #a51fd0); box-shadow: inset 0 2px 0 rgba(255,255,255,.35); }
+  .elixir .ticks { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(0,0,0,.4) calc(10% - 2px) 10%); }
+  .elixir .num { font-size: 16px; }
+  body.skinned .elixir .bar { background: none; border-radius: 0; overflow: visible; border-style: solid;
+    border-image: var(--sk-time_bar_bg-img) var(--sk-time_bar_bg-slice) / var(--sk-time_bar_bg-w); border-width: var(--sk-time_bar_bg-w); }
+  body.skinned .elixir .bar .fill, body.skinned .elixir .bar .ticks { inset: -2px 0; }
+
+  #panel { width: 300px; padding: 10px; overflow-y: auto; flex-direction: column; gap: 12px;
+           background: radial-gradient(120% 60% at 50% 0%, #3d86de, #2462b8 55%, #173f82); box-shadow: inset 3px 0 0 rgba(0,0,0,.35); }
+  /* a section is a game popup: indigo title tab over the light popup body */
+  .pop { display: flex; flex-direction: column; }
+  .pop-title { padding: 7px 12px 9px; font-size: 16px; text-align: center; border-radius: 10px 10px 0 0; background: linear-gradient(#7465d8, #5643b7); }
+  .pop-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-radius: 0 0 10px 10px;
+              background: #e3eefa; box-shadow: inset 0 -4px 0 #a9bcd9; color: #24345a; }
+  body.skinned .pop-title { background: none; border-radius: 0; border-style: solid; padding: 2px 4px 4px;
+    border-image: var(--sk-bg_popup_01_2-img) var(--sk-bg_popup_01_2-slice) / var(--sk-bg_popup_01_2-w); border-width: var(--sk-bg_popup_01_2-w);
+    border-bottom-width: 0; border-image-width: var(--sk-bg_popup_01_2-w); }
+  body.skinned .pop-body { background: none; box-shadow: none; border-radius: 0; border-style: solid; padding: 0;
+    border-image: var(--sk-bg_popup_01_1-img) var(--sk-bg_popup_01_1-slice) / var(--sk-bg_popup_01_1-w); border-width: var(--sk-bg_popup_01_1-w); }
   .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  button, select, input { background: #2c3650; color: var(--text); border: 1px solid #45526e; border-radius: 6px; padding: 5px 8px; font: inherit; }
-  button.on { background: #3a5fa0; }
-  .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-  .palette .card { width: 100%; height: 64px; font-size: 9px; }
-  #status { font-size: 12px; color: var(--muted); white-space: pre-line; }
+  .hint { font: 13px/1.2 'SC CCBackBeat', system-ui, sans-serif; color: #4a5f88; }
+  /* buttons: the game's btn_* (blue by default; data-sk picks green / orange / red / purple) */
+  #panel button { font-family: 'Supercell-Magic', system-ui, sans-serif; font-size: 12px; color: #fff; -webkit-text-stroke: 3px #000;
+    paint-order: stroke fill; text-shadow: 0 2px 0 #000; min-height: 36px; padding: 4px 12px 7px; cursor: pointer;
+    border: 2px solid #10213d; border-radius: 8px; background: linear-gradient(#5ab4ff, #2d8cf0 60%, #1b62c4); box-shadow: inset 0 -4px 0 rgba(0,0,0,.25); }
+  #panel button[data-sk="green"] { background: linear-gradient(#6ff06a, #3ad13a 60%, #1f9a2b); }
+  #panel button[data-sk="orange"] { background: linear-gradient(#ffd24a, #ffae1c 60%, #d97a00); }
+  #panel button[data-sk="red"] { background: linear-gradient(#ff6b6b, #f03b3b 60%, #b81d22); }
+  #panel button[data-sk="purple"] { background: linear-gradient(#d39bff, #a95cf0 60%, #7a2fc4); }
+  body.skinned #panel button { background: none; box-shadow: none; border-radius: 0; border-style: solid;
+    border-image: var(--sk-btn_blue-img) var(--sk-btn_blue-slice) / var(--sk-btn_blue-w); border-width: var(--sk-btn_blue-w); padding: 0 4px 2px; }
+  body.skinned #panel button[data-sk="green"] { border-image-source: var(--sk-btn_green-img); }
+  body.skinned #panel button[data-sk="orange"] { border-image-source: var(--sk-btn_orange-img); }
+  body.skinned #panel button[data-sk="red"] { border-image-source: var(--sk-btn_red-img); }
+  body.skinned #panel button[data-sk="purple"] { border-image-source: var(--sk-btn_purple-img); }
+  #panel button:active { transform: translateY(2px); filter: brightness(.92); }
+  /* toggles read as greyed out while off */
+  #panel button.toggle:not(.on) { filter: grayscale(1) brightness(.8); }
+  #panel input { width: 72px; font: 12px 'Supercell-Magic', system-ui, sans-serif; color: #24345a; background: #fff; border: 2px solid #8ea6cc;
+                 border-radius: 8px; padding: 6px 8px; outline: none; }
+  body.skinned #panel input { background: none; border-radius: 0; border-style: solid; padding: 2px 4px;
+    border-image: var(--sk-bg_r20-img) var(--sk-bg_r20-slice) / var(--sk-bg_r20-w); border-width: var(--sk-bg_r20-w); }
+  .lbl { display: flex; gap: 6px; align-items: center; font: 14px 'SC CCBackBeat', system-ui, sans-serif; color: #24345a; }
+  .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .palette .card { width: 100%; height: 76px; font-size: 9px; }
+  .palette .card:hover { transform: translateY(-2px); }
+  #status { font: 14px/1.35 'SC CCBackBeat', system-ui, sans-serif; color: #24345a; white-space: pre-line; }
   @media (max-width: 800px) { body.dev #panel { display: none; } }
 </style>
 </head>
@@ -46,28 +88,33 @@
     <div id="board"><canvas id="gl"></canvas><canvas id="overlay"></canvas></div>
   </div>
   <div id="panel">
-    <div>
-      <h3>Match</h3>
-      <div class="row">
-        <button id="btnPlay">Pause</button>
-        <button id="btnStep">Step</button>
-        <select id="speed">
-          <option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option>
-          <option value="2">2x</option><option value="4">4x</option><option value="10">10x</option>
-        </select>
-        <button id="btnReset">Restart</button>
-      </div>
-      <div class="row" style="margin-top:6px">
-        <label>Seed <input id="seed" type="number" value="1" style="width:70px"></label>
-        <button id="btnInf">Infinite elixir</button>
+    <div class="pop">
+      <div class="pop-title gt">Battle</div>
+      <div class="pop-body">
+        <div class="row">
+          <button id="btnPlay" data-sk="green">Pause</button>
+          <button id="btnStep">Step</button>
+          <button id="speed" title="Simulation speed">1x</button>
+          <button id="btnReset" data-sk="orange">Restart</button>
+        </div>
+        <div class="row">
+          <label class="lbl">Seed <input id="seed" type="number" value="1"></label>
+          <button id="btnInf" class="toggle" data-sk="purple">Infinite elixir</button>
+        </div>
       </div>
     </div>
-    <div>
-      <h3>Spawn a card (drag onto the arena)</h3>
-      <div class="row"><button id="palBlue" class="on">Blue</button><button id="palRed">Red</button></div>
-      <div class="palette" id="palette"></div>
+    <div class="pop">
+      <div class="pop-title gt">Spawn a card</div>
+      <div class="pop-body">
+        <div class="hint">Drag any card onto the arena for either side.</div>
+        <div class="row"><button id="palBlue" class="toggle on">Blue</button><button id="palRed" class="toggle" data-sk="red">Red</button></div>
+        <div class="palette" id="palette"></div>
+      </div>
     </div>
-    <div><h3>Status</h3><div id="status"></div></div>
+    <div class="pop">
+      <div class="pop-title gt">Status</div>
+      <div class="pop-body"><div id="status"></div></div>
+    </div>
   </div>
 </div>
 <script type="module" src="dist/main.js"></script>

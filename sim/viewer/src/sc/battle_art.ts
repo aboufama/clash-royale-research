@@ -587,6 +587,37 @@ export class BattleArt {
     return p;
   }
 
+  private sliceCanvas: HTMLCanvasElement | null = null;
+  private sliceRenderer: ScRenderer | null = null;
+
+  /**
+   * Render a 9-slice export (sc/ui_common.sc buttons, popup backgrounds) at `scale` device px per SC px
+   * into a PNG for CSS border-image: the image covers the frame-0 bounds, `slice` the insets of the
+   * clip's scaling grid (top, right, bottom, left, image px) and `size` the bounds in SC px.
+   */
+  sliceImage(libName: string, exportName: string, scale = 2): { url: string; slice: [number, number, number, number]; size: [number, number] } | null {
+    const lib = this.libs.get(libName);
+    const b = lib?.frameBounds(exportName, 0);
+    if (!lib || !b || typeof document === 'undefined') return null;
+    const x0 = Math.floor(b[0]), y0 = Math.floor(b[1]), x1 = Math.ceil(b[2]), y1 = Math.ceil(b[3]);
+    const w = Math.max(1, Math.round((x1 - x0) * scale)), h = Math.max(1, Math.round((y1 - y0) * scale));
+    // one offscreen context for all of them (browsers cap live WebGL contexts)
+    if (!this.sliceCanvas) {
+      this.sliceCanvas = document.createElement('canvas');
+      this.sliceCanvas.width = w; this.sliceCanvas.height = h;
+      this.sliceRenderer = new ScRenderer(this.sliceCanvas, { alpha: true, antialias: true });
+    }
+    const cv = this.sliceCanvas, r = this.sliceRenderer!;
+    cv.width = w; cv.height = h;
+    r.begin([0, 0, 0, 0]);
+    r.draw(lib, exportName, 0, [scale, 0, 0, scale, -x0 * scale, -y0 * scale]);
+    r.end();
+    const url = cv.toDataURL('image/png');
+    const g = lib.clip(exportName)?.grid ?? [x0, y0, x1, y1];
+    const k = (v: number) => Math.max(0, Math.round(v * scale));
+    return { url, slice: [k(g[1] - y0), k(x1 - g[2]), k(y1 - g[3]), k(g[0] - x0)], size: [x1 - x0, y1 - y0] };
+  }
+
   /** Matrix + colour of a "filter" clip (single animated element, e.g. the deploy drop/flash). */
   filterAt(libName: string, exportName: string, ms: number): { m: Mat; c: Col | null } | null {
     const lib = this.libs.get(libName);
