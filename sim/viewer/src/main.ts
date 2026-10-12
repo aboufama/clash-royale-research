@@ -119,6 +119,14 @@ class App {
   private redEmote = 0;
   /** stage point of a touch that began on the arena with no card selected (0xbe1120's tap) */
   private tapStart: [number, number] | null = null;
+  /**
+   * A recorded match (`?replay=<url>`, written by sim/rl's worker or train/crl/evaluate.py --replays): the
+   * battle config plus every accepted play by tick. The engine is deterministic, so feeding the plays in
+   * at their ticks replays the match exactly; hand input and the AI are off meanwhile.
+   */
+  replay: Replay | null = null;
+  private replayAt = 0;
+  private replaying = false;
 
   constructor() {
     this.overlay = new Overlay($('overlay'));
@@ -132,6 +140,10 @@ class App {
   async init(): Promise<void> {
     document.body.classList.toggle('dev', DEV);
     sound.attach('assets'); // audio/ (bake_audio.py), loaded on the first user gesture
+    const rp = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('replay');
+    if (rp) {
+      try { this.useReplay(await (await assetFetch(rp)).json() as Replay); } catch (e) { console.warn('replay', rp, e); }
+    }
     this.art = await loadArt();
     // the decks' unit art loads with the core libraries; any other card's on first use
     if (this.art) this.prewarmDecks();
@@ -165,7 +177,16 @@ class App {
     this.art?.prewarm(this.decks.flat().flatMap((n) => cardArtNames(defs.card(n, 11))));
   }
 
+  /** Play back a recorded match: its seed and decks, both sides hands-off. */
+  useReplay(r: Replay): void {
+    this.replay = r;
+    this.seed = r.seed;
+    this.decks = [r.decks[0].slice(), r.decks[1].slice()];
+    this.aiLevel = [0, 0];
+  }
+
   newBattle(): void {
+    this.replayAt = 0;
     // postEnd: the world runs on after the result until EndScreenDelay, as the battle manager runs it (0x10ca9a0)
     this.battle = new Battle(data, { seed: this.seed, decks: this.decks, recordEvents: true, postEnd: true });
     this.battle.infiniteElixir = this.infinite;
@@ -233,6 +254,16 @@ class App {
     // a stopped battle does not step: its last tick's events must not be handed to the views again
     if (this.battle.stopped) return;
     this.frame.snapshot(this.battle);
+    const r = this.replay;
+    if (r) {
+      // the recorded plays of this tick, in their recorded order, through the hand path
+      this.replaying = true;
+      while (this.replayAt < r.plays.length && r.plays[this.replayAt][0] <= this.battle.tick) {
+        const [tick, team, slot, x, y] = r.plays[this.replayAt++];
+        if (tick === this.battle.tick) this.playCard(team, slot, x, y);
+      }
+      this.replaying = false;
+    }
     // AI sides decide on the state before the tick, blue then red; their plays take the hand path
     for (const bot of this.bots) {
       const d = bot?.decide(this.battle);
@@ -491,6 +522,7 @@ class App {
 
   /** Submit a play now; the snapped play position, or null when the engine rejects it. */
   private playCard(team: number, slot: number, x: number, y: number): { x: number; y: number } | null {
+    if (this.replay && !this.replaying) return null; // a replay owns both hands
     const b = this.battle;
     const err = b.play(team, slot, x, y);
     const ui = this.ui;
@@ -719,6 +751,18 @@ class App {
       el.appendChild(c);
     }
   }
+}
+
+/** A recorded match (sim/rl/env.ts RlEnv.replay()). */
+interface Replay {
+  v: number;
+  seed: number;
+  level: number;
+  decks: [string[], string[]];
+  /** [tick, team, slot, x, y] for every accepted Battle.play */
+  plays: number[][];
+  ctrl?: string[];
+  result?: { winner: number; reason: string; tick: number } | null;
 }
 
 async function loadArt(): Promise<ArtHooks | null> {

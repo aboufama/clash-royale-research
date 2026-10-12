@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -26,11 +27,14 @@ def main(argv=None):
     p.add_argument("--envs", type=int, default=8)
     p.add_argument("--seed", type=int, default=12345)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument("--replays", default="", help="write every episode as a replay JSON here (viewer: ?replay=<url>)")
     a = p.parse_args(argv)
     device = torch.device(a.device)
     ck = torch.load(a.checkpoint, map_location=device)
     env_cfg = {"botProb": 1.0 if a.opponent == "bot" else 0.0, "randomProb": 1.0 if a.opponent == "random" else 0.0,
                "botLevel": a.bot_level}
+    if a.replays:
+        env_cfg["replayDir"] = str(Path(a.replays).resolve())
     pool = EnvPool(a.workers, a.envs, a.seed, env_cfg)
     actor = Actor(Layout(pool.spec), ModelConfig(**ck["model"])).to(device).eval()
     actor.load_state_dict(ck["actor"])

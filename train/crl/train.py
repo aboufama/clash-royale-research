@@ -36,7 +36,7 @@ def parse(argv=None):
     a("--out", default="runs/default")
     a("--seed", type=int, default=1)
     a("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    a("--workers", type=int, default=max(1, available_cpus() - 1))
+    a("--workers", type=int, default=max(1, available_cpus() - 3), help="simulation workers (default: leave 3 CPUs to the trainer)")
     a("--groups", type=int, default=2, help="worker groups stepped alternately (overlaps simulation and inference)")
     a("--envs", type=int, default=24, help="battles per worker")
     # env
@@ -315,6 +315,7 @@ def main(argv=None):
         for k in ended:
             ep_nets.pop(k, None)
 
+        tp0 = time.time()
         meta = frame.meta
         n = len(meta)
         gids = meta[:, 0].astype(np.int64)
@@ -328,6 +329,8 @@ def main(argv=None):
             nets_r.append(ep_nets[k][int(teams[r])])
         slot = np.zeros(n, np.int64)
         tile = np.zeros(n, np.int64)
+        tp1 = time.time()
+        timing["p_bookkeep_s"] += tp1 - tp0
         obs_t = torch.from_numpy(frame.obs).to(device)
         masks_t = torch.from_numpy(frame.masks).to(device)
         learn = np.array([v == "L" for v in nets_r], dtype=bool)
@@ -338,6 +341,8 @@ def main(argv=None):
                 s, t, lp = run_actor.act(obs_t[lt], masks_t[lt])
                 v = run_critic(obs_t[lt]).float()
                 s_np, t_np = s.cpu().numpy(), t.cpu().numpy()
+                tp2 = time.time()
+                timing["p_infer_s"] += tp2 - tp1
                 lp_np, v_np = lp.float().cpu().numpy(), v.cpu().numpy()
                 slot[li_rows], tile[li_rows] = s_np, t_np
                 tm = run_actor.chosen_tile_mask(masks_t[lt], s).cpu().numpy() * (s_np > 0)[:, None]
@@ -348,6 +353,7 @@ def main(argv=None):
                     if prev is not None and meta[r, 3] == 0:
                         buf.finish(prev, float(meta[r, 4]) + c * float(meta[r, 5]), float(meta[r, 6]), False, float(v_np[k]), int(idx[k]))
                     stream_last[key] = int(idx[k])
+                timing["p_store_s"] += time.time() - tp2
                 stats.decisions += len(li_rows)
                 total_decisions += len(li_rows)
             for sid in {v for v in nets_r if isinstance(v, int)}:
@@ -396,7 +402,8 @@ def main(argv=None):
         print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
               f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "
               f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s "
-              f"proc {timing['process_s']:.1f}s upd {rec.get('update_s', 0):.1f}s rec/frame "
+              f"proc {timing['process_s']:.1f}s (book {timing['p_bookkeep_s']:.1f} infer {timing['p_infer_s']:.1f} "
+              f"store {timing['p_store_s']:.1f}) upd {rec.get('update_s', 0):.1f}s rec/frame "
               f"{timing['records'] / max(1, timing['frames']):.0f}", flush=True)
         stats.reset()
         timing.clear()

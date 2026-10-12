@@ -15,7 +15,8 @@
 // next decision point (resetting finished episodes), so each frame has at least one record per env.
 // `term` / `shape` / `ticks` on a record close that team's previous transition (0 on episode start).
 
-import { readSync, writeSync } from 'node:fs';
+import { mkdirSync, readSync, writeFileSync, writeSync } from 'node:fs';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadGameData } from '../core/src/node.ts';
 import { DEFAULT_ENV, type EnvConfig, RlEnv, XRng } from './env.ts';
@@ -55,8 +56,10 @@ export class Worker {
   private obs = new Float32Array(0);
   private masks = new Uint8Array(0);
   private first = true;
+  private readonly seedTag: number;
 
   constructor(wc: WorkerConfig) {
+    this.seedTag = wc.seed >>> 0;
     const data = loadGameData();
     this.cfg = { ...DEFAULT_ENV, ...wc };
     this.enc = new Encoder(makeVocab(data));
@@ -83,6 +86,10 @@ export class Worker {
         if (ends === null) break;
         for (const end of ends) {
           dones.push(i, end.team, env.episode, end.outcome, end.acc.term, end.acc.shape, end.acc.ticks, env.b.tick);
+        }
+        if (this.cfg.replayDir) {
+          mkdirSync(this.cfg.replayDir, { recursive: true });
+          writeFileSync(join(this.cfg.replayDir, `ep_${this.seedTag}_${i}_${env.episode}.json`), JSON.stringify(env.replay()));
         }
         env.reset();
       }

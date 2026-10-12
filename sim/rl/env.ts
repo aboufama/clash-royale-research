@@ -27,6 +27,8 @@ export interface EnvConfig {
   /** Stop an episode that has not ended after this many ticks (safety; a match ends by 6000). */
   maxTicks: number;
   level: number;
+  /** Write each finished episode as a replay JSON into this directory (worker; viewer `?replay=`). */
+  replayDir?: string;
 }
 
 export const DEFAULT_ENV: EnvConfig = {
@@ -84,6 +86,9 @@ export class RlEnv {
   private lastQueue: [number[], number[]] = [[], []];
   private towerHp: number[] = [0, 0, 0, 0, 0, 0];
   episode = 0;
+  seed = 0;
+  /** Successful plays of the episode, [tick, team, slot, x, y] (recorded when cfg.replayDir is set). */
+  plays: number[][] = [];
   /** A py team that was asked this round and has not acted yet. */
   readonly waiting: [boolean, boolean] = [false, false];
   readonly started: [boolean, boolean] = [false, false];
@@ -106,6 +111,18 @@ export class RlEnv {
     const swap = cfg.deckSwap && this.rng.next() < 0.5;
     this.deckOf = swap ? [1, 0] : [0, 1];
     this.b = new Battle(this.data, { seed, decks: [cfg.decks[this.deckOf[0]], cfg.decks[this.deckOf[1]]], level: cfg.level });
+    this.seed = seed;
+    this.plays = [];
+    if (cfg.replayDir) {
+      // every play (trainer, bot, random) goes through Battle.play: record the accepted ones with their tick
+      const b = this.b;
+      const play = b.play.bind(b);
+      b.play = (team: number, slot: number, x: number, y: number) => {
+        const err = play(team, slot, x, y);
+        if (err === null) this.plays.push([b.tick, team, slot, x, y]);
+        return err;
+      };
+    }
     const r = this.rng.next();
     const side = this.rng.int(2);
     if (r < cfg.botProb) this.ctrl = side === 0 ? ['bot', 'py'] : ['py', 'bot'];
@@ -132,6 +149,15 @@ export class RlEnv {
       const ts = [p.king, p.princess[0], p.princess[1]];
       for (let i = 0; i < 3; i++) out[t * 3 + i] = ts[i] ? Math.max(0, ts[i].hp) / Math.max(1, ts[i].maxHp) : 0;
     }
+  }
+
+  /** The episode as a replay: Battle config plus every accepted play by tick (deterministic). */
+  replay(): Record<string, unknown> {
+    const b = this.b;
+    return {
+      v: 1, seed: this.seed, level: this.cfg.level, decks: [this.cfg.decks[this.deckOf[0]], this.cfg.decks[this.deckOf[1]]],
+      ctrl: this.ctrl, plays: this.plays, result: b.result, crowns: [b.players[0].crowns, b.players[1].crowns], ticks: b.tick,
+    };
   }
 
   /** Commits since the last call, from the queue: plays push to its back, refills shift its head. */
