@@ -69,6 +69,15 @@ UI_SOUNDS = {
     "crown3": "soundbanks/ui_battle_general/ui_battle_general_third_crown",
 }
 
+# music.csv's BattleMusic row points at this build's seasonal arena track (music_arena_202610, the
+# October 2026 theme). The owner wants the standard Clash Royale battle music, which the same build ships
+# as music_arena_general_battle: a playlist of the three 2-minute battle loops (2min_loop_battle_01..03).
+# The result jingle's stop commands (Pre_result) name that event, not the seasonal one (DECISIONS.md).
+MUSIC_OVERRIDES = {
+    "BattleMusic": ("soundbanks/music_arena_general_battle.bank",
+                    "event:/Main/Music/Arena/music_arena_general_battle/music_arena_general_battle"),
+}
+
 # music.csv rows the result screen plays (0x8bc564 Pre_result; 0x8c2b80 Win/Lose/Draw = client tables
 # +0xe48/+0xe50/+0xe58; 0x8c1b9c Post_result_loop once the jingle stopped)
 RESULT_MUSIC = {"preResult": "Pre_result", "win": "Win", "lose": "Lose", "draw": "Draw", "postResult": "Post_result_loop"}
@@ -290,6 +299,9 @@ class AudioBaker:
 
     def music(self, name: str) -> str | None:
         key = "music:" + name
+        if name in MUSIC_OVERRIDES:
+            bank, ev = MUSIC_OVERRIDES[name]
+            return key if self.event(key, bank, ev) else None
         for row in csv_rows("csv_client/music.csv"):
             if row.get("Name") == name:
                 return key if self.event(key, row["BankName"], row["EventName"]) else None

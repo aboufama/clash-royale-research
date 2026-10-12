@@ -267,6 +267,12 @@ change it.
   served; the demo deploys from `main` with Pages source "GitHub Actions". The
   public-repo guard in the Checks workflow is left in place and now fails by
   design while `game-files/` is in a public repository.
+- **Update (2026-10-12):** the owner saw an older build after a deploy. Pages
+  lets browsers cache each file for 10 minutes. The workflow now loads the
+  bundle as `dist/main.js?v=<commit>`, and the viewer adds that version to
+  every asset request (`sim/viewer/src/sc/asset_fetch.ts`). A new deploy then
+  never runs against cached files. Only the 10-minute cache of `index.html`
+  itself remains.
 
 ## 2026-10-11 — Sixteen focus cards, quality over coverage
 
@@ -317,19 +323,29 @@ change it.
   and Ogg Vorbis decodes natively in browsers (no re-encode, so no quality loss).
   The FMOD runtime (no web build of this version, licence terms) and a WASM
   Vorbis decoder (bundle size) were the alternatives.
-- **Music:** played as the code and the banks say: 0xbdf1b0 starts 60sec_loop
-  and 30sec_loop with 0xcbc880, which does not stop the previous music, and
-  BattleMusic loops, so they layer until the end screen stops everything but the
-  ambience (0xbe0100 → 0xcbc8d4). Kept literal and flagged for the owner.
+- **Music:** the owner heard the first version and rejected it ("it needs to
+  be the actual clash royale sound"). Two changes:
+  - BattleMusic plays `music_arena_general_battle`, the standard battle theme
+    (a playlist of the three 2-minute loops), not music.csv's row. That row
+    names this build's seasonal track `music_arena_202610`. The
+    60sec_loop, 30sec_loop and Sudden_death rows already come from the
+    standard theme's bank, and Pre_result's stop commands name its events.
+    The override is `MUSIC_OVERRIDES` in `tools/audio/bake_audio.py`.
+  - Starting a battle track stops the previous one with a short fade.
+    0xbdf1b0 starts the next track with 0xcbc880, which does not stop the
+    previous music, and every music event loops. Played literally, the
+    tracks layered, which is not what a player hears. The client's handover
+    must happen in FMOD's mixer (bus, snapshot or sidechain), which is not
+    decoded. Marked A in FIDELITY.
 - **Publishing:** the owner approved putting the decoded audio on the public
   Pages site with the art (2026-10-12), an explicit exception to the AGENTS.md
   rule for this demo; the Pages workflow bakes with audio. `--no-audio` stays
   available for bakes that must not include it. The CI check on `game-files/`
   in a public repository is unchanged.
-- **Would change if:** a bus / snapshot / sidechain in the banks turns out to
-  duck BattleMusic, Safari support matters (it may not decode Ogg Vorbis: a
-  bake-time re-encode to AAC would need a codec), or a later build changes the
-  bank format version (0x8e).
+- **Would change if:** the owner wants the seasonal track back, the mixer
+  (bus / snapshot / sidechain) is decoded and gives the exact handover, Safari
+  support matters (it may not decode Ogg Vorbis: a bake-time re-encode to AAC
+  would need a codec), or a later build changes the bank format version (0x8e).
 
 ## 2026-10-12 — Character effects: engine-recorded effect identity; spawn filters gated by state
 

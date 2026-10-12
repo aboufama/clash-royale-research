@@ -5,6 +5,8 @@
 //
 // Shapes keep the SC2 triangle-strip vertex order; u/v are converted from texels to 0..1 here.
 
+import { assetFetch } from './asset_fetch.ts';
+
 export const NO_INDEX = -1;
 
 export interface ShapeCmd {
@@ -126,11 +128,11 @@ export class ScLibrary {
   /** Load `<baseUrl>/sc/<name>.json` and its atlases (stored premultiplied; no re-premultiply, no colour conversion). */
   static async load(baseUrl: string, name: string): Promise<ScLibrary> {
     const base = baseUrl.replace(/\/$/, '');
-    const res = await fetch(`${base}/sc/${name}.json`);
+    const res = await assetFetch(`${base}/sc/${name}.json`);
     if (!res.ok) throw new Error(`ScLibrary: ${name}.json: HTTP ${res.status}`);
     const json = (await res.json()) as LibJson;
     const textures = await Promise.all(json.tex.map(async (t) => {
-      const r = await fetch(`${base}/sc/${t.f}`);
+      const r = await assetFetch(`${base}/sc/${t.f}`);
       if (!r.ok) throw new Error(`ScLibrary: ${t.f}: HTTP ${r.status}`);
       const blob = await r.blob();
       // the .sc textures are stored premultiplied (no texel has a channel above its alpha; the client's

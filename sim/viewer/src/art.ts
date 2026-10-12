@@ -38,6 +38,7 @@ import { applyFilterColor, AreaViews, BuffViews, crownTowerFilterColor } from '.
 import { CharEffects, deathSpawnFilter } from './sc/char_effects.ts';
 import { type Col, WHITE } from './sc/math.ts';
 import type { ClipRef } from './sc/manifest.ts';
+import { versionedUrl } from './sc/asset_fetch.ts';
 
 type Team = 0 | 1;
 
@@ -128,7 +129,7 @@ export function createArt(_manifest: unknown): ArtHooks {
       await art.prewarm(pending);
       for (const [fam, url] of Object.entries(art.manifest.fonts ?? {})) {
         try {
-          const ff = new FontFace(fam, `url(assets/${url})`);
+          const ff = new FontFace(fam, `url(${versionedUrl(`assets/${url}`)})`);
           await ff.load();
           (document.fonts as unknown as { add(f: FontFace): void }).add(ff);
         } catch (err) {

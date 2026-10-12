@@ -13,6 +13,7 @@ import { Overlay } from './overlay.ts';
 import { PlaceholderRenderer } from './placeholder.ts';
 import { sound } from './sc/sound.ts';
 import { affordableSoon, dropWaits, MAX_SPELL_PENDING_TIME_S } from './sc/ui_port.ts';
+import { assetFetch } from './sc/asset_fetch.ts';
 
 export { FOCUS_CARDS, FOCUS_DECKS } from './focus.ts';
 
@@ -722,7 +723,7 @@ class App {
 
 async function loadArt(): Promise<ArtHooks | null> {
   try {
-    const res = await fetch('assets/manifest.json');
+    const res = await assetFetch('assets/manifest.json');
     if (!res.ok) return null;
     const manifest = await res.json();
     const mod = await import('./art.ts');

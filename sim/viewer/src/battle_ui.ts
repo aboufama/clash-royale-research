@@ -25,6 +25,7 @@ import {
   type AreaActor, CLIENT_GLOBALS, defaultFloaterPos, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown,
   DeployTimer, elixirGainExport, elixirGainText, indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
 } from './sc/ui_port.ts';
+import { assetFetch } from './sc/asset_fetch.ts';
 
 type Team = 0 | 1;
 type Row = Record<string, unknown>;
@@ -191,7 +192,7 @@ export class BattleUi {
     if (!ctx || !sound.enabled) return;
     let p = this.sfxBuffers.get(path);
     if (!p) {
-      p = fetch(`${this.art.baseUrl.replace(/\/$/, '')}/${path}`).then((r) => r.arrayBuffer())
+      p = assetFetch(`${this.art.baseUrl.replace(/\/$/, '')}/${path}`).then((r) => r.arrayBuffer())
         .then((b) => ctx.decodeAudioData(b)).catch(() => null);
       this.sfxBuffers.set(path, p);
     }
@@ -310,7 +311,7 @@ export class BattleUi {
     const url = this.art.manifest.hud.rangeImage;
     if (!url) return;
     try {
-      const res = await fetch(`${this.art.baseUrl.replace(/\/$/, '')}/${url}`);
+      const res = await assetFetch(`${this.art.baseUrl.replace(/\/$/, '')}/${url}`);
       if (res.ok) this.range = await createImageBitmap(await res.blob(), { premultiplyAlpha: 'premultiply', colorSpaceConversion: 'none' });
     } catch (e) {
       console.warn('range.png', e);

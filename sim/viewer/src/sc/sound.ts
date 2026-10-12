@@ -35,6 +35,8 @@
 // applied. The audio clock is the wall clock like FMOD's; a faster simulation speed plays the
 // battle's events faster and the events' own limits (max instances, cooldown) thin them out.
 
+import { assetFetch } from './asset_fetch.ts';
+
 /** One instrument of a baked event (tools/audio/bake_audio.py `node`). */
 export interface SoundNode {
   k: 'wave' | 'multi' | 'silence' | 'command' | string;
@@ -274,7 +276,7 @@ export class SoundSystem {
     if (this.loading) return this.loading;
     this.loading = (async () => {
       try {
-        const r = await fetch(`${this.base}/audio/sounds.json`);
+        const r = await assetFetch(`${this.base}/audio/sounds.json`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         this.doc = await r.json() as SoundDoc;
       } catch (e) {
@@ -312,7 +314,7 @@ export class SoundSystem {
     if (!ctx || !doc || !doc.files[f]) return Promise.resolve(null);
     const p = (async () => {
       try {
-        const r = await fetch(`${this.base}/${doc.files[f].f}`);
+        const r = await assetFetch(`${this.base}/${doc.files[f].f}`);
         const ab = await r.arrayBuffer();
         const buf = await ctx.decodeAudioData(ab);
         this.buffers.set(f, buf);
@@ -685,6 +687,11 @@ export class BattleSounds {
     }
     if (ready && this.want && this.want !== this.started && !s.ended) {
       this.started = this.want;
+      // one battle track at a time: 0xcbc880 itself never stops the previous music, and every music event
+      // loops (its timeline jumps back to the start), so in the client the handover happens in FMOD's mixer
+      // (bus / snapshot / sidechain, not decoded); what a player hears is the 2-minute track giving way to
+      // the 60 s loop, that to the 30 s loop, and the battle music to sudden death (A: mechanism)
+      sound.stopMusic();
       sound.playMusic(this.want);
     }
   }

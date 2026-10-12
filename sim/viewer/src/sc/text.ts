@@ -36,6 +36,7 @@
 
 import { outlineCBox, renderOutline, TtfFont } from './freetype.ts';
 import type { TextFieldDef } from './library.ts';
+import { assetFetch } from './asset_fetch.ts';
 
 const f32 = Math.fround;
 
@@ -95,7 +96,7 @@ export function loadGameFonts(base = 'assets'): Promise<void> {
     loading = (async () => {
       const files = await Promise.all(GAME_FONT_FILES.map(async (f) => {
         try {
-          const r = await fetch(`${base.replace(/\/$/, '')}/fonts/${f}`);
+          const r = await assetFetch(`${base.replace(/\/$/, '')}/fonts/${f}`);
           return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
         } catch {
           return null;

@@ -1,5 +1,7 @@
 // Types for sim/viewer/assets/manifest.json (written by tools/art/bake_web.py).
 
+import { assetFetch } from './asset_fetch.ts';
+
 export interface ActionArt {
   export: string; // prefix; full export = `${export}_${dir}`
   dirs: number; // authored directions over 180 degrees (9 -> 16 total, 18 -> 34)
@@ -317,7 +319,7 @@ export interface Manifest {
 }
 
 export async function loadManifest(baseUrl: string): Promise<Manifest> {
-  const r = await fetch(`${baseUrl.replace(/\/$/, '')}/manifest.json`);
+  const r = await assetFetch(`${baseUrl.replace(/\/$/, '')}/manifest.json`);
   if (!r.ok) throw new Error(`manifest.json: HTTP ${r.status} (run tools/art/bake_web.py)`);
   return (await r.json()) as Manifest;
 }

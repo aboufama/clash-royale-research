@@ -48,7 +48,10 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p site
-          cp sim/viewer/index.html site/
+          # the bundle URL carries the commit, and the viewer passes it on to every asset request
+          # (sc/asset_fetch.ts), so a new deploy never runs against files cached from the last one
+          sed "s|src=\"dist/main.js\"|src=\"dist/main.js?v=${GITHUB_SHA::12}\"|" sim/viewer/index.html > site/index.html
+          grep -q "dist/main.js?v=${GITHUB_SHA::12}" site/index.html
           cp -r sim/viewer/dist sim/viewer/assets site/
           touch site/.nojekyll
           du -sh site
