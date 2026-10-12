@@ -390,16 +390,20 @@ export class Hud {
       const mid = cb ? (cb[1] + cb[3]) / 2 : 0;
       if (card) this.art.drawCard(r, card, matMul(hm, [s, 0, 0, s, cx, cy - mid * s]), { noCost: true });
     }
-    // hand
+    // hand: the elixir the cards see (0xfa1d10) is (elixir − pending plays, at most MAX_MANA) / 100,
+    // 0 below 1; a card is playable at cost · 100, else its RadialFill shows shown / (cost · 100)
+    // (0x8dc37c → 0x8e1408 → 0x89fd04)
     const avail = p.elixir - p.pending;
+    const shown = avail < 1 ? 0 : Math.trunc(Math.min(avail, b.maxElixir) / 100);
     for (let i = 0; i < 4; i++) {
       const def = p.deck[p.hand[i]];
       const pos = this.slotPos(i);
       if (!def || !pos) continue;
       if (this.drag && this.drag.slot === i) continue; // drawn at the pointer
-      const ok = b.infiniteElixir || avail >= def.cost * 10000;
+      const need = def.cost * 100;
+      const ok = b.infiniteElixir || shown >= need;
       const ready = b.tick >= p.slotReady[i];
-      this.art.drawCard(r, def.name, [pos.s, 0, 0, pos.s, pos.x, pos.y], { dim: !ok || !ready });
+      this.art.drawCard(r, def.name, [pos.s, 0, 0, pos.s, pos.x, pos.y], { dim: !ok || !ready, fill: ok ? null : shown / need });
     }
     // emote button
     r.draw(ui, 'HUD_taunt', 0, [1, 0, 0, 1, L.stageW * 0.5, L.stageH], WHITE, {
