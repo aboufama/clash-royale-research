@@ -70,6 +70,27 @@ supported by the engine (–). Their view paths that the area-effect view alread
 targets and the Clone render mode (not ported, see above), SpawnEffect of spawned characters
 (engine side, 0xf7a34c → 0xd35ab4).
 
+## Logic-side effects and sounds
+
+Effects the logic plays by a static name (static Strings 0x1a5e468.. built at 0xe66800, looked up with
+0xe19214) through an actor's view vt+0xc0 0x84f11c (pitch 1.0, enemy version for the opponent's actors,
+0x84ddcc). In this build they are sound-only (their components have no ExportName). Ported in
+`sim/viewer/src/sc/char_effects.ts` (`CharEffects.onStep`, fed one engine step's events and the King
+towers' state; decompiles in `work/native/decomp_fx4/`), baked as GLOBAL_EFFECTS with their enemy
+versions, with the location's and characters' CrowdEffects flags in the manifest.
+
+| Effect (enemy version) | Sound | Client call site | Condition | Level |
+| --- | --- | --- | --- | --- |
+| GenericDie (EnemyGenericDie) | own_die_jingle / enemy_die_jingle | death 0xf83990: lookup 0xf84508, vt+0xc0 @0xf84520; also 0xf8d5bc (die of actor class 6, vtable 0x1935e50: no supported actor) | every death unless actor vt+0x178 0xf81fd0 (vt+0x170 = crown tower, or IsSummonerTower 0xde02c4); a crown tower's 0xfa3d08 ends in 0xf83990 too, so a tower gets none | P |
+| CrowdDieBigUnit (CrowdDieBigUnitEnemy) | summon_own_big_die / summon_enemy_big_die | 0xf83990 @0xf844a8 (vt+0xc0 @0xf844d4), before GenericDie | location CrowdEffects (0xd36014 → 0xe48cd4, column 0x1986d8c; PvP_goblin: true) and CharacterData CrowdEffects (0xde1350, +0x7f8): Giant, Golem, P.E.K.K.A, Royal Giant, Giant Skeleton, Lava Hound, Bowler, Night Witch, Electro Wizard, Inferno Dragon; the Princess tower's death | P |
+| CrowdTowerTakeDamage (CrowdTowerTakeDamageEnemy) | take_damage / take_damage_enemy | Health_applyHit 0xfcb29c @0xfcbaa8, before the bar flash vt+0x20 and the entry's effect | location CrowdEffects; every damage entry an actor with vt+0x178 survives (both crown towers; the lethal entry dies instead): the engine records a lethal entry's `tower` event before its `damage` event | P |
+| CrowdSummonBigUnit (CrowdSummonBigUnitEnemy) | summon_own_big / summon_enemy_big | Deploy_summon 0xd423bc @0xd42b34, after the member's vt+0x138 / vt+0x168 | location CrowdEffects and the member's CrowdEffects; cast summons only (members spawned on the cast's tick with its card and team) | P |
+| King_player_activate (King_enemy_activate) | kingtower player_activate / enemy_activate + angry | king_tower.toml: ActionWaitToActivate (king_tower_damaged() ‖ tower_destroyed()) → ActionWithDuration 3300 → ActionFilter is_npc_battle() → OnFalseAction ActionPlayEffect | when the engine's King leaves KING_ACTIVATING (battle.ts kingTicks, which matches the native trace) | D / A: the ActionPlayEffect runtime is not traced, played on the King's view like vt+0xc0; until the engine records an event for it the viewer reads the King's state |
+| GetMana | get_mana | view vt+0x100 0x84f444 (own actor only), "+%d" text through 0x82d3cc (Tables +0xec8) | caller not traced | – (baked; `PlayOptions.text` carries the text) |
+
+Hook: art.ts's `onEvents` must call `charFx.onStep(b, (id) => this.byId.get(id))` once per engine step
+(not wired yet: until it is, none of these play).
+
 ## Units and buildings
 
 Which effect fields of the supported cards' characters, buildings, projectiles, buffs and crown towers
@@ -110,6 +131,17 @@ Filter components (0x82ea34 / 0x82ebdc) recolour the effect's parent actor while
 the buff filter's class: the clip length, frame step and colour arithmetic are one implementation
 (`sc/area_view.ts` filterClipLength / filterFrame / applyFilterColor) used by both.
 
+Component offset (`sc/effects.ts`): vt+0x48 (effect 0x82d204 → SWF 0x82a8e0: the inner clip's position
+inside the component's scale; emitter 0x831978 → each particle's +0x1c4, added to its display position
+in px). Every update of an effect whose parent (+0x48) is a character, 0x82bf10 @0x82c2ac re-sets it
+from the effect data: PivotClip (+0xb8) = the parent sprite frame's direct child of that name
+(0x1241adc, strcasecmp) at its matrix (tx, ty); else ParentLookAtOffsetRadius r (+0xb0 → effect +0x1c)
+at (⌊r·sin a/1024⌋·0.03, −⌊r·sin(a+90)/1024⌋·0.024), a = view +0x4dc = the shown direction's index ·
+180 / (N − 1) (0x84a7f8); x times the mirror sign (+0x4e8), y + TargetEffectY, both truncated; with
+neither, the offset stays. The views pass the parent (`PlayOptions.parentView`, `CharEffects.parentView`).
+Effect text: an instance's text (+0x28, set only by 0x82d3cc) goes on its own SWF components'
+TextParentInstanceName / TextInstanceName child at creation (0x82c58c).
+
 ### Fields
 
 | Field (data) | Client call site | Status | Notes |
@@ -129,17 +161,19 @@ the buff filter's class: the clip length, frame step and colour arithmetic are o
 | LandingEffect (+0x100) | 0xf7f2c8 (leaving state 5) → vt+0x80 | P | |
 | AppearEffect (+0x3f0) / HideEffect (+0x3f8) | 0xf8247c / 0xf81b3c → vt+0x80 | P | Tesla |
 | ContinuousEffect (+0x118, 0xde0664) | view ctor 0x836e58 → 0x83fcc8 → 0x82dedc attached | P | from the view's creation (deploy included) until the view goes |
-| ChargeEffect (+0x200, 0xde0828) | 0x840d44 @0x841c78: walk branch, charge ≥ 10000, charge clip present, previous action ≠ 3 | P | non-looping effects via vt+0xc0 (all three); their Filter component (filter_protection) recolours the charger (0x82ebdc). The effect_charge clip's TextInstanceName is not filled (–) |
+| ChargeEffect (+0x200, 0xde0828) | 0x840d44 @0x841c78: walk branch, charge ≥ 10000, charge clip present, previous action ≠ 3 | P | non-looping effects via vt+0xc0 (all three); their Filter component (filter_protection) recolours the charger (0x82ebdc). The effect_charge clip's TextInstanceName `txt` (in `charge`) is filled only for an instance with a text (0x82c58c, +0x2c ≠ 0); the charge call sets none, so it keeps its authored text, which is empty (P) |
 | TargetedHitEffect (+0x220, 0xde1258) | AttackComp_execute 0xfc619c (not cancelled) → view vt+0x90; extra targets AttackComp_update 0xfc8fc8 | P / A | Tesla, Electro Wizard beams (attack_pivot_1 / _2), Battle Ram, Executioner (sound only); the view's list +0x2e0 of these effects (stop conditions) not traced; the extra targets' pivot index follows the engine's order (A); a hit cancelled by distance still plays it (A) |
 | ShieldLostEffect (+0x140, 0xde0484) | 0xfcb29c → 0xf85730 → view vt+0x110 0x846850 → vt+0xc0 | P | engine `shieldLost`; the bar container's "chef_upgrade" label of 0x846850 is not played (–) |
 | SpawnPathfindEffect (+0x210 / _water +0x218) | tunnel view vt+0x168 0x84593c → 0x845944; per frame 0x83c194; end vt+0x170 0x845a8c | P / A | Miner; follows the tunnel (0x82cce0(1)); restarted on a water-flag change (the Miner has no _water variant: none over the river); 0x11d9838 taken as the engine's river tiles (A) |
 | TargettedDamageEffect1..3, FlameEffect1..3, DamageLevelTransitionEffect12 / 23 (level entries +0xb0 / +0xb8 / +0xd0, 0xde10e0 / 0xde1180 / 0xde1130) | 0x839b08 → 0x83b6d8 slots 0 / 2 / 1 (attack timer +0x24 > 0, not in states 4 / 11) | P / A | Inferno Tower, Inferno Dragon; level 0 carries transition "12", level 1 "23" (loader 0xdde618); the view's +0x4cc follows the attack sequence index at the attack clip's cycle (840d44), taken as the engine's ramp level (A); a new target restarts the beam and flame (A) |
-| TargetEffectY (+0x808, 0xde1220) | 0x83b6d8, 0x84e8e0 | P | beam source offset in px |
+| TargetEffectY (+0x808, 0xde1220) | 0x83b6d8, 0x84e8e0, 0x82bf10 @0x82c2ac | P | beam source offset in px; added to the PivotClip / ParentLookAtOffsetRadius offset |
+| ParentLookAtOffsetRadius (effect data +0xb0, 0xe21f54 → effect +0x1c) | 0x82bf10 @0x82c2ac | P | inferno_dragon_beam_lvl1..3 and inferno_dragon_muzzle(_stage2/3): r 1050, so the Inferno Dragon's beam and flame start 1050 units along its shown direction (31 px sideways, 25 px up / down) + TargetEffectY −20 instead of (0, −20); the muzzle's particles move with it |
 | LoadAttackEffect1..3 (level entry +0xc0 list), LoadAttackEffectReady (+0x510) | Ready: 0x83b6d8 LoadFirstHit branch (slot 3) | – | Electro Dragon: no LoadFirstHit, so Ready never plays; the list's call site was not found; all four are sound-only |
 | DeathAreaEffect | death 0xf83990 → area effect | (area_view.ts) | |
-| CrowdEffects (+0x7f8) | crowd sounds | n/a | sound |
+| CrowdEffects (+0x7f8, 0xde1350) | 0xf83990 @0xf844a8, 0xd423bc @0xd42b34 | P | CrowdDieBigUnit / CrowdSummonBigUnit sounds ("Logic-side effects and sounds") |
 | Kamikaze / KamikazeEffect, DashEffect, DashStartEffect, BuffWhenNotAttackingEffect, ReflectedAttack*, AbilityPendingEffect, SpecialReadyEffect | – | – | no supported card sets the effect |
-| HasDamageVisualPivot, PivotClip (effect) | 0x82a994; effect +0xc8 | – | not exported; electro_wizard_beam's PivotClip not ported |
+| PivotClip (effect data +0xb8) | 0x82bf10 @0x82c3c4 (sprite vt+0x150 → 0x1241adc) | P | electro_wizard_beam and ArcherAttackStart name "attack_pivot": the Electro Wizard's clips only have attack_pivot_1 / _2 and r = 0, so the lookup fails and the beam keeps vt+0x90's attack_pivot_<i+1> offset; ArcherAttackStart is sound-only |
+| HasDamageVisualPivot | 0x82a994 | – | not exported (no supported target uses it) |
 | ShakesTargets / ShakesShooter / TargetedEffectVisualPushback (sprite recoil, view vt+0xf8 0x83e4d8) | 0xfc619c, 0xf9188c | – | sprite offsets, not effects |
 
 Projectiles:
@@ -247,6 +281,13 @@ no ExportName); the viewer still plays them, so a sound hook on the effect syste
 n: the field is set but the client never plays it (a piercing projectile's HitEffect, 0xf9188c /
 0xf8ff74 play it only with CheckCollisions).
 
+Particle trails: none in the client. The TrailEffects' emitters (e.g. the Magic Archer arrow's
+Elite_archer_projectile_emitter / _shadow, TrailDuration 1628, TrailMaxPoints 64) carry TrailMaxPoints /
+TrailDuration / TrailSWF / TrailExportName, but only the emitter schema 0xe572b4 names them
+(0xe578e0..0xe57964); the emitter getters (0xe56ccc..0xe57208, by name through 0xe0c420 / 0xe0c4a0 /
+0xe0ca24), the particle code (0x82f2c0..0x831d08) and no data table read them. The speed lines are the
+emitters' ordinary RotateToDirection particles (n/a; no longer baked).
+
 | Projectile | Hit | Trail | Death | Pingpong | Targetted | Override shooter | piercing |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | ArcherArrow | P | · | · | · | · | · |  |
@@ -292,6 +333,11 @@ n: the field is set but the client never plays it (a piercing projectile's HitEf
 ### Bake
 
 `tools/art/bake_web.py` exports every effect the supported cards name (CHAR_EFFECT_FIELDS,
-PROJ_EFFECT_FIELDS, the buff fields incl. HitEffect, AEO fields) and the global "Damage" effect
-(GLOBAL_EFFECTS), plus TargetEffectY and UseFallbackDamageEffect on characters; every unit, projectile,
-area effect and buff the 70 cards reach is in the manifest (`missingEffects` empty).
+PROJ_EFFECT_FIELDS, the buff fields incl. HitEffect, AEO fields) and the effects the client plays by a
+static name (GLOBAL_EFFECTS: Damage, GenericDie, CrowdTowerTakeDamage, CrowdDieBigUnit,
+CrowdSummonBigUnit, King_player_activate, GetMana, each with its EnemyVersion), plus TargetEffectY,
+UseFallbackDamageEffect, CrowdEffects and IsSummonerTower on characters (CrowdEffects / IsSummoner(Tower)
+on the crown towers), the location's CrowdEffects (`arena.crowdEffects`), the buffs' AudioPitchModifier
+and the effects' PivotClip / ParentLookAtOffsetRadius; every unit, projectile, area effect and buff the 70
+cards reach is in the manifest (`missingEffects` empty). Emitter trail fields are not baked (see
+Projectile coverage).

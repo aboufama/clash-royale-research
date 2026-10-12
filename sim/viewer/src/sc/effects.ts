@@ -57,10 +57,34 @@
 // (0x856a88): the ground-projected y of each sprite (+ SortingOffset for particles); GroundAbility and
 // Above keep creation order. A missing Layer means Ground (0xe65a8c).
 //
+// Component offset (vt+0x48: effect 0x82d204 → SWF 0x82a8e0 / emitter 0x831978): set from the instance's
+// +0xa8/+0xac when a component is made (0x82c58c) and by the caller (PlayOptions.offset); a SWF component
+// moves its inner clip by it (0x123c548, inside the component's scale) and a beam starts there (sc/beam.ts);
+// an emitter gives it to every particle (0x830940 → +0x1c4/+0x1c8), added to the particle's display
+// position in battle px (0x8306a4, 2D path). Each update (0x82bf10 @0x82c2ac) an effect whose parent is a
+// character (actor class 5) with PivotClip (data +0xb8) or ParentLookAtOffsetRadius (data +0xb0 → effect
+// +0x1c, 0xe21f54) re-sets every component's offset: the parent sprite's direct child named PivotClip
+// (vt+0x150 → 0x1241adc, case-insensitive) gives its matrix (tx, ty); without one the radius r gives
+// (⌊r·sin a / 1024⌋·0.03, −⌊r·sin(a + 90) / 1024⌋·0.024) on the view's direction angle a (+0x4dc, the
+// picked direction's index · 180 / (N − 1), 0x84a7f8); x × the mirror sign (+0x4e8), y + TargetEffectY
+// (0xde1220), both truncated to int; with neither nothing changes (parentOffset below). The 3D-model path
+// (view +0x268) does not exist in this build's 2D views.
+//
+// Text (0x82c58c): when the instance carries a text (+0x28/+0x2c, set only by 0x82d3cc: view vt+0x100
+// 0x84f444 "+%d" on GetMana, and 0xfb2c78 "%i"), each own SWF component sets it on the child
+// TextInstanceName of the root clip's child TextParentInstanceName (0x1242e78 → 0x12432e0, direct children,
+// case-insensitive; here by instance name at any depth, A). Without a text the TextField keeps its authored
+// text (effect_charge's `txt` is empty).
+//
+// Trails: none. TrailMaxPoints / TrailDuration / TrailSWF / TrailExportName are only named by the emitter
+// schema 0xe572b4 (0xe578e0..0xe57964); no emitter getter (0xe56ccc..0xe57208, by name through 0xe0c420 /
+// 0xe0c4a0 / 0xe0ca24) and no data table reads them, so the particle code (0x82f2c0..0x831d08) draws no
+// trail (Magic Archer's projectile_speed_line particles are plain RotateToDirection particles).
+//
 // Approximations (A): the client's Mersenne-Twister effect RNG is replaced by a seeded xorshift;
-// emitter modifiers (EmitterReplaceType), trails (TrailSWF), SpecialEffect emitter types 1/2,
-// ResourceFromAngle, AngularSpeed spirals around a parent and the 3D/light paths are
-// not ported.
+// emitter modifiers (EmitterReplaceType), SpecialEffect emitter types 1/2, ParticleRadiusAspect,
+// ResourceFromAngle, AngularSpeed spirals around a parent, the offset of particle shadow copies and the
+// 3D/light paths are not ported.
 
 import type { Col, Mat } from './math.ts';
 import type { ScLibrary } from './library.ts';
@@ -71,6 +95,7 @@ import { ClipPlayer } from './anim.ts';
 import { beamMatrix } from './beam.ts';
 import { filterClipLength, filterFrame } from './area_view.ts';
 import { fxSoundStop, fxSoundUpdate } from './sound.ts';
+import { sin1024 } from '../../../core/src/trig.ts';
 
 /** logic units → world units */
 const W = 0.002;
@@ -112,6 +137,55 @@ export interface PlayOptions {
    * the filter recolours that actor's sprites while it runs (0x82ebdc); see EffectPlayer.filters.
    */
   filterParent?: number;
+  /**
+   * The effect's speed (+0xb0, 0x82ccf0; 1 by default): its sound components start with this pitch when it
+   * is not 1 (0x82bf10 → 0xcbc74c). View vt+0xc0 0x84f11c sets it from its float argument (the
+   * AttackStartEffect's buff pitch 0xfc24e0, sc/char_effects.ts attackStartPitch; 1.0 elsewhere).
+   */
+  soundPitch?: number;
+  /** The instance's text (+0x28, 0x82d3cc), set on its SWF components' TextInstanceName child (0x82c58c). */
+  text?: string;
+  /**
+   * The parent character's view (effect +0x48 of actor class 5) for PivotClip / ParentLookAtOffsetRadius
+   * (0x82bf10 @0x82c2ac): read every update; null while there is none.
+   */
+  parentView?: () => ParentView | null;
+}
+
+/** What 0x82bf10 reads of the parent character's view for the component offset. */
+export interface ParentView {
+  /** view +0x4dc (0x84ab00): the shown direction's angle, direction index · 180 / (N − 1) (0x84a7f8) */
+  dirAngle: number;
+  /** view +0x4e8 (0x84ab08): the sprite's mirror sign, ±1 */
+  mirror: number;
+  /** CharacterData TargetEffectY (+0x808, 0xde1220) */
+  targetEffectY: number;
+  /** the current sprite frame's direct child named `name` (0x1241adc, case-insensitive): its matrix tx, ty */
+  child(name: string): [number, number] | null;
+}
+
+/**
+ * 0x82bf10 @0x82c2ac: the offset every component of an effect with a character parent gets this update,
+ * or null when it keeps its offset (no PivotClip child and r = 0, or neither field set).
+ * `radius` = ParentLookAtOffsetRadius (effect +0x1c).
+ */
+export function parentOffset(pivotClip: string | undefined, radius: number, v: ParentView): [number, number] | null {
+  if (!radius && !pivotClip) return null;
+  const c = pivotClip ? v.child(pivotClip) : null;
+  let x: number, y: number;
+  if (c) {
+    x = c[0]; y = c[1];
+  } else {
+    if (!radius) return null;
+    const sx = Math.trunc((sin1024(v.dirAngle) * radius) / 1024);
+    const sy = Math.trunc((sin1024(v.dirAngle + 90) * radius) / 1024);
+    x = Math.fround(sx * Math.fround(0.030000001));
+    y = Math.fround(-sy * Math.fround(0.024));
+  }
+  const fx = Math.fround(v.mirror * x);
+  const fy = Math.fround(y + v.targetEffectY);
+  // (int) conversions (fcvtzs)
+  return [Math.trunc(fx) | 0, Math.trunc(fy) | 0];
 }
 
 export interface DrawItem {
@@ -384,8 +458,11 @@ class Particle {
     const lib = this.lib, exp = this.exp, f = this.frame;
     const cr = this.clipRot * 0.017453292;
     const kc = Math.cos(cr), ks = Math.sin(cr);
-    // container [a, b, c, d] times the clip's own rotation (RotateToDirection)
-    const m: Mat = [this.a * kc + this.c * ks, this.b * kc + this.d * ks, this.c * kc - this.a * ks, this.d * kc - this.b * ks, this.px, this.py];
+    // container [a, b, c, d] times the clip's own rotation (RotateToDirection); the emitter's component
+    // offset (+0x1c4/+0x1c8, 0x830940) is added to the display position in battle px (0x8306a4)
+    const em = this.em;
+    const m: Mat = [this.a * kc + this.c * ks, this.b * kc + this.d * ks, this.c * kc - this.a * ks, this.d * kc - this.b * ks,
+      this.px + em.ox, this.py + em.oy];
     const col: Col = [1, 1, 1, Math.trunc(al * 255) / 255, 0, 0, 0];
     return { layer, sortY: this.gy + this.sortOff, draw: (r) => r.draw(lib, exp, f, m, col) };
   }
@@ -454,6 +531,10 @@ class Emitter {
   stop(): void { this.life = 1; }
 
   setPos(x: number, y: number, z: number): void { this.x = x; this.y = y; this.z = z; }
+
+  /** component offset in battle px (vt+0x48 0x831978: +0xc0/+0xc4, given to every particle, 0x830940) */
+  ox = 0; oy = 0;
+  setOffset(x: number, y: number): void { this.ox = x; this.oy = y; }
 
   isDone(): boolean { return this.life !== 0 && this.life <= this.age && this.parts.length === 0; }
 
@@ -575,6 +656,9 @@ class SwfComp {
   setLoop(loop: boolean): void { this.loop = loop; }
   stop(): void { this.loop = false; }
   setPos(x: number, y: number, z: number): void { this.x = x; this.y = y; this.z = z; }
+  /** offset (+0x168 / +0x16c, vt+0x48 0x82a8e0): the inner clip's position inside the component */
+  ox = 0; oy = 0;
+  setOffset(x: number, y: number): void { this.ox = x; this.oy = y; }
   isDone(): boolean { return this.done; }
   /** 0x82a994 (no forced frame percent +0x154, no beam targets +0x188 / +0x190) */
   update(dt: number): boolean {
@@ -637,6 +721,7 @@ class FilterComp {
   setLoop(_loop: boolean): void { /* the loop flag is the effect data's, fixed at creation */ }
   stop(): void { this.done = true; this.t = this.dur; }
   setPos(_x: number, _y: number, _z: number): void { /* recolours its parent; no position */ }
+  setOffset(_x: number, _y: number): void { /* no position */ }
   isDone(): boolean { return this.done; }
   /** 0x82ebdc */
   update(dt: number): boolean {
@@ -681,6 +766,8 @@ class Fx {
   slots: CompSlot[];
   readonly depth: number;
   parentAngle: (() => number) | undefined;
+  /** component offset +0xa8 / +0xac (0x82d204), battle px */
+  ox = 0; oy = 0;
 
   constructor(ctx: Ctx, name: string, def: EffectDef, x: number, y: number, z: number, opts: PlayOptions, scale: number, depth: number) {
     this.ctx = ctx;
@@ -696,6 +783,13 @@ class Fx {
     this.parentAngle = opts.parentAngle;
     this.depth = depth;
     this.slots = def.components.map((c) => ({ c, started: false, obj: null }));
+    if (opts.offset) { this.ox = opts.offset[0]; this.oy = opts.offset[1]; }
+  }
+
+  /** vt+0x48 0x82d204: the instance's offset and every live component's (vt+0x48). */
+  setOffset(x: number, y: number): void {
+    this.ox = x; this.oy = y;
+    for (const s of this.slots) s.obj?.setOffset(x, y);
   }
 
   setLoop(loop: boolean): void {
@@ -760,9 +854,11 @@ class Fx {
       if (this.enemy && def.EnemyVersion && effects[def.EnemyVersion]) { name = def.EnemyVersion; def = effects[name]; }
       // a nested effect keeps its own Scale (0x82b7ac reads it from its data); the caller's extra
       // scale carries over
-      // 0x82d484 sets the beam target on the instance's own SWF components only (type 0)
-      const nopts = this.opts.target || this.opts.targetPoint
-        ? { ...this.opts, target: undefined, targetPivot: undefined, targetPoint: undefined, offset: undefined } : this.opts;
+      // 0x82d484 sets the beam target on the instance's own SWF components only (type 0); a nested
+      // instance starts with speed 1 (+0xb0) and no text (+0x28) of its own (0x82b7ac), and gets the
+      // offset through vt+0x48 like every component (below); its parent (+0x48) is the same actor
+      const nopts: PlayOptions = { ...this.opts, target: undefined, targetPivot: undefined, targetPoint: undefined,
+        offset: undefined, soundPitch: undefined, text: undefined };
       const fx = new Fx(ctx, name, def, this.x, this.y, this.z, nopts,
         effectScale(def) * (this.opts.scale ?? 1), this.depth + 1);
       ctx.shake(def);
@@ -791,7 +887,13 @@ class Fx {
       this.age = 0;
     }
     // sound components start with their component (0x82bf10, sc/sound.ts); pitch = effect +0xb0
-    fxSoundUpdate(this, this.def, this.age, this.stopped, (this.opts as { soundPitch?: number }).soundPitch ?? 1);
+    fxSoundUpdate(this, this.def, this.age, this.stopped, this.opts.soundPitch ?? 1);
+    // PivotClip / ParentLookAtOffsetRadius (0x82bf10 @0x82c2ac): every component's offset this update
+    const pv = this.opts.parentView?.();
+    if (pv) {
+      const o = parentOffset(this.def.PivotClip as string | undefined, (this.def.ParentLookAtOffsetRadius as number | undefined) ?? 0, pv);
+      if (o) this.setOffset(o[0], o[1]);
+    }
     for (const s of this.slots) {
       if ((s.c.time ?? 0) > this.age) continue;
       if (!s.started) {
@@ -807,6 +909,8 @@ class Fx {
               s.obj.setLoop(this.loop && !forced);
             }
             s.obj.setPos(this.x, this.y, this.z);
+            // 0x82c58c ends with vt+0x48(+0xa8, +0xac)
+            s.obj.setOffset(this.ox, this.oy);
           }
         }
       }
@@ -822,7 +926,7 @@ class Fx {
   private lastTarget: [number, number, number] | null = null;
 
   /** 0x82a994's beam matrix for a SWF component with FlashWidth and a target (sc/beam.ts), else null. */
-  private beam(c: EffectComponent, px: number, py: number, sc: number): Mat | null {
+  private beam(c: EffectComponent, o0: SwfComp, px: number, py: number, sc: number): Mat | null {
     const flash = (c.flashWidth as number | undefined) ?? 0;
     const o = this.opts;
     if (!flash || (!o.target && !o.targetPoint)) return null;
@@ -838,7 +942,7 @@ class Fx {
       const pv = o.targetPivot?.();
       if (pv) end = [end[0] + pv[0], end[1] + pv[1]];
     }
-    return beamMatrix([px, py], o.offset ?? [0, 0], end, flash, sc);
+    return beamMatrix([px, py], [o0.ox, o0.oy], end, flash, sc);
   }
 
   /** this instance's running Filter components for `parent` (0x82ebdc), nested effects included */
@@ -865,8 +969,12 @@ class Fx {
         const gy = art.gameToPx(o.x / W, o.y / W, 0)[1];
         const sc = o.scale, lib = o.lib, exp = s.c.export!, f = o.frame;
         const col: Col = [1, 1, 1, a * o.alpha, 0, 0, 0];
-        const m = this.beam(s.c, px, py, sc);
-        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, f, m ?? [sc, 0, 0, sc, px, py], col) });
+        // the inner clip sits at the offset inside the component's scale (0x82a8e0 → 0x123c548)
+        const m = this.beam(s.c, o, px, py, sc) ?? [sc, 0, 0, sc, px + sc * o.ox, py + sc * o.oy];
+        // the instance's text on its own components' TextInstanceName child (0x82c58c, +0x2c != 0)
+        const tn = (s.c as { textInstanceName?: string }).textInstanceName;
+        const text = this.depth === 0 && tn && this.opts.text ? { text: { [tn]: this.opts.text } } : undefined;
+        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, f, m, col, text) });
         continue;
       }
       const em = o;

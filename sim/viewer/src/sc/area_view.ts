@@ -366,3 +366,18 @@ export function applyFilterColor(c: Readonly<Col>, f: Readonly<Col>, keepAlpha =
   const mul = (i: number) => Math.trunc((byte(c[i]) * byte(f[i])) / 255) / 255;
   return [mul(0), mul(1), mul(2), keepAlpha ? c[3] : mul(3), r, g, b];
 }
+
+/**
+ * The colour a crown tower's sprites get from its filters this frame: 0x82ebdc runs for every filter of
+ * the tower's view like for any actor (buff views 0x8348c8: Freeze / Zap stun / Rage / Poison / Ice Wizard
+ * cold; effect Filter components), but takes the crown-tower branch (actor vt+0x170 = 1): the colour is
+ * multiplied in with the sprite's alpha kept and the filter's transform skipped. `filters` = each running
+ * filter's colour (BattleArt.buffColor(name, ms) for the tower's buffs, EffectPlayer.filters(id));
+ * undefined when none applies (draw the tower untinted).
+ */
+export function crownTowerFilterColor(filters: readonly (Readonly<Col> | null | undefined)[],
+  base: Readonly<Col> = [1, 1, 1, 1, 0, 0, 0]): Col | undefined {
+  let c: Col | undefined;
+  for (const f of filters) if (f) c = applyFilterColor(c ?? base, f, true);
+  return c;
+}
