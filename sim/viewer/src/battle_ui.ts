@@ -13,7 +13,7 @@ import { WHITE } from './sc/math.ts';
 import type { BattleArt } from './sc/battle_art.ts';
 import type { ScLibrary } from './sc/library.ts';
 import type { ScRenderer } from './sc/renderer.ts';
-import { ClipPlayer } from './sc/anim.ts';
+import { ClipPlayer, vecSetLength } from './sc/anim.ts';
 import { Announcements } from './sc/announce.ts';
 import { Floaters, floaterParts, measureFieldText, NOT_ENOUGH_MANA_COLOR, NotEnoughManaGate } from './sc/floater.ts';
 import { BattleScreens } from './sc/result.ts';
@@ -45,7 +45,8 @@ export interface PreviewInput {
   valid: boolean;
 }
 
-interface GhostUnit { def: UnitDef; x: number; y: number; angle: number }
+/** a preview actor: position, facing vector (Actor_faceActor 0xf84d04, length 256) and its angle */
+interface GhostUnit { def: UnitDef; x: number; y: number; angle: number; dirX: number; dirY: number }
 
 /** One drag preview object (class 0x8e3fd4, hand card +0x2e0): its clips and its mana counter. */
 interface PreviewView {
@@ -479,7 +480,9 @@ export class BattleUi {
         oy = (team === 0 ? -1 : 1) * (sp.offsetsY[k] ?? 0);
       }
       const gx = x + ox, gy = y + oy;
-      out.push({ def, x: gx, y: gy, angle: Math.atan2(king.y - gy, king.x - gx) });
+      // 0x8e4eb4 -> Actor_faceActor(actor, leader of the other side): facing = King - position, length 256
+      const [dirX, dirY] = vecSetLength(king.x - gx, king.y - gy, 256);
+      out.push({ def, x: gx, y: gy, angle: Math.atan2(dirY, dirX), dirX, dirY });
     });
     return out;
   }
@@ -659,15 +662,15 @@ export class BattleUi {
    * SPELL_DRAG_OBJECT_ALPHA · 0.0015 + 0.85 (characters) or · 0.01 (others) once, and 0x8e4eb4 hides
    * their parts while the position is invalid. A leftover keeps them as they were at the release.
    */
-  ghostUnits(): { def: UnitDef; team: Team; x: number; y: number; angle: number; alpha: number }[] {
+  ghostUnits(): { def: UnitDef; team: Team; x: number; y: number; angle: number; dirX: number; dirY: number; alpha: number }[] {
     const b = this.battleRef;
     if (!b) return [];
     // characters with health: ALPHA * 0.0015 + 0.85; others ALPHA * 0.01
     const a = CLIENT_GLOBALS.SPELL_DRAG_OBJECT_ALPHA;
-    const out: { def: UnitDef; team: Team; x: number; y: number; angle: number; alpha: number }[] = [];
+    const out: { def: UnitDef; team: Team; x: number; y: number; angle: number; dirX: number; dirY: number; alpha: number }[] = [];
     const put = (team: number, list: GhostUnit[]) => {
       for (const g of list) {
-        out.push({ def: g.def, team: team as Team, x: g.x, y: g.y, angle: g.angle, alpha: g.def.hitpoints > 0 ? a * 0.0015 + 0.85 : a * 0.01 });
+        out.push({ def: g.def, team: team as Team, x: g.x, y: g.y, angle: g.angle, dirX: g.dirX, dirY: g.dirY, alpha: g.def.hitpoints > 0 ? a * 0.0015 + 0.85 : a * 0.01 });
       }
     };
     for (const g of this.pending) if (!g.removed) put(g.team, g.ghosts);

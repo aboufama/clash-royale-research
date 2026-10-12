@@ -21,6 +21,7 @@ import {
   actionFrameMs, animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, ClipPlayer, EffectPlayer,
   type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer,
 } from './sc/index.ts';
+import { ghostSprite } from './sc/anim.ts';
 import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
 import { condMask, deployElapsed, healthBarState, newBarChoose, newBarFrame, newBarView, SUMMON_WAIT_ALPHA,
   summonViewDelay } from './sc/unit_view.ts';
@@ -561,7 +562,10 @@ export class ArtWorld implements WorldRenderer {
     }
     // drag preview ghosts are real actor views: their shadows join the silhouette buffer (A)
     const ghosts = this.ui.ghostUnits().filter((g) => m.characters[g.def.name]);
-    for (const g of ghosts) art.drawUnitShadow(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0);
+    for (const g of ghosts) {
+      const sprite = ghostSprite(art.character(g.def.name), g.team, g.dirX, g.dirY, art.flip) ?? undefined;
+      art.drawUnitShadow(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0, { sprite });
+    }
     this.fx.draw(r, 'Shadow');
     art.endShadowPass(r);
     // battle layer child 7 (after the shadow composite, before Ground effects): the illegal-area
@@ -655,7 +659,9 @@ export class ArtWorld implements WorldRenderer {
     // drag preview ghost units, sorted with the actors
     for (const g of ghosts) {
       const py = ypx(g.x, g.y) + (g.def.flyingHeight > 0 ? 48 : 0);
-      items.push({ y: py, draw: () => { art.drawUnit(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0, { alpha: g.alpha }); } });
+      // the client's direction pick for the preview actor's facing (sc/anim.ts ghostSprite)
+      const sprite = ghostSprite(art.character(g.def.name), g.team, g.dirX, g.dirY, art.flip) ?? undefined;
+      items.push({ y: py, draw: () => { art.drawUnit(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0, { alpha: g.alpha, sprite }); } });
     }
     items.sort((a, c) => a.y - c.y);
     for (const it of items) it.draw();

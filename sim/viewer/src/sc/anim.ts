@@ -190,6 +190,36 @@ function slotArt(art: CharacterArt, team: 0 | 1, slot: number): [string, ActionA
   return a && a.dirs > 0 ? [key, a] : null;
 }
 
+/**
+ * A drag-preview ghost's sprite (0x8e4eb4): the preview actor faces the enemy King (Actor_faceActor
+ * 0xf84d04: facing = King - position, Vec_setLength 0x1294d74 to 256) and its view is updated with
+ * dt 0 (vt+0x208(0, 1)), so it shows the idle action's first frame in the direction picked from that
+ * facing like any character view (0x844f78 -> 0x84a7f8, mirror sign starting at +1).
+ */
+export function ghostSprite(art: CharacterArt, team: 0 | 1, dirX: number, dirY: number, flip: boolean):
+  { export: string; frame: number; mirror: boolean } | null {
+  const r = slotArt(art, team, 1);
+  if (!r) return null;
+  const a = r[1];
+  const dir = pickDirectionNative(viewAngle(dirX, dirY, flip), a.dirs, 1);
+  return { export: `${a.export}_${dir.idx + 1}`, frame: 0, mirror: dir.sign < 0 };
+}
+
+/**
+ * Vec_setLength 0x1294d74: |v|^2 (0x7fffffff when a component is outside ±0xb504 or the sum overflows),
+ * n = Math_isqrt of it; when n != 0 each component becomes v * len / n, truncated toward zero.
+ */
+export function vecSetLength(x: number, y: number, len: number): [number, number] {
+  const inRange = (v: number) => v >= -0xb504 && v <= 0xb504;
+  let d2 = 0x7fffffff;
+  if (inRange(x) && inRange(y)) d2 = Math.min(x * x + y * y, 0x7fffffff);
+  let n = Math.floor(Math.sqrt(d2));
+  if (n * n > d2) n--;
+  else if ((n + 1) * (n + 1) <= d2) n++;
+  if (n === 0) return [x, y];
+  return [Math.trunc((x * len) / n), Math.trunc((y * len) / n)];
+}
+
 /** Frame of a label, -1 if absent; a repeated label gives its last frame (lookup 0x123f3c0 searches from the end). */
 function labelFrame(a: ActionArt, name: string): number {
   let r = -1;
