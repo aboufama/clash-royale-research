@@ -69,7 +69,7 @@ export interface RenderStats {
 const TEXT_ATLAS = 2048;
 const MAX_SLOTS = 8;
 const FLOATS = 12; // x y u v mulR mulG mulB mulA addR addG addB slot
-const MAX_VERTS = 65536;
+const MAX_VERTS = 262144; // one frame's vertices (uploaded once per frame)
 const MAX_INDICES = MAX_VERTS * 3;
 
 const VS = `#version 300 es
@@ -257,18 +257,22 @@ export class ScRenderer {
   /** Start a frame: viewport = canvas, clear, reset view to identity (1 SC px = 1 canvas px). */
   begin(clear: [number, number, number, number] = [0, 0, 0, 1]): void {
     const gl = this.gl;
+    this.submit();
     this.frameNo++;
     this.stats = { drawCalls: 0, triangles: 0 };
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
-    gl.clearColor(clear[0] * clear[3], clear[1] * clear[3], clear[2] * clear[3], clear[3]);
-    gl.clearStencil(0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.CULL_FACE);
-    gl.disable(gl.STENCIL_TEST);
-    gl.enable(gl.BLEND);
-    gl.useProgram(this.prog);
+    const w = this.width, h = this.height;
+    this.q.push(() => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(clear[0] * clear[3], clear[1] * clear[3], clear[2] * clear[3], clear[3]);
+      gl.clearStencil(0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.CULL_FACE);
+      gl.disable(gl.STENCIL_TEST);
+      gl.enable(gl.BLEND);
+      gl.useProgram(this.prog);
+    });
     this.curBlend = -1;
     this.mode = 0;
     this.maskDepth = 0;
@@ -277,7 +281,34 @@ export class ScRenderer {
   }
 
   end(): void {
+    this.submit();
+  }
+
+  // -- command queue ------------------------------------------------------------------------------
+  // Batches and the state changes between them are queued in order while the frame is built; the
+  // frame's vertices and indices accumulate in one array and go to the GPU in a single upload, then
+  // the queue replays. Re-uploading into the same buffer for every batch made the driver wait for
+  // the previous batch's draw (the dominant per-frame cost). Values are captured when recorded.
+  private q: (() => void)[] = [];
+  private batchStart = 0;
+
+  /** Upload the queued frame data once and run the queued GL commands. */
+  private submit(): void {
     this.flush();
+    if (this.q.length === 0) { this.nv = 0; this.ni = 0; this.batchStart = 0; return; }
+    const gl = this.gl;
+    if (this.ni > 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, this.verts.subarray(0, this.nv * FLOATS), gl.STREAM_DRAW);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indices.subarray(0, this.ni), gl.STREAM_DRAW);
+    }
+    const q = this.q;
+    this.q = [];
+    for (let i = 0; i < q.length; i++) q[i]();
+    this.nv = 0;
+    this.ni = 0;
+    this.batchStart = 0;
   }
 
   /** SC pixel -> canvas pixel transform for subsequent draws. */
@@ -296,12 +327,15 @@ export class ScRenderer {
     const [a, b, c, d, tx, ty] = this.view;
     const sx = 2 / this.currentTargetWidth(), sy = -2 / this.currentTargetHeight();
     // column-major mat3: clip = P * V
-    gl.useProgram(this.prog);
-    gl.uniformMatrix3fv(this.uView, false, new Float32Array([
+    const m = new Float32Array([
       a * sx, b * sy, 0,
       c * sx, d * sy, 0,
       tx * sx - 1, ty * sy + 1, 1,
-    ]));
+    ]);
+    this.q.push(() => {
+      gl.useProgram(this.prog);
+      gl.uniformMatrix3fv(this.uView, false, m);
+    });
   }
 
   private currentTargetWidth(): number { return this.inShadows ? this.fboSize[0] : this.width; }
@@ -331,7 +365,7 @@ export class ScRenderer {
   drawRect(x: number, y: number, w: number, h: number, rgba: [number, number, number, number],
     matrix: Readonly<Mat> = IDENTITY): void {
     this.setBlend(0);
-    if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.flush();
+    if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.submit();
     const slot = this.slotFor(this.white);
     const q = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]];
     const base = this.nv;
@@ -354,7 +388,7 @@ export class ScRenderer {
     const tex = this.glTexture(src);
     this.gray = grayscale;
     this.setBlend(blend);
-    if (this.nv + n > MAX_VERTS || this.ni + (n - 2) * 3 > MAX_INDICES) this.flush();
+    if (this.nv + n > MAX_VERTS || this.ni + (n - 2) * 3 > MAX_INDICES) this.submit();
     const slot = this.slotFor(tex.tex);
     const m = matrix, c = color;
     const base = this.nv;
@@ -374,10 +408,13 @@ export class ScRenderer {
     const gl = this.gl;
     this.ensureFbos();
     this.inShadows = true;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[0].fb);
-    gl.viewport(0, 0, this.fboSize[0], this.fboSize[1]);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    const fb = this.fbos[0].fb, [fw, fh] = this.fboSize;
+    this.q.push(() => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.viewport(0, 0, fw, fh);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    });
     this.mode = 2;
     this.curBlend = -1;
     this.applyView();
@@ -392,23 +429,27 @@ export class ScRenderer {
     const gl = this.gl;
     this.inShadows = false;
     this.mode = 0;
-    gl.blendEquation(gl.FUNC_ADD);
-    gl.useProgram(this.blurProg);
-    gl.bindVertexArray(this.quadVao);
-    gl.uniform1i(this.blurLoc('uSrc'), 0);
-    gl.activeTexture(gl.TEXTURE0);
     const [w, h] = this.fboSize;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
-    gl.enable(gl.BLEND);
-    gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
-    gl.bindTexture(gl.TEXTURE_2D, this.fbos[0].tex);
-    gl.uniform2f(this.blurLoc('uOff'), off[0] / w, off[1] / h);
-    gl.uniform4f(this.blurLoc('uC'), c[0], c[1], c[2], c[3]);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    const tex = this.fbos[0].tex, cw = this.width, ch = this.height;
+    const ox = off[0] / w, oy = off[1] / h, cc = [c[0], c[1], c[2], c[3]];
+    this.q.push(() => {
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.useProgram(this.blurProg);
+      gl.bindVertexArray(this.quadVao);
+      gl.uniform1i(this.blurLoc('uSrc'), 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, cw, ch);
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.uniform2f(this.blurLoc('uOff'), ox, oy);
+      gl.uniform4f(this.blurLoc('uC'), cc[0], cc[1], cc[2], cc[3]);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.useProgram(this.prog);
+    });
     this.stats.drawCalls += 1;
-    gl.bindVertexArray(null);
-    gl.useProgram(this.prog);
     this.curBlend = -1;
     this.applyView();
   }
@@ -544,7 +585,7 @@ export class ScRenderer {
       if (cmd.count < 3) continue;
       const tex = this.glTexture(lib.textures[cmd.tex]);
       this.setBlend(blend);
-      if (this.nv + cmd.count > MAX_VERTS || this.ni + (cmd.count - 2) * 3 > MAX_INDICES) this.flush();
+      if (this.nv + cmd.count > MAX_VERTS || this.ni + (cmd.count - 2) * 3 > MAX_INDICES) this.submit();
       const slot = this.slotFor(tex.tex);
       const v = cmd.verts;
       const base = this.nv;
@@ -590,38 +631,41 @@ export class ScRenderer {
     this.flush();
     this.curBlend = m;
     const gl = this.gl;
-    gl.blendEquation(gl.FUNC_ADD);
-    switch (m) {
-      case 100: gl.blendEquation(gl.MAX); gl.blendFunc(gl.ONE, gl.ONE); break;
-      case 8: gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE); break;
-      case 4: gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_COLOR, gl.ZERO, gl.ONE); break;
-      case 3: gl.blendFuncSeparate(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE); break;
-      default: gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    }
+    this.q.push(() => {
+      gl.blendEquation(gl.FUNC_ADD);
+      switch (m) {
+        case 100: gl.blendEquation(gl.MAX); gl.blendFunc(gl.ONE, gl.ONE); break;
+        case 8: gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE); break;
+        case 4: gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_COLOR, gl.ZERO, gl.ONE); break;
+        case 3: gl.blendFuncSeparate(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE); break;
+        default: gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
+    });
   }
 
+  /** Close the current batch: queue its draw (index range, textures, program mode). */
   flush(): void {
-    if (this.ni === 0) {
+    const start = this.batchStart, count = this.ni - start;
+    if (count === 0) {
       this.nslots = 0;
       return;
     }
     const gl = this.gl;
-    gl.useProgram(this.prog);
-    gl.uniform1i(this.uMode, this.inMaskWrite ? 1 : this.mode);
-    gl.bindVertexArray(this.vao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.verts, 0, this.nv * FLOATS);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ibo);
-    gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, this.indices, 0, this.ni);
-    for (let i = 0; i < this.nslots; i++) {
-      gl.activeTexture(gl.TEXTURE0 + i);
-      gl.bindTexture(gl.TEXTURE_2D, this.slots[i]);
-    }
-    gl.drawElements(gl.TRIANGLES, this.ni, gl.UNSIGNED_INT, 0);
-    gl.bindVertexArray(null);
+    const mode = this.inMaskWrite ? 1 : this.mode;
+    const slots = this.slots.slice(0, this.nslots);
+    this.q.push(() => {
+      gl.useProgram(this.prog);
+      gl.uniform1i(this.uMode, mode);
+      gl.bindVertexArray(this.vao);
+      for (let i = 0; i < slots.length; i++) {
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, slots[i]);
+      }
+      gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, start * 4);
+      gl.bindVertexArray(null);
+    });
     this.stats.drawCalls++;
-    this.nv = 0;
-    this.ni = 0;
+    this.batchStart = this.ni;
     this.nslots = 0;
   }
 
@@ -659,25 +703,34 @@ export class ScRenderer {
     if (mod === 38) { // begin mask shapes
       this.maskDepth++;
       this.inMaskWrite = true;
-      gl.enable(gl.STENCIL_TEST);
-      gl.colorMask(false, false, false, false);
-      gl.stencilFunc(gl.EQUAL, this.maskDepth - 1, 0xff);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+      const ref = this.maskDepth - 1;
+      this.q.push(() => {
+        gl.enable(gl.STENCIL_TEST);
+        gl.colorMask(false, false, false, false);
+        gl.stencilFunc(gl.EQUAL, ref, 0xff);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+      });
     } else if (mod === 39) { // masked content
       this.inMaskWrite = false;
-      gl.colorMask(true, true, true, true);
-      gl.stencilFunc(gl.EQUAL, this.maskDepth, 0xff);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+      const ref = this.maskDepth;
+      this.q.push(() => {
+        gl.colorMask(true, true, true, true);
+        gl.stencilFunc(gl.EQUAL, ref, 0xff);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+      });
     } else if (mod === 40) { // end
       this.inMaskWrite = false;
-      gl.colorMask(true, true, true, true);
       this.maskDepth = Math.max(0, this.maskDepth - 1);
-      if (this.maskDepth === 0) {
-        gl.clear(gl.STENCIL_BUFFER_BIT);
-        gl.disable(gl.STENCIL_TEST);
-      } else {
-        gl.stencilFunc(gl.EQUAL, this.maskDepth, 0xff);
-      }
+      const ref = this.maskDepth;
+      this.q.push(() => {
+        gl.colorMask(true, true, true, true);
+        if (ref === 0) {
+          gl.clear(gl.STENCIL_BUFFER_BIT);
+          gl.disable(gl.STENCIL_TEST);
+        } else {
+          gl.stencilFunc(gl.EQUAL, ref, 0xff);
+        }
+      });
     }
   }
 
@@ -732,7 +785,7 @@ export class ScRenderer {
       this.textCache.set(key, e);
     }
     this.setBlend(blend);
-    if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.flush();
+    if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.submit();
     const slot = this.slotFor(this.textAtlas!);
     const x0 = l - 4 / q, y0 = t - 4 / q, x1 = x0 + e.w / q, y1 = y0 + e.h / q;
     const u0 = e.x / TEXT_ATLAS, v0 = e.y / TEXT_ATLAS, u1 = (e.x + e.w) / TEXT_ATLAS, v1 = (e.y + e.h) / TEXT_ATLAS;
@@ -783,7 +836,7 @@ export class ScRenderer {
         return [0, y];
       }
       // full: draw what refers to the old contents, then start over
-      this.flush();
+      this.submit();
       this.clearTextCache();
     }
     return [0, 0];
