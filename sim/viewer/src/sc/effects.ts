@@ -122,6 +122,8 @@ interface Ctx {
   shadows: boolean;
   shadowCol: Col;
   shadowA: number;
+  /** effect constructor 0x82b7ac: ShakeScreen / ShakeMaxIntensity (ms) start a screen shake (0x856a70) */
+  shake: (def: { ShakeScreen?: number; ShakeMaxIntensity?: number }) => void;
 }
 
 // ---------------------------------------------------------------------------------- particles
@@ -647,6 +649,7 @@ class Fx {
       const rs = this.opts.radius && this.opts.refRadius ? this.opts.radius / this.opts.refRadius : 1;
       const fx = new Fx(ctx, name, def, this.x, this.y, this.z, { ...this.opts, durationMs: undefined },
         effectScale(def) * (this.opts.scale ?? 1) * rs, this.depth + 1);
+      ctx.shake(def);
       fx.parentAngle = this.parentAngle;
       return fx;
     }
@@ -750,8 +753,10 @@ export class EffectPlayer {
   /** set false to skip particle shadow copies */
   get shadows(): boolean { return this.ctx.shadows; }
   set shadows(v: boolean) { this.ctx.shadows = v; }
-  /** screen-shake intensity of the last update (effect ShakeScreen) */
-  shake = 0;
+  /** screen shake (battle layer +0x170 time left s, +0x174 intensity, +0x178/+0x17c offset px) */
+  private shakeT = 0;
+  private shakeI = 0;
+  private shakeRng = new Rng(0x5eed);
 
   constructor(art: BattleArt, seed = 12345) {
     this.art = art;
@@ -760,7 +765,30 @@ export class EffectPlayer {
       art, rng: new Rng(seed), seq: () => this.seqN++, shadows: true,
       shadowCol: [(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, 1, 0, 0, 0],
       shadowA: sh.ShadowA ?? 0,
+      shake: (def) => {
+        // 0x856a70: a longer shake replaces the current one, with its intensity
+        const t = (def.ShakeScreen ?? 0) * 0.001;
+        if (this.shakeT < t) { this.shakeT = t; this.shakeI = (def.ShakeMaxIntensity ?? 0) * 0.001; }
+      },
     };
+  }
+
+  /**
+   * Battle layer update 0x856f28: the offset applied to every battle-layer child this frame. While
+   * time is left, amplitude A = intensity when 0 < intensity < time left, else the time left (so it
+   * fades out linearly), and the offset is 6·A SC px in a random direction (the client's view RNG
+   * 0x1a46dd0 draws rand(10000) · 0.0006283 rad; its seed is not reproducible); time counts down by
+   * the frame dt (s).
+   */
+  shakeOffset(dt: number): [number, number] {
+    if (!(dt > 0) || !(this.shakeT > 0)) return [0, 0];
+    const t = this.shakeT, i = this.shakeI;
+    const a = Math.fround(6 * (i < t && i > 0 ? i : t));
+    const ang = Math.fround(this.shakeRng.int(10000) * Math.fround(0.0006283));
+    const off: [number, number] = [Math.fround(Math.cos(ang) * a), Math.fround(Math.sin(ang) * a)];
+    this.shakeT = t - dt;
+    if (this.shakeT <= 0) { this.shakeT = 0; this.shakeI = 0; }
+    return off;
   }
 
   get count(): number { return this.list.length; }
@@ -778,7 +806,7 @@ export class EffectPlayer {
     const f = opts.follow?.();
     if (f) { px = f[0]; py = f[1]; pz = f[2]; }
     const fx = new Fx(this.ctx, name, def, px * W, py * W, pz * W, opts, effectScale(def) * (opts.scale ?? 1) * radiusScale, 0);
-    if (def.ShakeScreen) this.shake = Math.max(this.shake, def.ShakeScreen);
+    this.ctx.shake(def);
     this.list.push(fx);
     const id = this.nextId++;
     this.handles.set(id, fx);
@@ -803,7 +831,6 @@ export class EffectPlayer {
 
   /** Advance every effect by dtMs (split into integer-ms updates like the client's frame dt). */
   update(dtMs: number): void {
-    this.shake = 0;
     this.dtAcc += Math.max(0, dtMs);
     const dt = Math.floor(this.dtAcc);
     if (dt <= 0) return;

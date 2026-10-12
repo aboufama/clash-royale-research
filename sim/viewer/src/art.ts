@@ -237,12 +237,14 @@ export class ArtWorld implements WorldRenderer {
     const fxDt = this.lastFxSim < 0 ? 0 : Math.min(250, Math.max(0, sim - this.lastFxSim));
     this.lastFxSim = sim;
     this.fx.update(fxDt);
+    // screen shake of the battle layer (0x856f28), in SC px
+    const [shx, shy] = this.fx.shakeOffset(fxDt / 1000);
     this.updateAnims(f, sim);
     this.ui.update(fxDt / 1000, f);
     const dpr = this.cam.dpr;
 
     r.begin([0.05, 0.08, 0.05, 1]);
-    r.setView(this.s * dpr, 0, 0, this.s * dpr, this.vx * dpr, this.vy * dpr);
+    r.setView(this.s * dpr, 0, 0, this.s * dpr, (this.vx + this.s * shx) * dpr, (this.vy + this.s * shy) * dpr);
     art.drawBackground(r);
     art.drawArenaObjects(r, sim, ['Base']);
     // destroyed towers leave the game's rubble on the ground layer
