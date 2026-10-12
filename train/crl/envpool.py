@@ -33,6 +33,20 @@ def node_binary() -> str:
     return os.environ.get("CRL_NODE") or shutil.which("node") or "node"
 
 
+def enlarge_pipe(fd: int, size: int = 8 << 20) -> None:
+    """Grow a pipe so a whole frame (~1-2 MB) fits without the writer stalling (Linux F_SETPIPE_SZ)."""
+    try:
+        import fcntl
+        for s in (size, 4 << 20, 1 << 20):
+            try:
+                fcntl.fcntl(fd, 1031, s)  # F_SETPIPE_SZ
+                return
+            except OSError:
+                continue
+    except ImportError:
+        pass
+
+
 def available_cpus() -> int:
     """CPUs this container may use: the cgroup quota (RunPod limits pods by quota, so os.cpu_count()
     reports the whole host), else the affinity mask, else os.cpu_count()."""
@@ -64,6 +78,7 @@ class EnvPool:
         for w in range(n_workers):
             p = subprocess.Popen([node_binary(), str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
                                  cwd=str(REPO / "sim"))
+            enlarge_pipe(p.stdout.fileno())
             cfg = {"numEnvs": envs_per_worker, "seed": (seed * 1000003 + w * 7919 + 1) & 0x7FFFFFFF, **(env_cfg or {})}
             p.stdin.write((json.dumps(cfg) + "\n").encode())
             line = p.stdout.readline()

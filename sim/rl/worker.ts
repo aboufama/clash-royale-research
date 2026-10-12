@@ -139,6 +139,10 @@ export class Worker {
 // ---------------------------------------------------------------------------------------------
 // stdin / stdout transport
 
+// stdio pipes are non-blocking: on EAGAIN wait 20 us, not 1 ms (a 1.7 MB frame through a 64 KB pipe
+// used to take dozens of 1 ms naps; the trainer also enlarges the pipes, train/crl/envpool.py)
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+
 function readExact(n: number): Buffer {
   const buf = Buffer.alloc(n);
   let got = 0;
@@ -147,7 +151,7 @@ function readExact(n: number): Buffer {
     try {
       k = readSync(0, buf, got, n - got, null);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'EAGAIN') { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1); continue; }
+      if ((e as NodeJS.ErrnoException).code === 'EAGAIN') { Atomics.wait(PAUSE, 0, 0, 0.02); continue; }
       throw e;
     }
     if (k === 0) process.exit(0); // the trainer closed the pipe
@@ -173,7 +177,7 @@ function writeAll(b: Uint8Array): void {
       o += writeSync(1, b, o, b.length - o);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
-      if (code === 'EAGAIN') { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1); continue; }
+      if (code === 'EAGAIN') { Atomics.wait(PAUSE, 0, 0, 0.02); continue; }
       if (code === 'EPIPE') process.exit(0); // the trainer is gone
       throw e;
     }
