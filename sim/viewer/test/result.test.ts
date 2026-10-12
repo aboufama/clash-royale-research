@@ -129,3 +129,17 @@ test('screens: intro and result lifecycle in the battle screen (BattleScreens)',
   assert.equal(sc.result!.kind, 1);
   assert.equal(sc.inputBlocked, true);
 });
+
+test('screens: the confetti of 0x8c08b0 for a win (blue) and a loss (red, 40 px higher), none for a draw', () => {
+  const lib = endLib();
+  const art = { manifest: { hud: { texts: {}, result: ART } }, libs: { get: () => lib } };
+  for (const [winner, want] of [[0, false], [1, true], [-1, null]] as const) {
+    const sc = new BattleScreens();
+    const calls: boolean[] = [];
+    sc.makeConfetti = (loss) => { calls.push(loss); return null; };
+    const b = { result: { winner, tick: 100 }, players: [{ crowns: 1 }, { crowns: 0 }] };
+    sc.update(art, DT, 5050 + 80 * 50, b, 0, 'Opponent');
+    assert.ok(sc.result);
+    assert.deepEqual(calls, want === null ? [] : [want]);
+  }
+});

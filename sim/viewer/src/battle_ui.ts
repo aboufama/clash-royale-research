@@ -17,6 +17,8 @@ import { ClipPlayer, vecSetLength } from './sc/anim.ts';
 import { Announcements } from './sc/announce.ts';
 import { Floaters, floaterParts, measureFieldText, NOT_ENOUGH_MANA_COLOR, NotEnoughManaGate } from './sc/floater.ts';
 import { BattleScreens } from './sc/result.ts';
+import { Confetti } from './sc/confetti.ts';
+import { type EmoteArt, type EmoteDef, Emotes, type TauntDef } from './sc/emotes.ts';
 import { battleClockSounds, BattleSounds, ScreenSounds, sound, timerSounds } from './sc/sound.ts';
 import { AreaRings } from './sc/area_rings.ts';
 import {
@@ -129,10 +131,24 @@ export class BattleUi {
   private screenSounds = new ScreenSounds();
   /** area-damage indicator rings (battle screen list +0x2d0, sc/area_rings.ts) */
   readonly rings = new AreaRings();
+  /** HUD_taunt's emote button, menu and bubbles (sc/emotes.ts; game layer +0x178), null without the art */
+  emotes: Emotes | null = null;
+  /** creation order of the game layer +0x178's later children: the emote menu's area and the confetti */
+  private layerSeq = 0;
+  private menuSeq = -1;
+  private confettiSeq = -1;
+  /** decoded emote sounds (SfxFile .ogg through Play_emote) */
+  private sfxBuffers = new Map<string, Promise<AudioBuffer | null>>();
 
   constructor(art: BattleArt) {
     this.art = art;
     this.hud = new Hud(art);
+    this.emotes = this.makeEmotes();
+    // the result screen's confetti (0x8c08b0) in two effect layers at the stage centre
+    this.screens.makeConfetti = (loss) => {
+      this.confettiSeq = this.layerSeq++;
+      return new Confetti(this.art, this.layout.stageW, this.layout.stageH, loss);
+    };
     // rings are children of the same HUD object as the deploy timers and elixir texts (0x1252994 appends)
     this.rings.nextSeq = () => this.hudSeq++;
     // logic -> stage px, truncated (0x8583bc): crown flight starts and the crown counter's river line
@@ -140,6 +156,111 @@ export class BattleUi {
       const [sx, sy] = this.toStage(...this.art.gameToPx(x, y));
       return [Math.trunc(sx), Math.trunc(sy)];
     };
+  }
+
+  /** The emote system of a new HUD (0x8cd4ec), or null without its art. */
+  private makeEmotes(): Emotes | null {
+    const art = (this.art.manifest.hud as { emotes?: EmoteArt }).emotes;
+    const ui = art ? this.art.libs.get(art.ui) : undefined;
+    if (!art || !ui || !ui.has('HUD_taunt') || !ui.has('taunt_selector_new')) return null;
+    const e = new Emotes(ui, art, {
+      get: (name) => this.art.libs.get(name),
+      request: (name) => { void this.art.lib(name); },
+    });
+    e.hooks = {
+      click: () => this.click(),
+      sfx: (path) => this.playEmoteSfx(path),
+      sound: (res) => { sound.play(res, 1, 'sfx'); },
+      popup: (text) => this.centrePopup(text),
+    };
+    return e;
+  }
+
+  /** The game buttons' click sound (0x894dfc: client tables +0x9c0, ui_menu_general_buttonclick_2). */
+  click(): void {
+    const art = (this.art.manifest.hud as { emotes?: EmoteArt }).emotes;
+    sound.play(art?.clickSound ?? 'soundbanks/ui_menu_general/ui_menu_general_buttonclick_2', 1, 'ui');
+  }
+
+  /**
+   * An emote's sound: event:/Main/Trigger/SFX_trigger/Play_emote with its SfxFile (0x8892cc), here the
+   * .ogg played on the sound system's AudioContext at its own level (the event's volume is not applied, A).
+   */
+  private playEmoteSfx(path: string): void {
+    const ctx = sound.ctx;
+    if (!ctx || !sound.enabled) return;
+    let p = this.sfxBuffers.get(path);
+    if (!p) {
+      p = fetch(`${this.art.baseUrl.replace(/\/$/, '')}/${path}`).then((r) => r.arrayBuffer())
+        .then((b) => ctx.decodeAudioData(b)).catch(() => null);
+      this.sfxBuffers.set(path, p);
+    }
+    void p.then((buf) => {
+      sound.log.push({ t: ctx.currentTime, name: path, kind: 'emote', id: 0, ok: !!buf && sound.enabled });
+      if (!buf || !sound.enabled) return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const g = ctx.createGain();
+      g.gain.value = sound.volume;
+      src.connect(g).connect(ctx.destination);
+      src.start();
+    });
+  }
+
+  /** Popup manager floater at the stage centre in white (0x88cac8). */
+  private centrePopup(text: string): void {
+    const ui = this.ui;
+    if (!ui || !text) return;
+    if (!this.floaters) {
+      const parts = floaterParts(ui);
+      if (!parts) return;
+      this.floaters = new Floaters(parts);
+    }
+    const L = this.layout;
+    this.floaters.show(0, [Math.trunc(L.stageW) * 0.5, Math.trunc(L.stageH) * 0.5], text, 0xffffffff,
+      measureFieldText(this.floaters.parts.text, text, L.k * this.lastDpr), L.stageW);
+  }
+
+  /**
+   * A tap ending on the battle screen with no card selected, no card drag and no emote menu (battle screen
+   * touch end 0xbe1120): TID_NO_SPELL_SELECTED_TAP at ((stage width − insets) / 2, the touch's y) in 0xffff3366,
+   * delay 0 (0x88cb54); not during a tutorial or replay (0xd33844 / 0xd33664) nor once time is up (0xd360a8).
+   */
+  noCardSelected(stageY: number): void {
+    const ui = this.ui;
+    const text = (this.art.manifest.hud as { emotes?: EmoteArt }).emotes?.texts.TID_NO_SPELL_SELECTED_TAP;
+    if (!ui || !text) return;
+    if (!this.floaters) {
+      const parts = floaterParts(ui);
+      if (!parts) return;
+      this.floaters = new Floaters(parts);
+    }
+    const L = this.layout;
+    this.floaters.show(0, [Math.trunc(L.stageW) / 2, stageY], text, NOT_ENOUGH_MANA_COLOR,
+      measureFieldText(this.floaters.parts.text, text, L.k * this.lastDpr), L.stageW);
+  }
+
+  /** The HUD player's taunt (the menu's click, 0x8eac1c -> 0xbe62a4 -> 0x8d601c(hud, event, 1)). */
+  sendTaunt(t: { emote: EmoteDef } | { taunt: TauntDef }): void {
+    const [cx] = this.arenaCentre();
+    this.emotes?.receive(true, t, cx, this.layout.stageH);
+  }
+
+  /** Sandbox: the opponent's taunt arrives (the AI never emotes): the emote `i` of the deck, else the text taunt. */
+  opponentTaunt(i: number): void {
+    const e = this.emotes;
+    if (!e) return;
+    const n = e.art.emotes.length;
+    const t = i < n ? { emote: e.art.emotes[i] } : e.art.taunts[i - n] ? { taunt: e.art.taunts[i - n] } : null;
+    if (!t) return;
+    const [cx] = this.arenaCentre();
+    e.receive(false, t, cx, this.layout.stageH);
+  }
+
+  /** The projected arena centre in whole stage px (_DAT_01a57004 / 8, 0xbdf990). */
+  private arenaCentre(): [number, number] {
+    const [x, y] = this.toStage(...this.art.gameToPx(9000, 16000));
+    return [Math.trunc(x), Math.trunc(y)];
   }
 
   /** Announcements of the HUD time update 0x8d38c4 (countdown, 60/30 s, elixir speed, extra time,
@@ -179,6 +300,10 @@ export class BattleUi {
     this.grid.blocked.fill(0);
     this.grid.timer.fill(0);
     this.hud.reset();
+    // a new battle screen makes a new HUD (0x8cd4ec): emote button, menu and bubbles start over
+    this.emotes = this.makeEmotes();
+    this.menuSeq = -1;
+    this.confettiSeq = -1;
   }
 
   async load(): Promise<void> {
@@ -622,8 +747,31 @@ export class BattleUi {
     // area rings: battle screen update 0xbe1d3c, on simulation time like the other battle-screen lists
     this.rings.update(simDt);
     // battle intro (0x8ca764, HUD gate +0x468) and the end screen after EndScreenDelay (0xd3581c -> 0xbe0100)
+    const hadResult = this.screens.result !== null;
     this.screens.update(this.art, dt, f.simMs, b, team, this.hud.opponentName);
     this.hud.handHidden = this.screens.result !== null;
+    if (!hadResult && this.screens.result) {
+      // 0xbe0100: every released play's leftover drops its ghosts and indicator clips now (0x8dd538) and goes
+      // with the next update (0x8dd4cc), and the taunt counts are capped at TAUNT_LIMIT - 1 (0x8d6f30)
+      for (const g of this.pending) this.removeGhost(g);
+      const e = this.emotes;
+      if (e) {
+        const lim = (e.art.globals?.limit ?? 100) - 1;
+        e.ownCount = Math.min(e.ownCount, lim);
+        e.oppCount = Math.min(e.oppCount, lim);
+      }
+    }
+    // the HUD update's emote part (0x8d1e6c): timers, bubbles (on the result screen's taunt areas once it is
+    // 2.2 s old, 0x8e8c38), the menu; HUD_taunt follows the HUD's intro visibility (0x8d791c)
+    const em = this.emotes;
+    if (em) {
+      const hadMenu = em.menu !== null;
+      const res = this.screens.result;
+      em.update(dt, this.screens.hudShown, (opp) => (res && res.time > 2.2 ? res.tauntArea(opp) : null));
+      em.advance(dt);
+      if (!hadMenu && em.menu) this.menuSeq = this.layerSeq++;
+      this.hud.cardsHidden = em.menuOpen;
+    }
     // sounds of the battle screen (0xbdf1b0), the HUD time update (0x8d38c4) and the intro / result screens
     this.sounds.update(battleClockSounds(b));
     this.screenSounds.update(this.screens.intro, this.screens.result, this.screens.result?.kind ?? 0,
@@ -810,7 +958,12 @@ export class BattleUi {
     const [centreX, riverY] = this.toStage(...this.art.gameToPx(9000, 16000));
     const texts = this.art.manifest.hud.texts ?? {};
     // the intro hides the HUD (+0x300 and its children) until its actionFrame (0xbe1d3c +0x468)
-    if (!this.screens.hudShown) { this.screens.draw(r, this.layout, dpr, riverY, texts); this.floaters?.draw(r, ui); return; }
+    if (!this.screens.hudShown) {
+      this.screens.draw(r, this.layout, dpr, riverY, texts);
+      this.floaters?.draw(r, ui);
+      this.drawTopLayer(r, dpr);
+      return;
+    }
     this.hud.draw(r, b, dpr, riverY);
     const centre: [number, number] = [Math.trunc(centreX), Math.trunc(riverY)];
     // HUD children in the order they were added: the crown-score prints (HUD init 0x8cd4ec), the crown
@@ -862,10 +1015,33 @@ export class BattleUi {
         if (!g.removed) this.drawName(r, ui, g.px, g.py, g.name);
       }
     }
+    // the result screen's lower confetti layer, appended to the HUD layer +0x160 (0x8c08b0)
+    this.screens.drawConfetti(r, this.layout, dpr, 'under');
     // intro (layer +0x168) and result screen (layer +0x170 at index 0, under the popup manager)
     this.screens.draw(r, this.layout, dpr, riverY, texts);
     // floaters: the popup manager sits in the game layer +0x170, above the HUD's layers (sc/floater.ts)
     this.floaters?.draw(r, ui);
+    this.drawTopLayer(r, dpr);
+  }
+
+  /**
+   * Game layer +0x178: the emote bubbles (inserted at index 0), HUD_taunt with its menu, then the menu's
+   * favourites area and the upper confetti layer in the order they were added (sc/emotes.ts, sc/confetti.ts).
+   */
+  private drawTopLayer(r: ScRenderer, dpr: number): void {
+    const L = this.layout, k = L.k * dpr;
+    const texts = this.art.manifest.hud.texts ?? {};
+    const em = this.emotes;
+    const ctx = { texts };
+    if (em) { r.setView(k, 0, 0, k, 0, 0); em.drawLower(r, L.stageW, L.stageH, ctx); }
+    const area = () => { if (em) { r.setView(k, 0, 0, k, 0, 0); em.drawArea(r, L.stageW, L.stageH, ctx); } };
+    if (this.confettiSeq >= 0 && this.menuSeq > this.confettiSeq) {
+      this.screens.drawConfetti(r, L, dpr, 'over');
+      area();
+    } else {
+      area();
+      this.screens.drawConfetti(r, L, dpr, 'over');
+    }
   }
 
   private drawName(r: ScRenderer, ui: ScLibrary, x: number, y: number, nm: PendingGhost['name']): void {

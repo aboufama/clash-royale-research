@@ -18,7 +18,10 @@
 //   - playRange 0x1241f50, labels 0x1241dd0 / 0x123f3c0, gotoAndStop 0x1242234, gotoAndStop(label)
 //     0x12423ac, play-to 0x12422a4, frame time 0x124351c (recursive over the display list).
 // Drawing walks the same tree and hands shapes and text fields to ScRenderer one by one (text through
-// a one-child stand-in clip so the field gets the instance's string).
+// a one-child stand-in clip so the field gets the instance's string). Code can append children after the
+// timeline's (0x1252994 addChild: `added`), give a slot a colour or grayscale (setAlpha vt+0x58, vt+0xd0),
+// and clips with a scaling grid are drawn 9-sliced (drawGrid; the client's grid render path is not
+// traced, A).
 
 import type { Clip, ScLibrary, TextFieldDef } from './library.ts';
 import { ScLibrary as Lib } from './library.ts';
@@ -43,12 +46,21 @@ export interface SlotOverride {
   inner?: Mat;
   /** a code-set position of the slot (0x89a010), dropped by the next frame change (0x123f7b4) */
   offset?: [number, number];
+  /** a code-set colour transform multiplied in (e.g. setAlpha vt+0x58 on the child) */
+  color?: Col;
+  /** the child and its descendants drawn in grayscale (vt+0xd0 0x123c580) */
+  grayscale?: boolean;
 }
 
 export interface DrawCtx {
   /** TID key -> localised string, for text instances named with a TID */
   texts: Record<string, string>;
+  /** draw in grayscale (set by a SlotOverride.grayscale above) */
+  grayscale?: boolean;
 }
+
+/** A display object appended by code (0x1252994 addChild): drawn after the timeline children. */
+export interface AddedChild { node: McNode; m: Mat; color?: Col }
 
 export class McNode {
   readonly lib: ScLibrary;
@@ -67,6 +79,8 @@ export class McNode {
   /** child instances by child index (null for shapes and text fields) */
   readonly kids: (McNode | null)[];
   readonly slots: (SlotOverride | undefined)[];
+  /** children appended by code after the timeline's (0x1252994), in order */
+  readonly added: AddedChild[] = [];
 
   constructor(lib: ScLibrary, clip: Clip) {
     this.lib = lib;
@@ -112,6 +126,20 @@ export class McNode {
     for (const k of this.kids) {
       const f = k?.find(name);
       if (f) return f;
+    }
+    return null;
+  }
+
+  /** Timeline matrix of child `ci` in the current frame (with a code-set offset and inner matrix), or null. */
+  slotMatrix(ci: number): Mat | null {
+    const c = this.clip, f = Math.min(Math.max(this.frame, 0), c.frameCount - 1), bm = this.lib.banks[c.bank].m;
+    for (let i = c.frameStart[f]; i < c.frameStart[f + 1]; i++) {
+      if (c.elements[i * 3] !== ci) continue;
+      let m = bankMat(bm, c.elements[i * 3 + 1]);
+      const s = this.slots[ci];
+      if (s?.offset) m = [m[0], m[1], m[2], m[3], s.offset[0], s.offset[1]];
+      if (s?.inner) m = matMul(m, s.inner);
+      return m;
     }
     return null;
   }
@@ -264,6 +292,7 @@ export class McNode {
       const k = this.kids[ci];
       if (k && k.visible) k.advance(dt);
     }
+    for (const a of this.added) if (a.node.visible) a.node.advance(dt);
   }
 
   // ---------------------------------------------------------------- drawing
@@ -300,20 +329,93 @@ export class McNode {
       if (s?.offset) { lm = [lm[0], lm[1], lm[2], lm[3], s.offset[0], s.offset[1]]; }
       matMul(m, lm, cm);
       colMul(c, lc, cc);
+      if (s?.color) colMul(cc, s.color, cc);
       if (s?.inner) matMul(cm, s.inner, cm);
       const b = (clip.blend && clip.blend[ci]) || blend;
-      if (s?.replace) { s.replace.draw(r, cm, cc, ctx, b); continue; }
-      if (kid) { kid.draw(r, cm, cc, ctx, b); continue; }
+      const kctx = s?.grayscale && !ctx.grayscale ? { ...ctx, grayscale: true } : ctx;
+      if (s?.replace) { s.replace.draw(r, cm, cc, kctx, b); continue; }
+      if (kid) {
+        if (kid.clip.grid) kid.drawGrid(r, cm, cc, kctx, b);
+        else kid.draw(r, cm, cc, kctx, b);
+        continue;
+      }
       const id = clip.children[ci];
-      if (lib.shapes.has(id)) { r.drawId(lib, id, 0, cm, cc, b ? { blend: b } : {}); continue; }
+      if (lib.shapes.has(id)) { r.drawId(lib, id, 0, cm, cc, shapeOpts(b, kctx)); continue; }
       const tf = lib.textFields.get(id);
       if (tf) {
         const name = clip.names?.[ci] ?? null;
         const str = s?.text ?? (name && name.startsWith('TID_') ? ctx.texts[name] ?? '' : tf.text);
-        if (str) drawField(r, lib, id, str, cm, cc, b);
+        if (str) drawField(r, lib, id, str, cm, cc, b, !!kctx.grayscale);
+      }
+    }
+    for (const a of this.added) {
+      if (!a.node.visible) continue;
+      const am = matMul(m, a.m), ac: Col = a.color ? colMul(c, a.color) : [c[0], c[1], c[2], c[3], c[4], c[5], c[6]];
+      if (a.node.clip.grid) a.node.drawGrid(r, am, ac, ctx, blend);
+      else a.node.draw(r, am, ac, ctx, blend);
+    }
+  }
+
+  /**
+   * A clip with a 9-slice scaling grid: its shapes drawn with the margins outside the grid rect kept at the
+   * world scale 1 and the grid rect taking up the rest of the scaled bounds (the usual SC scaling grid; the
+   * client's grid render path was not traced, A). Other children are drawn normally.
+   */
+  drawGrid(r: ScRenderer, m: Readonly<Mat>, c: Readonly<Col>, ctx: DrawCtx, blend = 0): void {
+    const clip = this.clip, lib = this.lib, g = clip.grid;
+    if (!g) { this.draw(r, m, c, ctx, blend); return; }
+    const f = Math.min(Math.max(this.frame, 0), clip.frameCount - 1);
+    const bank = lib.banks[clip.bank];
+    // content bounds in clip space (the shapes through their matrices)
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    const items: { cmds: ReturnType<ScLibrary['shapes']['get']>; lm: Mat; lc: Col }[] = [];
+    for (let i = clip.frameStart[f]; i < clip.frameStart[f + 1]; i++) {
+      const ci = clip.elements[i * 3], id = clip.children[ci];
+      const cmds = lib.shapes.get(id);
+      if (!cmds) continue;
+      const lm = bankMat(bank.m, clip.elements[i * 3 + 1]), lc = bankCol(bank.c, clip.elements[i * 3 + 2]);
+      items.push({ cmds, lm, lc });
+      for (const cmd of cmds) {
+        for (let k = 0; k < cmd.verts.length; k += 4) {
+          const x = lm[0] * cmd.verts[k] + lm[2] * cmd.verts[k + 1] + lm[4];
+          const y = lm[1] * cmd.verts[k] + lm[3] * cmd.verts[k + 1] + lm[5];
+          if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y;
+        }
+      }
+    }
+    if (!items.length || !(b[0] <= b[2])) { this.draw(r, m, c, ctx, blend); return; }
+    const sx = Math.hypot(m[0], m[1]) || 1, sy = Math.hypot(m[2], m[3]) || 1;
+    const axis = (v: number, b0: number, b1: number, g0: number, g1: number, s: number): number => {
+      const lo = Math.max(0, g0 - b0) / s, hi = Math.max(0, b1 - g1) / s;
+      const mid = Math.max(0, b1 - b0 - lo - hi);
+      if (v <= g0) return b0 + (v - b0) / s;
+      if (v >= g1) return b1 - (b1 - v) / s;
+      return b0 + lo + ((v - g0) / Math.max(1e-6, g1 - g0)) * mid;
+    };
+    const cc: Col = [1, 1, 1, 1, 0, 0, 0];
+    for (const it of items) {
+      colMul(c, it.lc, cc);
+      for (const cmd of it.cmds ?? []) {
+        const v = new Float32Array(cmd.verts.length);
+        for (let k = 0; k < cmd.verts.length; k += 4) {
+          const x = it.lm[0] * cmd.verts[k] + it.lm[2] * cmd.verts[k + 1] + it.lm[4];
+          const y = it.lm[1] * cmd.verts[k] + it.lm[3] * cmd.verts[k + 1] + it.lm[5];
+          v[k] = axis(x, b[0], b[2], g[0], g[2], sx);
+          v[k + 1] = axis(y, b[1], b[3], g[1], g[3], sy);
+          v[k + 2] = cmd.verts[k + 2];
+          v[k + 3] = cmd.verts[k + 3];
+        }
+        r.drawImageStrip(lib.textures[cmd.tex], v, m, cc, blend, !!ctx.grayscale);
       }
     }
   }
+}
+
+function shapeOpts(blend: number, ctx: DrawCtx): { blend?: number; grayscale?: boolean } {
+  const o: { blend?: number; grayscale?: boolean } = {};
+  if (blend) o.blend = blend;
+  if (ctx.grayscale) o.grayscale = true;
+  return o;
 }
 
 function bankMat(bm: Float64Array, mi: number): Mat {
@@ -385,7 +487,8 @@ const textLibs = new WeakMap<ScLibrary, ScLibrary>();
 const TEXT_WRAP = 1 << 20;
 
 /** A text field drawn with a given string: a one-child stand-in clip whose child gets the text. */
-function drawField(r: ScRenderer, lib: ScLibrary, id: number, str: string, m: Readonly<Mat>, c: Readonly<Col>, blend: number): void {
+function drawField(r: ScRenderer, lib: ScLibrary, id: number, str: string, m: Readonly<Mat>, c: Readonly<Col>, blend: number,
+  grayscale = false): void {
   let tl = textLibs.get(lib);
   if (!tl) {
     const clips: Record<string, { fps: number; n: number[]; e: number[]; c: number[]; k: number; nm: string[] }> = {};
@@ -397,5 +500,5 @@ function drawField(r: ScRenderer, lib: ScLibrary, id: number, str: string, m: Re
     tl = new Lib({ v: 1, name: `${lib.name}#text`, tex: [], shapes: {}, clips, banks: [{ m: [], c: [] }], exports: {}, tf: tfs }, []);
     textLibs.set(lib, tl);
   }
-  r.drawId(tl, TEXT_WRAP + id, 0, m, c, blend ? { blend, text: { t: str } } : { text: { t: str } });
+  r.drawId(tl, TEXT_WRAP + id, 0, m, c, { ...(blend ? { blend } : {}), ...(grayscale ? { grayscale } : {}), text: { t: str } });
 }
