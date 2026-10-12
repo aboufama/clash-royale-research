@@ -51,7 +51,7 @@ export class BattleUi {
   areaAlpha = 0;
   preview: PreviewInput | null = null;
   private timers: { t: DeployTimer; x: number; y: number; team: Team }[] = [];
-  /** elixir cost texts of the own plays (0xbe5898 / 0xbe59e8, list +0x400 of the battle screen) */
+  /** elixir cost texts of the own summons (0x85ada8 -> 0xbe5898, list +0x400 of the battle screen) */
   private floats: { x: number; y: number; text: string; clip: ClipPlayer }[] = [];
   private range: ImageBitmap | null = null;
   private footprint: { exp: string; clip: ClipPlayer; scale: number } | null = null;
@@ -170,6 +170,14 @@ export class BattleUi {
           break;
         }
       }
+      // the own summon's elixir cost floats up from the deploy point when its characters appear: the
+      // unit view's card-deploy handler 0x85ada8 -> 0xbe5898 (elixir_float_txt, icon/txt = "-<cost>",
+      // played once, then removed); spells have no character view and show none
+      if (own && d && n > 0 && card.cost >= 1 && ui.has('elixir_float_txt')) {
+        const clip = new ClipPlayer(ui.frameCount('elixir_float_txt'), ui.fps('elixir_float_txt') || 30);
+        clip.playRange(0, clip.frames - 1, false);
+        this.floats.push({ x: e.x, y: e.y, text: `-${card.cost}`, clip });
+      }
       if (!d || n <= 0 || d.spawnPathfindSpeed !== 0) continue;
       const exp = own ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
       if (!ui.has(exp)) continue;
@@ -186,17 +194,7 @@ export class BattleUi {
    * "remove" or "remove_end" label strings, so those ranges of the clip are never played.
    */
   markPending(team: number, card: string, x: number, y: number, tick: number): void {
-    void tick;
-    // the own play's elixir cost floats up from the drop point (hand release 0x8df9fc -> 0xbe59e8):
-    // elixir_float_txt with icon/txt = "-<cost>", played once, then removed
-    const ui = this.ui;
-    const b = this.battleRef;
-    if (!ui || !b || team !== this.hud.team || !ui.has('elixir_float_txt')) return;
-    const cost = b.defs.card(card, b.levels[team]).cost;
-    if (cost < 1) return;
-    const clip = new ClipPlayer(ui.frameCount('elixir_float_txt'), ui.fps('elixir_float_txt') || 30);
-    clip.playRange(0, clip.frames - 1, false);
-    this.floats.push({ x, y, text: `-${cost}`, clip });
+    void team; void card; void x; void y; void tick;
   }
 
   /** Footprint clip of a card (0x8e4eb4: TileSize of a building, capped at 4; 1x1 otherwise; none without ghosts). */
