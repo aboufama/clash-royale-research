@@ -171,12 +171,14 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    prints of 0x8d2de0 (`sc/announce.ts`), on the engine's ported tiebreak
    (`Battle.tiebreakMs` / `drawMs`, 0x10ca9a0, `end.test.ts`); decompiles in
    `work/native/decomp_end/`.
-6. **Viewer fidelity left:** the battle layer's vertical placement under the
-   HUD (width framing is ported: 578.5 SC px on tall phones), the arena clip field
-   +0x84 used as the 180° turn's ty (768 assumed), how the client picks
-   direction frames under the flip, particle emitter semantics, the deploy
-   preview (the engine now snaps drops with the deploy check 0xf9e16c; the
-   viewer still previews at the pointer). 0x83c0ac is the HideBeforeFirstHit
+6. **Viewer fidelity left:** the arena clip field +0x84 used as the 180°
+   turn's ty (768 assumed), how the client picks direction frames under the
+   flip, particle emitter semantics (EmitterReplaceType modifiers, TrailSWF),
+   and the items of the 2026-10-12 audit not yet ported (battle intro banner,
+   end-of-battle result screen, emotes, per-card effects of non-default cards).
+   The battle layer's placement (content scale 0x772a70, layer scale and
+   position 0xbdefac, `sc/ui_port.ts` stageLayout) and the drag preview's
+   snap (deploy check 0xf9e16c) are ported. 0x83c0ac is the HideBeforeFirstHit
    scale, which no unit in this build uses. Decompiles for the view work are in
    `work/native/decomp_shadow/` and `decomp_anim/`.
 
