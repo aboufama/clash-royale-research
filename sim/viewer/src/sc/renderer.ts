@@ -23,7 +23,7 @@
 //   r.beginShadows(); ...draw silhouettes...; r.endShadows([r, g, b, a], [ox, oy])
 //   r.end()                                  // flushes; r.stats = {drawCalls, triangles}
 // Mirroring: pass a matrix with a negative x scale, e.g. [-s, 0, 0, s, x, y].
-// Textures are premultiplied (createImageBitmap premultiplyAlpha) and mip-mapped.
+// Textures are premultiplied (the .sc atlases are stored that way; other images are premultiplied at load) and mip-mapped.
 
 import type { Col, Mat } from './math.ts';
 import { colMul, IDENTITY, matScaleFactor, WHITE } from './math.ts';

@@ -110,7 +110,7 @@ export class ScLibrary {
     for (const [k, v] of Object.entries(json.tf ?? {})) this.textFields.set(+k, v);
   }
 
-  /** Load `<baseUrl>/sc/<name>.json` and its atlases (premultiplied, no colour conversion). */
+  /** Load `<baseUrl>/sc/<name>.json` and its atlases (stored premultiplied; no re-premultiply, no colour conversion). */
   static async load(baseUrl: string, name: string): Promise<ScLibrary> {
     const base = baseUrl.replace(/\/$/, '');
     const res = await fetch(`${base}/sc/${name}.json`);
@@ -120,7 +120,9 @@ export class ScLibrary {
       const r = await fetch(`${base}/sc/${t.f}`);
       if (!r.ok) throw new Error(`ScLibrary: ${t.f}: HTTP ${r.status}`);
       const blob = await r.blob();
-      return createImageBitmap(blob, { premultiplyAlpha: 'premultiply', colorSpaceConversion: 'none' });
+      // the .sc textures are stored premultiplied (no texel has a channel above its alpha; the client's
+      // stage shaders blend premultiplied, add colour x tex.a): take the bytes as they are
+      return createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
     }));
     return new ScLibrary(json, textures);
   }

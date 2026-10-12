@@ -86,6 +86,7 @@ export class BattleUi {
   reset(): void {
     this.timers = [];
     this.floats = [];
+    this.handPlays = [];
     this.announce = null;
     this.pending = [];
     this.preview = null;
@@ -191,7 +192,9 @@ export class BattleUi {
       // the own summon's elixir cost floats up from the deploy point when its characters appear: the
       // unit view's card-deploy handler 0x85ada8 -> 0xbe5898 (elixir_float_txt, icon/txt = "-<cost>",
       // played once, then removed); spells have no character view and show none
-      if (own && d && n > 0 && card.cost >= 1 && ui.has('elixir_float_txt')) {
+      const hp = own ? this.handPlays.findIndex((q) => q.team === e.team && q.card === e.name) : -1;
+      if (hp >= 0) this.handPlays.splice(hp, 1);
+      if (hp >= 0 && d && n > 0 && card.cost >= 1 && ui.has('elixir_float_txt')) {
         const clip = new ClipPlayer(ui.frameCount('elixir_float_txt'), ui.fps('elixir_float_txt') || 30);
         clip.playRange(0, clip.frames - 1, false);
         this.floats.push({ x: e.x, y: e.y, text: `-${card.cost}`, clip });
@@ -212,8 +215,12 @@ export class BattleUi {
    * "remove" or "remove_end" label strings, so those ranges of the clip are never played.
    */
   markPending(team: number, card: string, x: number, y: number, tick: number): void {
-    void team; void card; void x; void y; void tick;
+    void x; void y; void tick;
+    // remembered so the commit's cost float is shown for hand plays only (not sandbox spawns)
+    this.handPlays.push({ team, card });
   }
+
+  private handPlays: { team: number; card: string }[] = [];
 
   /** Footprint clip of a card (0x8e4eb4: TileSize of a building, capped at 4; 1x1 otherwise; none without ghosts). */
   private footprintExport(cardName: string): string | null {
