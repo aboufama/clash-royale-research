@@ -7,7 +7,7 @@
 // After the handshake both sides exchange length-prefixed little-endian frames ([u32 bytes][payload]):
 //   trainer -> worker  Int32 [type, n, n x (env, team, slot, tile)]   type 1 = step, 2 = close
 //   worker -> trainer  Int32 [nDone, nRec]
-//                      Float32 nDone x DONE_F  [env, team, episode, outcome, term, shape, ticks, epTicks]
+//                      Float32 nDone x DONE_F  [env, team, episode, outcome, term, shape, ticks, epTicks, crowns, opp crowns]
 //                      Float32 nRec x META_F   [env, team, episode, start, term, shape, ticks, opp]
 //                      Float32 nRec x floats   observations (obs.ts layout)
 //                      Uint8   nRec x maskBytes legal-action masks
@@ -25,7 +25,7 @@ import {
   makeVocab, MAX_AOE, MAX_PEND, MAX_PROJ, MAX_UNITS, N_CARDS, N_SLOTS, N_TILES, TILES_H, TILES_W,
 } from './obs.ts';
 
-export const DONE_F = 8;
+export const DONE_F = 10;
 export const META_F = 8;
 const OPP_CODE = { py: 0, bot: 1, random: 2, none: 3 } as const;
 
@@ -85,7 +85,9 @@ export class Worker {
         const ends = env.advance();
         if (ends === null) break;
         for (const end of ends) {
-          dones.push(i, end.team, env.episode, end.outcome, end.acc.term, end.acc.shape, end.acc.ticks, env.b.tick);
+          const pl = env.b.players;
+          dones.push(i, end.team, env.episode, end.outcome, end.acc.term, end.acc.shape, end.acc.ticks, env.b.tick,
+            pl[end.team].crowns, pl[1 - end.team].crowns);
         }
         if (this.cfg.replayDir) {
           mkdirSync(this.cfg.replayDir, { recursive: true });

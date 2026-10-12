@@ -39,12 +39,14 @@ def main(argv=None):
     actor = Actor(Layout(pool.spec), ModelConfig(**ck["model"])).to(device).eval()
     actor.load_state_dict(ck["actor"])
     results = []
+    dominant = []
     t0 = time.time()
     actions = None
     while len(results) < a.episodes:
         fr = pool.step(actions)
         for row in fr.dones:
             results.append(float(row[3]))
+            dominant.append(1.0 if len(row) > 9 and row[8] >= 2 and row[9] == 0 else 0.0)
         if len(fr.meta) == 0:
             actions = np.zeros((0, 4), np.int32)
             continue
@@ -55,7 +57,8 @@ def main(argv=None):
     r = np.array(results[:a.episodes])
     opp = f"bot level {a.bot_level}" if a.opponent == "bot" else "random play"
     print(f"{a.checkpoint} vs {opp}, {len(r)} episodes ({'greedy' if a.greedy else 'sampled'}): "
-          f"win {np.mean(r > 0):.3f} draw {np.mean(r == 0):.3f} loss {np.mean(r < 0):.3f} in {time.time() - t0:.0f} s")
+          f"win {np.mean(r > 0):.3f} draw {np.mean(r == 0):.3f} loss {np.mean(r < 0):.3f}, "
+          f"2+ crowns without losing a tower {np.mean(dominant[:a.episodes]):.3f} in {time.time() - t0:.0f} s")
 
 
 if __name__ == "__main__":

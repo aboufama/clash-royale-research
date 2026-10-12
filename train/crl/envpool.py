@@ -23,7 +23,7 @@ WORKER = REPO / "sim" / "rl" / "worker.ts"
 @dataclass
 class Frame:
     """One worker frame. `gid` = global env id (worker * envs_per_worker + env)."""
-    dones: np.ndarray  # (nDone, DONE_F) float32: env, team, episode, outcome, term, shape, ticks, epTicks
+    dones: np.ndarray  # (nDone, DONE_F) float32: env, team, episode, outcome, term, shape, ticks, epTicks, crowns, opp crowns
     meta: np.ndarray  # (nRec, META_F) float32: env, team, episode, start, term, shape, ticks, opp
     obs: np.ndarray  # (nRec, floats) float32
     masks: np.ndarray  # (nRec, maskBytes) uint8

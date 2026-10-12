@@ -103,13 +103,20 @@ class Stats:
     def reset(self):
         self.games = defaultdict(int)
         self.wins = defaultdict(float)
+        self.dominant = defaultdict(float)
+        self.crowns = defaultdict(float)
+        self.lost = defaultdict(float)
         self.ep_ticks = []
         self.decisions = 0
         self.t0 = time.time()
 
-    def record(self, opp: str, outcome: float, ep_ticks: float):
+    def record(self, opp: str, outcome: float, ep_ticks: float, crowns: float = 0, opp_crowns: float = 0):
         self.games[opp] += 1
         self.wins[opp] += 1.0 if outcome > 0 else 0.5 if outcome == 0 else 0.0
+        # the owner's bar against the hard bot: at least 2 crowns without losing a tower
+        self.dominant[opp] += 1.0 if crowns >= 2 and opp_crowns == 0 else 0.0
+        self.crowns[opp] += crowns
+        self.lost[opp] += opp_crowns
         self.ep_ticks.append(ep_ticks)
 
     def summary(self) -> dict:
@@ -118,6 +125,9 @@ class Stats:
         for k, n in self.games.items():
             out[f"winrate_vs_{k}"] = self.wins[k] / n
             out[f"games_vs_{k}"] = n
+            out[f"dominant_vs_{k}"] = self.dominant[k] / n
+            out[f"crowns_vs_{k}"] = self.crowns[k] / n
+            out[f"crowns_lost_vs_{k}"] = self.lost[k] / n
         if self.ep_ticks:
             out["episode_s"] = float(np.mean(self.ep_ticks)) / 20
         return out
@@ -355,6 +365,7 @@ def main(argv=None):
         for row in frame.dones:
             gid, team, ep = int(row[0]), int(row[1]), int(row[2])
             outcome, term, shape, ticks, ep_ticks = float(row[3]), float(row[4]), float(row[5]), float(row[6]), float(row[7])
+            crowns, opp_crowns = (float(row[8]), float(row[9])) if len(row) > 9 else (0.0, 0.0)
             nets = ep_nets.get((gid, ep))
             if nets is None or nets[team] != "L":
                 continue
@@ -364,7 +375,7 @@ def main(argv=None):
                 stream_last[(gid, team)] = None
             opp = nets[1 - team]
             name = "self" if opp == "L" else opp if isinstance(opp, str) else "league"
-            stats.record(name, outcome, ep_ticks)
+            stats.record(name, outcome, ep_ticks, crowns, opp_crowns)
             if isinstance(opp, int):
                 league.record(opp, outcome)
             ended.add((gid, ep))
@@ -468,6 +479,9 @@ def main(argv=None):
         metrics_f.write(json.dumps(rec) + "\n")
         metrics_f.flush()
         wr = " ".join(f"{k[11:]}={v:.2f}" for k, v in rec.items() if k.startswith("winrate_vs_"))
+        if "dominant_vs_bot" in rec:
+            wr += (f" [bot: 2+crowns&0 lost {rec['dominant_vs_bot']:.2f}, crowns {rec['crowns_vs_bot']:.2f}"
+                   f"/{rec['crowns_lost_vs_bot']:.2f}, n={rec['games_vs_bot']}]")
         print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
               f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "
               f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s "
