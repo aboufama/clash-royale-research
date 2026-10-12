@@ -220,6 +220,25 @@ class Actor(nn.Module):
             logp[r] = logp[r] + torch.log_softmax(tl, -1).gather(1, t.unsqueeze(1)).squeeze(1)
         return slot, tile, logp
 
+    @torch.no_grad()
+    def act_packed(self, obs: torch.Tensor, masks: torch.Tensor, greedy: bool = False) -> torch.Tensor:
+        """`act` without host syncs: the tile head runs for every row (a waiting row uses slot 1's card and
+        its tile is ignored). Returns one (B, 3) float tensor [slot, tile, logp] for a single transfer."""
+        tok, kpm, glob, slot_tok = self.trunk(obs)
+        sl = masked_logits(self.slot_logits(glob, slot_tok).float(), masks[:, :5].bool())
+        slot = sl.argmax(-1) if greedy else torch.distributions.Categorical(logits=sl).sample()
+        logp = torch.log_softmax(sl, -1).gather(1, slot.unsqueeze(1)).squeeze(1)
+        tl = self.tile_logits(tok, kpm, glob, slot_tok, slot).float()
+        tm = self.chosen_tile_mask(masks, slot)
+        tm = tm | ~tm.any(-1, keepdim=True)  # a waiting row may have no legal tile for slot 1
+        tl = masked_logits(tl, tm)
+        tile = tl.argmax(-1) if greedy else torch.distributions.Categorical(logits=tl).sample()
+        tlp = torch.log_softmax(tl, -1).gather(1, tile.unsqueeze(1)).squeeze(1)
+        play = slot > 0
+        logp = logp + torch.where(play, tlp, torch.zeros_like(tlp))
+        tile = torch.where(play, tile, torch.zeros_like(tile))
+        return torch.stack([slot.float(), tile.float(), logp], 1)
+
     def chosen_tile_mask(self, masks: torch.Tensor, slot: torch.Tensor) -> torch.Tensor:
         n = self.n_tiles
         start = 5 + (slot.clamp(min=1) - 1) * n

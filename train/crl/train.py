@@ -338,14 +338,16 @@ def main(argv=None):
             if learn.any():
                 li_rows = np.nonzero(learn)[0]
                 lt = torch.from_numpy(li_rows).to(device)
-                s, t, lp = run_actor.act(obs_t[lt], masks_t[lt])
-                v = run_critic(obs_t[lt]).float()
-                s_np, t_np = s.cpu().numpy(), t.cpu().numpy()
+                packed = torch.cat([run_actor.act_packed(obs_t[lt], masks_t[lt]), run_critic(obs_t[lt]).float().unsqueeze(1)], 1)
+                packed = packed.cpu().numpy()  # the one host sync for the learner's rows
+                s_np, t_np = packed[:, 0].astype(np.int64), packed[:, 1].astype(np.int64)
+                lp_np, v_np = packed[:, 2].astype(np.float32), packed[:, 3].astype(np.float32)
                 tp2 = time.time()
                 timing["p_infer_s"] += tp2 - tp1
-                lp_np, v_np = lp.float().cpu().numpy(), v.cpu().numpy()
                 slot[li_rows], tile[li_rows] = s_np, t_np
-                tm = run_actor.chosen_tile_mask(masks_t[lt], s).cpu().numpy() * (s_np > 0)[:, None]
+                # the chosen card's tile mask, gathered on the host (zeros for a wait)
+                start = 5 + np.clip(s_np - 1, 0, 3) * n_tiles
+                tm = frame.masks[li_rows[:, None], start[:, None] + np.arange(n_tiles)[None, :]] * (s_np > 0)[:, None]
                 idx = buf.add(frame.obs[li_rows].astype(np.float16), frame.masks[li_rows, :5], tm, s_np, t_np, lp_np, v_np)
                 for k, r in enumerate(li_rows):
                     key = (int(gids[r]), int(teams[r]))
@@ -356,14 +358,16 @@ def main(argv=None):
                 timing["p_store_s"] += time.time() - tp2
                 stats.decisions += len(li_rows)
                 total_decisions += len(li_rows)
+            tp3 = time.time()
             for sid in {v for v in nets_r if isinstance(v, int)}:
                 rows = np.nonzero(np.array([v == sid for v in nets_r]))[0]
                 m = models.get(sid)
                 if m is None:
                     continue  # snapshot dropped while its episode ran: it waits (slot 0)
                 rt = torch.from_numpy(rows).to(device)
-                s, t, _ = m.act(obs_t[rt], masks_t[rt])
-                slot[rows], tile[rows] = s.cpu().numpy(), t.cpu().numpy()
+                pk = m.act_packed(obs_t[rt], masks_t[rt]).cpu().numpy()
+                slot[rows], tile[rows] = pk[:, 0].astype(np.int64), pk[:, 1].astype(np.int64)
+            timing["p_opp_s"] += time.time() - tp3
         return np.stack([gids, teams, slot, tile], 1).astype(np.int32)
 
     def snapshot() -> dict:
@@ -403,7 +407,7 @@ def main(argv=None):
               f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "
               f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s "
               f"proc {timing['process_s']:.1f}s (book {timing['p_bookkeep_s']:.1f} infer {timing['p_infer_s']:.1f} "
-              f"store {timing['p_store_s']:.1f}) upd {rec.get('update_s', 0):.1f}s rec/frame "
+              f"store {timing['p_store_s']:.1f} opp {timing['p_opp_s']:.1f}) upd {rec.get('update_s', 0):.1f}s rec/frame "
               f"{timing['records'] / max(1, timing['frames']):.0f}", flush=True)
         stats.reset()
         timing.clear()
