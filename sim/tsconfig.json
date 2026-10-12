@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["core", "viewer/src", "bench"]
+  "include": ["core", "viewer/src", "bench", "rl"]
 }

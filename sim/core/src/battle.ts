@@ -391,8 +391,6 @@ export class Battle {
     if (this.fixture) return { x: trunc(xi / 1000) * 1000 + 500, y: trunc(yi / 1000) * 1000 + 500 };
     // bVar12: not a SpellAsDeploy card with a projectile or area effect
     const plain = !(card.spellAsDeploy && (card.spellProjectile !== null || card.areaEffect !== null));
-    const W = A.w >> 1;
-    const H = A.h >> 1;
     const arr = this.zoneMap(team, card.canDeployOnEnemySide, card.canPlaceOnBuildings);
     // the deploying character (summon index 0, else the spell projectile's SpawnCharacter)
     let d: UnitDef | null = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
@@ -408,14 +406,6 @@ export class Battle {
         sy = this.snapCoord(d, yi);
       }
     }
-    const margin = card.deployWTileMargin;
-    const flags = A.flags;
-    const water = card.canPlaceOnWater;
-    const onBuildings = card.canPlaceOnBuildings;
-    const cellOk = (cx: number, cy: number): boolean => {
-      const v = flags[cx + A.w * cy];
-      return (v & F_WATER) === 0 ? (v & (F_BLOCKED | F_OCCLUDER)) === 0 || onBuildings : water;
-    };
     let best = 0x7fffffff;
     let bx = 0;
     let by = 0;
@@ -430,21 +420,7 @@ export class Battle {
           if (q & 1) { a = r - j; b = -r; }
           const cx = sx + (q < 2 ? b : -b) * 1000;
           const cy = sy + (q < 2 ? a : -a) * 1000;
-          const top = cy - foot * 500;
-          const c0 = trunc((cx - foot * 500) / 1000);
-          const c1 = trunc((cx + foot * 500) / 1000);
-          const r0 = trunc(top / 1000);
-          const r1 = trunc((cy + foot * 500) / 1000);
-          let ok = true;
-          for (let c = c0; c < c1 && ok; c++) {
-            if (r0 >= r1) continue;
-            if (c < margin || c >= W - margin || top < -999) { ok = false; break; }
-            for (let row = r0; row < r1; row++) {
-              if (row >= H || arr[row * W + c] === 0 || !cellOk(2 * c, 2 * row) || !cellOk(2 * c + 1, 2 * row)
-                || !cellOk(2 * c, 2 * row + 1) || !cellOk(2 * c + 1, 2 * row + 1)) { ok = false; break; }
-            }
-          }
-          if (!ok) continue;
+          if (!this.footOk(card, arr, foot, cx, cy)) continue;
           const ex = cx - xi;
           const ey = cy - yi;
           const d2 = ex * ex + ey * ey;
@@ -459,6 +435,69 @@ export class Battle {
       by -= team & 1;
     }
     return { x: bx, y: by };
+  }
+
+  /**
+   * The footprint test of 0xf9e16c's ring search at one candidate position: every tile of the
+   * `foot` x `foot` footprint centred on (cx, cy) is inside the DeployWTileMargin columns, deployable
+   * on the zone map and on cells passing 0xe8b6b4 (no water unless CanPlaceOnWater, no no-deploy /
+   * building cells unless CanPlaceOnBuildings).
+   */
+  private footOk(card: CardDef, arr: Uint8Array, foot: number, cx: number, cy: number): boolean {
+    const A = this.arena;
+    const W = A.w >> 1;
+    const H = A.h >> 1;
+    const margin = card.deployWTileMargin;
+    const flags = A.flags;
+    const water = card.canPlaceOnWater;
+    const onBuildings = card.canPlaceOnBuildings;
+    const cellOk = (x: number, y: number): boolean => {
+      const v = flags[x + A.w * y];
+      return (v & F_WATER) === 0 ? (v & (F_BLOCKED | F_OCCLUDER)) === 0 || onBuildings : water;
+    };
+    const top = cy - foot * 500;
+    const c0 = trunc((cx - foot * 500) / 1000);
+    const c1 = trunc((cx + foot * 500) / 1000);
+    const r0 = trunc(top / 1000);
+    const r1 = trunc((cy + foot * 500) / 1000);
+    for (let c = c0; c < c1; c++) {
+      if (r0 >= r1) continue;
+      if (c < margin || c >= W - margin || top < -999) return false;
+      for (let row = r0; row < r1; row++) {
+        if (row >= H || arr[row * W + c] === 0 || !cellOk(2 * c, 2 * row) || !cellOk(2 * c + 1, 2 * row)
+          || !cellOk(2 * c, 2 * row + 1) || !cellOk(2 * c + 1, 2 * row + 1)) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Training helper (not native): for each 1000-unit tile (row-major, 18 x 32) whether a play of
+   * `card` aimed at the tile centre passes 0xf9e16c's footprint test at its own snapped position
+   * (ring 0), i.e. lands exactly there. Every position the ring search can snap to is such a tile.
+   */
+  deployGrid(team: number, card: CardDef, out: Uint8Array): void {
+    const A = this.arena;
+    const W = A.w >> 1;
+    const H = A.h >> 1;
+    out.fill(0);
+    if (this.fixture) return;
+    const plain = !(card.spellAsDeploy && (card.spellProjectile !== null || card.areaEffect !== null));
+    const arr = this.zoneMap(team, card.canDeployOnEnemySide, card.canPlaceOnBuildings);
+    let d: UnitDef | null = card.spec.main ?? card.spec.second ?? card.spec.list[0] ?? null;
+    if (d === null && card.spellProjectile !== null) d = card.spellProjectile.spawnUnit;
+    if (d !== null && d.spawnPathfindMorph !== null) d = d.spawnPathfindMorph;
+    const building = d !== null && plain && d.kind === 'building';
+    const foot = building ? this.tileSize(d!) : 1;
+    for (let row = 0; row < H; row++) {
+      for (let col = 0; col < W; col++) {
+        const xi = col * 1000 + 500;
+        const yi = row * 1000 + 500;
+        const sx = d !== null && plain ? this.snapCoord(d, xi) : xi;
+        const sy = d !== null && plain ? this.snapCoord(d, yi) : yi;
+        out[row * W + col] = this.footOk(card, arr, foot, sx, sy) ? 1 : 0;
+      }
+    }
   }
 
   /** TileSize 0xde07ec [STAT]: TileSizeOverride, else (CollisionRadius + 499)/500 + 1 tiles. */

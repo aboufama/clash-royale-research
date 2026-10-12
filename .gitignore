@@ -46,3 +46,6 @@ sim/viewer/dist/
 
 # agent git worktrees (Claude Code isolation)
 .claude/worktrees/
+
+# RL runs (checkpoints, logs)
+train/runs/

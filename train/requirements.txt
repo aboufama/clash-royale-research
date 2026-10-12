@@ -1,0 +1,3 @@
+# Trainer dependencies (the RunPod image ships torch; locally: pip install -r train/requirements.txt)
+torch>=2.2
+numpy>=1.24

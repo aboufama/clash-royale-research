@@ -384,3 +384,40 @@ change it.
 - **Would change if:** player profiles (owned emotes, a chosen deck) come into the sandbox, the Play_emote
   event's volume / bus is decoded (tools/audio), or the client's scaling-grid render path is traced and
   differs.
+
+## 2026-10-12 — Self-play RL setup: entity transformer, PPO, fair actor with a privileged critic
+
+- **Decision:** the training stack in `sim/rl/` (environment) and `train/` (trainer, RunPod launcher):
+  - **Environment:** Node workers step N battles each over the unchanged engine and stream
+    fixed-layout float records over pipes.
+  - **Decisions:** at most every 5 ticks, and only while a card is playable.
+  - **Actions:** wait or hand slot, then one of the 576 tiles, masked to the tiles where the card
+    lands as aimed (`Battle.deployGrid`, the native deploy check's footprint test).
+  - **Observations:** each side sees its own end of the board.
+  - **Network:** an entity-transformer actor and a privileged critic.
+  - **Training:** PPO with per-tick discounting. Opponents are self-play, PFSP snapshots and 5 %
+    scripted bot (the yardstick). The reward is win/loss plus crown-tower damage shaping that
+    decays to 0.
+  - **Opponent information for the actor:** its elixir and the publicly known part of its cycle,
+    not its actual hand.
+- **Why:**
+  - **Bitter lesson.** A generic architecture over the raw game state with no hand features or
+    heuristics, and compute spent on self-play.
+  - **Exact masks.** They remove actions that only the engine's snap would correct, without
+    removing any reachable outcome.
+  - **Fair opponent information.** A player can compute both features exactly: elixir is debited
+    when the card appears (0xd77504), and played cards go to the back of the queue. Giving them
+    directly saves the network from learning bookkeeping, and the policy stays fair.
+  - **Privileged critic.** It reduces value noise without leaking hidden state into the policy
+    (AlphaStar's value baseline).
+  - **The engine itself.** It runs about 60k ticks/s per core, so no port or approximation is
+    needed; the policy trains on the same engine the browser runs.
+- **RunPod upload scope:** the owner offered RunPod compute for this. A pod receives
+  `sim/core/src`, `sim/rl` and `sim/data` (gameplay JSON decoded from the game files) plus `train/`,
+  over HTTPS, and nothing from `game-files/`, the art or the audio. Its control server requires a
+  random per-pod token. This is an owner-approved exception to the AGENTS.md "no third-party
+  upload" rule, limited to that bundle. The upload happens only when the owner supplies the API key.
+- **Would change if:** self-play cycles (add league exploiters), the owner wants the actor to see
+  the true opponent hand (one flag in `obs.ts`), or simulation stops being the bottleneck (a GPU
+  batch engine or a faster engine build).
+
