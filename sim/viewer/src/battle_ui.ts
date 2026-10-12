@@ -176,16 +176,14 @@ export class BattleUi {
     }
   }
 
-  /** Release of a valid play: keep its footprint until the commit (pending marker, A). */
+  /**
+   * Release of a valid play. The client draws nothing here: the footprint (spell_placement_NxN) is a
+   * child of the drag preview container (0x8e4eb4 adds it to +0x78 with playLabels("appear",
+   * "appear_end")) and goes away with the preview on release; the binary has no "release_end",
+   * "remove" or "remove_end" label strings, so those ranges of the clip are never played.
+   */
   markPending(team: number, card: string, x: number, y: number, tick: number): void {
-    const ui = this.ui;
-    if (!ui) return;
-    const exp = this.footprintExport(card);
-    if (!exp) return;
-    const clip = new ClipPlayer(ui.frameCount(exp), ui.fps(exp));
-    const l = ui.labels(exp);
-    clip.playRange(l.release ?? 0, l.release_end ?? clip.frames - 1, false);
-    this.pending.push({ card, team, x, y, clip, exp, removing: false, submitTick: tick });
+    void team; void card; void x; void y; void tick;
   }
 
   /** Footprint clip of a card (0x8e4eb4: TileSize of a building, capped at 4; 1x1 otherwise; none without ghosts). */
