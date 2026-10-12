@@ -37,9 +37,8 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/pip install -r tools/art/requirements.txt
-          # decoded audio stays off the public site until the owner approves it (AGENTS.md lists audio
-          # among the decoded assets never to publish); the viewer runs silently without it
-          .venv/bin/python tools/art/bake_web.py --no-audio
+          # the owner approved publishing the decoded audio on Pages with the art (2026-10-12, DECISIONS.md)
+          .venv/bin/python tools/art/bake_web.py
       - name: Build the viewer
         working-directory: sim
         run: |

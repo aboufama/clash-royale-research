@@ -321,10 +321,11 @@ change it.
   and 30sec_loop with 0xcbc880, which does not stop the previous music, and
   BattleMusic loops, so they layer until the end screen stops everything but the
   ambience (0xbe0100 → 0xcbc8d4). Kept literal and flagged for the owner.
-- **Publishing:** the Pages workflow bakes with `--no-audio` until the owner
-  approves putting decoded audio on the public site (AGENTS.md lists audio
-  among the decoded assets never to publish); local bakes include it, and the
-  viewer runs silently without it.
+- **Publishing:** the owner approved putting the decoded audio on the public
+  Pages site with the art (2026-10-12), an explicit exception to the AGENTS.md
+  rule for this demo; the Pages workflow bakes with audio. `--no-audio` stays
+  available for bakes that must not include it. The CI check on `game-files/`
+  in a public repository is unchanged.
 - **Would change if:** a bus / snapshot / sidechain in the banks turns out to
   duck BattleMusic, Safari support matters (it may not decode Ogg Vorbis: a
   bake-time re-encode to AAC would need a codec), or a later build changes the
