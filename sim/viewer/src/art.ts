@@ -52,9 +52,13 @@ interface ProjView {
 
 export function createArt(_manifest: unknown): ArtHooks {
   const thumbs = new Map<string, string>();
+  let artRef: BattleArt | null = null;
+  const pending = new Set<string>();
   return {
     async makeRenderer(canvas: HTMLCanvasElement, cam: Camera): Promise<WorldRenderer | null> {
       const art = await BattleArt.load('assets');
+      artRef = art;
+      await art.prewarm(pending);
       for (const [fam, url] of Object.entries(art.manifest.fonts ?? {})) {
         try {
           const ff = new FontFace(fam, `url(assets/${url})`);
@@ -70,14 +74,25 @@ export function createArt(_manifest: unknown): ArtHooks {
       await Promise.all(Object.keys(art.manifest.cards).map(async (card) => {
         try { thumbs.set(card, await art.cardThumbnail(card, 120)); } catch (err) { console.warn('card', card, err); }
       }));
-      const r = new ScRenderer(canvas);
+      // the visible canvas is redrawn every frame: no preserved drawing buffer (a full-screen copy per
+      // frame on mobile GPUs; nothing reads it back) and no MSAA (sprite edges come from texture alpha:
+      // renders with and without it match, minus a multisample resolve per frame)
+      const r = new ScRenderer(canvas, { preserveDrawingBuffer: false, antialias: false });
       r.clearTextCache();
+      // upload the loaded atlases up front, and each later library as it arrives: a card's first
+      // appearance would otherwise stall that frame on the upload
+      for (const lib of art.libs.loaded()) r.preload(lib);
+      art.onLibLoaded = (lib) => r.preload(lib);
       const world = new ArtWorld(art, r, cam, canvas);
       await world.ui.load();
       return world;
     },
     cardImage(card: string): string | null {
       return thumbs.get(card) ?? null;
+    },
+    prewarm(names: Iterable<string>): void {
+      if (artRef) void artRef.prewarm(names);
+      else for (const n of names) pending.add(n);
     },
   };
 }

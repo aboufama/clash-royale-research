@@ -473,7 +473,7 @@ class Emitter {
     if (this.parts.length >= this.count) return null;
     const e = this.e, rng = this.ctx.rng;
     const ref = e.particles[rng.int(e.particles.length)];
-    const lib = this.ctx.art.libs.get(ref.sc);
+    const lib = this.ctx.art.libs.get(ref.sc) ?? (this.ctx.art.lib(ref.sc), undefined); // requests a missing one
     const minA = e.ParticleMinAngle ?? 0, rangeA = (e.ParticleMaxAngle ?? 0) - minA;
     let angle: number;
     if (!e.ParticleRandomAngle) {
@@ -637,7 +637,7 @@ class Fx {
     const ctx = this.ctx;
     const compScale = (c.scale ?? 100) * 0.01;
     if (c.type === 'SWF') {
-      const lib = c.sc && c.export ? ctx.art.libs.get(c.sc) : undefined;
+      const lib = c.sc && c.export ? ctx.art.libs.get(c.sc) ?? (ctx.art.lib(c.sc), undefined) : undefined;
       if (!lib) return null;
       return new SwfComp(ctx, c, lib, compScale * this.scale);
     }

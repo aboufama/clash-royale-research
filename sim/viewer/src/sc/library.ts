@@ -219,6 +219,11 @@ export class ScLibrary {
   }
 }
 
+/** An empty library: drawing from it is a no-op (stands in while the real one loads). */
+export function emptyLibrary(name: string): ScLibrary {
+  return new ScLibrary({ v: 1, name, tex: [], shapes: {}, clips: {}, banks: [], exports: {} }, []);
+}
+
 /** Loads libraries on demand, de-duplicating concurrent requests. */
 export class ScLibraryCache {
   private readonly map = new Map<string, Promise<ScLibrary>>();
@@ -243,6 +248,11 @@ export class ScLibraryCache {
   /** Synchronous access once loaded (undefined while loading / unknown). */
   get(name: string): ScLibrary | undefined {
     return this.ready.get(name);
+  }
+
+  /** Every library loaded so far. */
+  loaded(): ScLibrary[] {
+    return [...this.ready.values()];
   }
 
   async loadAll(names: Iterable<string>): Promise<void> {

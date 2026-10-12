@@ -3,7 +3,7 @@
 // battle_ui.ts / hud.ts): drag a card from the hand, or tap a card and then the arena. The
 // simulator's own controls (pause/step/speed/restart, sandbox palette, the red player's hand for
 // local two-player testing) are shown unless the URL has `?clean`.
-import { Battle, type CardDef, type GameData, supportedCards } from '../../core/src/index.ts';
+import { Battle, type CardDef, type GameData, type ProjectileDef, supportedCards, type UnitDef } from '../../core/src/index.ts';
 import gameDataJson from '../../data/gamedata.json';
 import type { BattleUi, PreviewInput } from './battle_ui.ts';
 import { Camera } from './camera.ts';
@@ -24,6 +24,32 @@ const DEFAULT_DECKS: [string[], string[]] = [FOCUS_DECKS[0].slice(), FOCUS_DECKS
 export interface ArtHooks {
   makeRenderer(canvas: HTMLCanvasElement, cam: Camera): Promise<WorldRenderer | null>;
   cardImage(card: string): string | null;
+  /** start loading the art of these characters / projectiles / spells / area effects */
+  prewarm(names: Iterable<string>): void;
+}
+
+/** Names of everything a card can put on the field (summons and what they spawn or shoot). */
+function cardArtNames(card: CardDef): string[] {
+  const out = new Set<string>([card.name]);
+  const proj = (p: ProjectileDef | null, d = 0): void => {
+    if (!p || d > 4 || out.has(p.name)) return;
+    out.add(p.name);
+    unit(p.spawnUnit, d + 1);
+    proj(p.spawnProjectile, d + 1);
+  };
+  const unit = (u: UnitDef | null | undefined, d = 0): void => {
+    if (!u || d > 4 || out.has(u.name)) return;
+    out.add(u.name);
+    proj(u.projectile, d + 1);
+    unit(u.deathSpawn?.unit, d + 1);
+    unit(u.spawn?.unit, d + 1);
+    if (u.deathAreaEffect) out.add(u.deathAreaEffect.name);
+  };
+  for (const s of card.summon) unit(s.unit);
+  proj(card.spellProjectile);
+  proj(card.firstProjectile);
+  if (card.areaEffect) out.add(card.areaEffect.name);
+  return [...out];
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -61,6 +87,7 @@ class App {
   overlay: Overlay;
   paused = false;
   speed = 1;
+  private statusAt = 0;
   acc = 0;
   last = 0;
   seed = 1;
@@ -88,6 +115,8 @@ class App {
   async init(): Promise<void> {
     document.body.classList.toggle('dev', DEV);
     this.art = await loadArt();
+    // the decks' unit art loads with the core libraries; any other card's on first use
+    if (this.art) this.prewarmDecks();
     const glCanvas = $<HTMLCanvasElement>('gl');
     let world: WorldRenderer | null = null;
     if (this.art) {
@@ -109,6 +138,11 @@ class App {
     addEventListener('resize', () => this.resize());
     this.resize();
     requestAnimationFrame((t) => this.loop(t));
+  }
+
+  private prewarmDecks(): void {
+    const defs = new Battle(data, { seed: 1, decks: this.decks }).defs;
+    this.art?.prewarm(this.decks.flat().flatMap((n) => cardArtNames(defs.card(n, 11))));
   }
 
   newBattle(): void {
@@ -355,20 +389,30 @@ class App {
     }
     if (this.nextEl) this.setCard(this.nextEl, p.deck[p.queue[0]]);
     const avail = Math.max(0, p.elixir - p.pending);
-    if (this.elixirFill) this.elixirFill.style.width = `${(avail / 100000) * 100}%`;
-    if (this.elixirNum) this.elixirNum.textContent = String(Math.floor(avail / 10000));
+    // DOM writes only on change (and the status text a few times a second): each write restyles and
+    // repaints the panel
+    const fillW = `${(avail / 100000) * 100}%`;
+    if (this.elixirFill && this.elixirFill.style.width !== fillW) this.elixirFill.style.width = fillW;
+    const num = String(Math.floor(avail / 10000));
+    if (this.elixirNum && this.elixirNum.textContent !== num) this.elixirNum.textContent = num;
+    const now = performance.now();
+    if (now - this.statusAt < 250) return;
+    this.statusAt = now;
     const avg = this.tickTimes.reduce((a, x) => a + x, 0) / Math.max(1, this.tickTimes.length);
-    $('status').textContent =
+    const st = $('status');
+    const text =
       `tick ${b.tick}  (${(b.tick / 20).toFixed(1)} s)\n` +
       `actors ${b.units.length}, projectiles ${b.projectiles.length}\n` +
       `engine ${avg.toFixed(3)} ms/tick\n` +
       (b.result ? `result: ${b.result.winner === -1 ? 'draw' : b.result.winner === 0 ? 'blue' : 'red'} (${b.result.reason})` : '');
+    if (st.textContent !== text) st.textContent = text;
   }
 
   private startDomDrag(ev: PointerEvent, team: number, slot: number, paletteCard: string | null): void {
     ev.preventDefault();
     const p = this.battle.players[team];
     const card = paletteCard ?? p.deck[p.hand[slot]].name;
+    this.art?.prewarm(cardArtNames(this.battle.defs.card(card, 11)));
     const ghost = document.createElement('div');
     ghost.className = 'card dragghost';
     const img = this.art?.cardImage(card);

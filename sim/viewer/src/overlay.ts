@@ -25,14 +25,18 @@ export class Overlay {
   }
 
   draw(f: Frame): void {
+    // With the original art everything the battle shows (HUD, deploy preview, timers, health bars)
+    // is drawn by the art renderer with the game's own exports: the overlay canvas is hidden, not
+    // cleared every frame (a cleared 2D canvas is re-composited at full resolution each frame).
+    if (this.artMode) {
+      if (this.canvas.style.display !== 'none') this.canvas.style.display = 'none';
+      return;
+    }
     const c = this.ctx;
     const cam = f.cam;
     const b = f.battle;
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     c.clearRect(0, 0, cam.width, cam.height);
-    // With the original art everything the battle shows (HUD, deploy preview, timers, health bars)
-    // is drawn by the art renderer with the game's own exports: no custom overlay.
-    if (this.artMode) return;
     if (f.drag) this.drawDeployZone(f, b);
 
     // pending plays: the game shows a placement marker until the card lands

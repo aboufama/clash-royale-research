@@ -361,7 +361,7 @@ export class BattleUi {
     }
     const ind = this.art.manifest.cards[pv.card]?.indicator as { sc: string; export: string } | undefined;
     if (ind && this.indicatorClip) {
-      const lib = this.art.libs.get(ind.sc);
+      const lib = this.art.lib(ind.sc);
       if (lib) r.draw(lib, ind.export, this.indicatorClip.frame, [1, 0, 0, 1, px, py], col);
     }
     if (this.footprint) {

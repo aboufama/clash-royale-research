@@ -65,6 +65,8 @@ export interface RenderStats {
   triangles: number;
 }
 
+/** string atlas size (px) */
+const TEXT_ATLAS = 2048;
 const MAX_SLOTS = 8;
 const FLOATS = 12; // x y u v mulR mulG mulB mulA addR addG addB slot
 const MAX_VERTS = 65536;
@@ -186,7 +188,11 @@ export class ScRenderer {
   private readonly colStack: Col[] = [];
   private maskDepth = 0;
   private inMaskWrite = false;
-  private textCache = new Map<string, { tex: WebGLTexture; w: number; h: number; used: number }>();
+  /** rasterised strings, packed into one atlas texture (shelf packer; reset when full) */
+  private textCache = new Map<string, { x: number; y: number; w: number; h: number }>();
+  private textAtlas: WebGLTexture | null = null;
+  private textShelves: { y: number; h: number; x: number }[] = [];
+  private textScratch: HTMLCanvasElement | OffscreenCanvas | null = null;
   private frameNo = 0;
   // shadow pass
   private readonly blurProg: WebGLProgram;
@@ -266,7 +272,6 @@ export class ScRenderer {
     this.maskDepth = 0;
     this.inMaskWrite = false;
     this.setView(1, 0, 0, 1, 0, 0);
-    if (this.frameNo % 120 === 0) this.gcText();
   }
 
   end(): void {
@@ -388,7 +393,7 @@ export class ScRenderer {
     gl.blendEquation(gl.FUNC_ADD);
     gl.useProgram(this.blurProg);
     gl.bindVertexArray(this.quadVao);
-    gl.uniform1i(gl.getUniformLocation(this.blurProg, 'uSrc'), 0);
+    gl.uniform1i(this.blurLoc('uSrc'), 0);
     gl.activeTexture(gl.TEXTURE0);
     const [w, h] = this.fboSize;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -396,8 +401,8 @@ export class ScRenderer {
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
     gl.bindTexture(gl.TEXTURE_2D, this.fbos[0].tex);
-    gl.uniform2f(gl.getUniformLocation(this.blurProg, 'uOff'), off[0] / w, off[1] / h);
-    gl.uniform4f(gl.getUniformLocation(this.blurProg, 'uC'), c[0], c[1], c[2], c[3]);
+    gl.uniform2f(this.blurLoc('uOff'), off[0] / w, off[1] / h);
+    gl.uniform4f(this.blurLoc('uC'), c[0], c[1], c[2], c[3]);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     this.stats.drawCalls += 1;
     gl.bindVertexArray(null);
@@ -616,6 +621,11 @@ export class ScRenderer {
     this.nslots = 0;
   }
 
+  /** Upload a library's atlases now (mip-mapped), so the first frame that draws them does not stall. */
+  preload(lib: ScLibrary): void {
+    for (const t of lib.textures) this.glTexture(t);
+  }
+
   private glTexture(src: TextureSource): GlTex {
     let t = this.texCache.get(src);
     if (t) return t;
@@ -680,8 +690,12 @@ export class ScRenderer {
     const key = `${tf.font}|${tf.bytes.join(',')}|${tf.color}|${tf.outline}|${w}x${h}|${q}|${text}`;
     let e = this.textCache.get(key);
     if (!e) {
-      const pw = Math.ceil(w * q) + 8, ph = Math.ceil(h * q) + 8;
-      const cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(pw, ph) : Object.assign(document.createElement('canvas'), { width: pw, height: ph });
+      const pw = Math.min(TEXT_ATLAS, Math.ceil(w * q) + 8), ph = Math.min(TEXT_ATLAS, Math.ceil(h * q) + 8);
+      if (!this.textScratch) {
+        this.textScratch = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(pw, ph) : Object.assign(document.createElement('canvas'), { width: pw, height: ph });
+      }
+      const cv = this.textScratch;
+      cv.width = pw; cv.height = ph; // also clears it
       const g = cv.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
       const size = (tf.bytes[2] || 16) * q;
       const align = tf.bytes[1] & 3;
@@ -704,26 +718,22 @@ export class ScRenderer {
       }
       g.fillStyle = argb(tf.color | 0xff000000);
       g.fillText(text, x, y);
+      const [ax, ay] = this.textAlloc(pw, ph);
       const gl = this.gl;
-      const tex = gl.createTexture()!;
-      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.bindTexture(gl.TEXTURE_2D, this.textAtlas);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv as TexImageSource);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, ax, ay, gl.RGBA, gl.UNSIGNED_BYTE, cv as TexImageSource);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      e = { tex, w: pw, h: ph, used: this.frameNo };
+      e = { x: ax, y: ay, w: pw, h: ph };
       this.textCache.set(key, e);
     }
-    e.used = this.frameNo;
     this.setBlend(blend);
     if (this.nv + 4 > MAX_VERTS || this.ni + 6 > MAX_INDICES) this.flush();
-    const slot = this.slotFor(e.tex);
+    const slot = this.slotFor(this.textAtlas!);
     const x0 = l - 4 / q, y0 = t - 4 / q, x1 = x0 + e.w / q, y1 = y0 + e.h / q;
+    const u0 = e.x / TEXT_ATLAS, v0 = e.y / TEXT_ATLAS, u1 = (e.x + e.w) / TEXT_ATLAS, v1 = (e.y + e.h) / TEXT_ATLAS;
     const base = this.nv;
-    const corners: [number, number, number, number][] = [[x0, y0, 0, 0], [x1, y0, 1, 0], [x0, y1, 0, 1], [x1, y1, 1, 1]];
+    const corners: [number, number, number, number][] = [[x0, y0, u0, v0], [x1, y0, u1, v0], [x0, y1, u0, v1], [x1, y1, u1, v1]];
     for (const [px, py, u, v] of corners) {
       this.pushVert(m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5], u, v,
         c[0], c[1], c[2], c[3], c[4] / 255, c[5] / 255, c[6] / 255, slot);
@@ -734,17 +744,52 @@ export class ScRenderer {
 
   /** Drop cached text rasters (call after web fonts finish loading). */
   clearTextCache(): void {
-    for (const e of this.textCache.values()) this.gl.deleteTexture(e.tex);
     this.textCache.clear();
+    this.textShelves = [];
   }
 
-  private gcText(): void {
-    for (const [k, e] of this.textCache) {
-      if (this.frameNo - e.used > 600) {
-        this.gl.deleteTexture(e.tex);
-        this.textCache.delete(k);
-      }
+  /**
+   * A w × h region of the string atlas (shelves of similar heights, 2 px gaps). When it is full, pending
+   * vertices are flushed and every string is rasterised again on demand.
+   */
+  private textAlloc(w: number, h: number): [number, number] {
+    const gl = this.gl;
+    if (!this.textAtlas) {
+      this.textAtlas = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.textAtlas);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, TEXT_ATLAS, TEXT_ATLAS, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     }
+    const W = w + 2, H = h + 2;
+    for (let pass = 0; pass < 2; pass++) {
+      for (const sh of this.textShelves) {
+        if (H <= sh.h && sh.h <= H * 1.3 + 4 && sh.x + W <= TEXT_ATLAS) {
+          const x = sh.x;
+          sh.x += W;
+          return [x, sh.y];
+        }
+      }
+      const last = this.textShelves[this.textShelves.length - 1];
+      const y = last ? last.y + last.h : 0;
+      if (y + H <= TEXT_ATLAS) {
+        this.textShelves.push({ y, h: H, x: W });
+        return [0, y];
+      }
+      // full: draw what refers to the old contents, then start over
+      this.flush();
+      this.clearTextCache();
+    }
+    return [0, 0];
+  }
+
+  private readonly blurLocs = new Map<string, WebGLUniformLocation | null>();
+  private blurLoc(name: string): WebGLUniformLocation | null {
+    let l = this.blurLocs.get(name);
+    if (l === undefined) { l = this.gl.getUniformLocation(this.blurProg, name); this.blurLocs.set(name, l); }
+    return l;
   }
 
   private ensureFbos(): void {

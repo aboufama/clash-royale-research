@@ -8,7 +8,7 @@
 
 import type { Col, Mat } from './math.ts';
 import { matMul, WHITE } from './math.ts';
-import { ScLibraryCache } from './library.ts';
+import { emptyLibrary, ScLibraryCache } from './library.ts';
 import type { ScLibrary, ShapeCmd } from './library.ts';
 import type { BuildingClip, CharacterArt, Manifest } from './manifest.ts';
 import { loadManifest } from './manifest.ts';
@@ -67,18 +67,79 @@ export class BattleArt {
     this.baseUrl = baseUrl;
   }
 
-  /** Load manifest.json and every library it lists (or only `only`). */
+  /**
+   * Load manifest.json and the libraries a battle always needs (or only `only`): everything but the
+   * character / building libraries, plus the towers' and the arena's. Unit libraries are loaded by
+   * prewarm() or on first use (decoded, all of them take ~840 MB of RGBA).
+   */
   static async load(baseUrl = 'assets', only?: Iterable<string>): Promise<BattleArt> {
     const m = await loadManifest(baseUrl);
     const libs = new ScLibraryCache(baseUrl);
-    await libs.loadAll(only ?? Object.keys(m.libs));
+    await libs.loadAll(only ?? BattleArt.coreLibs(m));
     return new BattleArt(m, libs, baseUrl);
   }
 
+  static coreLibs(m: Manifest): string[] {
+    const out = new Set(Object.keys(m.libs).filter((k) => !k.startsWith('chr_') && !k.startsWith('building_')));
+    const walk = (o: unknown): void => {
+      if (Array.isArray(o)) { for (const x of o) walk(x); return; }
+      if (!o || typeof o !== 'object') return;
+      for (const [k, v] of Object.entries(o)) {
+        if (k === 'sc' && typeof v === 'string' && m.libs[v]) out.add(v);
+        else walk(v);
+      }
+    };
+    walk(m.towers);
+    walk(m.arena);
+    return [...out];
+  }
+
+  /** Called with each library that finishes loading after startup (the renderer uploads its atlases). */
+  onLibLoaded: ((lib: ScLibrary) => void) | null = null;
+  private readonly empty = new Map<string, ScLibrary>();
+
+  private readonly requested = new Set<string>();
+  private request(name: string): Promise<void> {
+    if (!this.manifest.libs[name] || this.libs.get(name)) return Promise.resolve();
+    const first = !this.requested.has(name);
+    this.requested.add(name);
+    return this.libs.load(name).then((lib) => { if (first) this.onLibLoaded?.(lib); }, (err) => console.warn('library', name, err));
+  }
+
+  /** A library, or an empty stand-in while it loads in the background (drawing nothing for a moment). */
   lib(name: string): ScLibrary {
     const l = this.libs.get(name);
-    if (!l) throw new Error(`library ${name} not loaded`);
-    return l;
+    if (l) return l;
+    this.request(name);
+    let e = this.empty.get(name);
+    if (!e) { e = emptyLibrary(name); this.empty.set(name, e); }
+    return e;
+  }
+
+  /** Load the libraries of these characters / projectiles / spells / area effects (resolves when loaded). */
+  prewarm(names: Iterable<string>): Promise<void> {
+    const m = this.manifest as unknown as Record<string, Record<string, { sc?: string } | undefined> | undefined>;
+    const libs = new Set<string>();
+    const seen = new Set<unknown>();
+    // an entry's own library and those of every effect / emitter it names (hit, death, trail effects)
+    const walk = (o: unknown, depth: number): void => {
+      if (depth > 6 || o === null || seen.has(o)) return;
+      if (typeof o === 'string') {
+        const fx = this.manifest.effects[o] ?? this.manifest.emitters[o];
+        if (fx) walk(fx, depth + 1);
+        return;
+      }
+      if (typeof o !== 'object') return;
+      seen.add(o);
+      for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+        if (k === 'sc' && typeof v === 'string') libs.add(v);
+        else walk(v, depth + 1);
+      }
+    };
+    for (const n of names) {
+      for (const table of ['characters', 'projectiles', 'spells', 'areaEffects']) walk(m[table]?.[n], 0);
+    }
+    return Promise.all([...libs].map((l) => this.request(l))).then(() => undefined);
   }
 
   // -- coordinates -----------------------------------------------------------------------------
