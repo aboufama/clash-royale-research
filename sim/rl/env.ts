@@ -55,17 +55,20 @@ export class Acc {
   reset(): void { this.term = 0; this.shape = 0; this.ticks = 0; this.disc = 1; }
 }
 
-/** xorshift32 for episode sampling (env-local, so a worker's episodes are reproducible). */
+/**
+ * mulberry32 for episode sampling (env-local, so a worker's episodes are reproducible). Not xorshift32:
+ * its consecutive outputs are correlated when one is small, which skewed the bot's side (draw after a
+ * small `r < botProb`) about 2:1.
+ */
 export class XRng {
   s: number;
-  constructor(s: number) { this.s = s === 0 ? 0x9e3779b9 : s; }
+  constructor(s: number) { this.s = s >>> 0; }
   next(): number {
-    let x = this.s;
-    x ^= x << 13; x >>>= 0;
-    x ^= x >>> 17;
-    x ^= x << 5; x >>>= 0;
-    this.s = x;
-    return x / 4294967296;
+    this.s = (this.s + 0x6d2b79f5) >>> 0;
+    let t = this.s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
   int(n: number): number { return Math.floor(this.next() * n); }
 }
