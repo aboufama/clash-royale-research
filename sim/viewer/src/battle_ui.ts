@@ -15,6 +15,7 @@ import type { ScLibrary } from './sc/library.ts';
 import type { ScRenderer } from './sc/renderer.ts';
 import { ClipPlayer } from './sc/anim.ts';
 import { Announcements } from './sc/announce.ts';
+import { Floaters, floaterParts, measureFieldText, NOT_ENOUGH_MANA_COLOR, NotEnoughManaGate } from './sc/floater.ts';
 import {
   type AreaActor, CLIENT_GLOBALS, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
   indicatorRadius, PENDING_GHOST_S, ringBand, ringStrip, type UiSpell,
@@ -103,6 +104,9 @@ export class BattleUi {
   private views: [PreviewView | null, PreviewView | null] = [null, null];
   /** released plays' leftovers, oldest first (battle screen +0x2c0) */
   private pending: PendingGhost[] = [];
+  /** the popup manager's floater texts and the not-enough-mana failure count (sc/floater.ts) */
+  private floaters: Floaters | null = null;
+  private manaGate = new NotEnoughManaGate();
 
   constructor(art: BattleArt) {
     this.art = art;
@@ -136,6 +140,8 @@ export class BattleUi {
     this.preview = null;
     this.held = null;
     this.views = [null, null];
+    this.floaters = null;
+    this.manaGate = new NotEnoughManaGate();
     this.areaAlpha = 0;
     this.grid.blocked.fill(0);
     this.grid.timer.fill(0);
@@ -321,6 +327,25 @@ export class BattleUi {
     else this.held = null;
   }
 
+  /**
+   * The play check rejected an own play at logic (x, y) for elixir (0xd77504 -> battle screen vt+0x278
+   * 0xbe7184): the failure count gates TID_NOT_ENOUGH_MANA in floater_text at the projected point
+   * (0x8583bc, whole stage px) in colour 0xffff3366 (0x88cb54). The listener's sound is not played.
+   */
+  notEnoughElixir(x: number, y: number): void {
+    const ui = this.ui;
+    const text = this.art.manifest.hud.texts?.TID_NOT_ENOUGH_MANA;
+    if (!ui || !this.manaGate.fail() || !text) return;
+    if (!this.floaters) {
+      const parts = floaterParts(ui);
+      if (!parts) return;
+      this.floaters = new Floaters(parts);
+    }
+    const [sx, sy] = this.toStage(...this.art.gameToPx(x, y));
+    this.floaters.show(0, [Math.trunc(sx), Math.trunc(sy)], text, NOT_ENOUGH_MANA_COLOR,
+      measureFieldText(this.floaters.parts.text, text), this.layout.stageW);
+  }
+
   /** The card held by the pointer was released before it was affordable: its preview goes on waiting. */
   holdPreview(): void {
     this.held = this.preview;
@@ -447,6 +472,8 @@ export class BattleUi {
     this.updateViews(dt, b);
     this.hud.update(dt, b, simDt);
     this.announcer()?.update(dt, b, team);
+    // popup manager floaters (0x88bce4 -> 0x88c7fc), UI time
+    this.floaters?.update(dt);
     // released plays' leftovers (battle screen update 0xbe1d3c, last to first): 0x8dd4cc deletes one
     // removed on an earlier frame, else adds the frame dt and removes it at 3 s; a spawn-pathfind
     // summon's goes when its character stops tunnelling (0xbe5b0c). Simulation time, like the cast.
@@ -646,16 +673,19 @@ export class BattleUi {
     // 0x8e4994 adds each new one at index 0 of the UI layer, so newer ones lie under older ones: the
     // previews first, then the leftovers from newest to oldest; a leftover's text and mana child are
     // frozen as they were at the release (nothing updates object +0x58 any more)
-    if (!ui.has('spell_placement_text')) return;
-    for (const which of [0, 1] as const) {
-      const pv = which === 0 ? this.preview : this.held;
-      const view = this.views[which];
-      if (pv && view && pv.alpha > 0.01) this.drawName(r, ui, pv.x, pv.y, this.nameText(pv, view));
+    if (ui.has('spell_placement_text')) {
+      for (const which of [0, 1] as const) {
+        const pv = which === 0 ? this.preview : this.held;
+        const view = this.views[which];
+        if (pv && view && pv.alpha > 0.01) this.drawName(r, ui, pv.x, pv.y, this.nameText(pv, view));
+      }
+      for (let i = this.pending.length - 1; i >= 0; i--) {
+        const g = this.pending[i];
+        if (!g.removed) this.drawName(r, ui, g.px, g.py, g.name);
+      }
     }
-    for (let i = this.pending.length - 1; i >= 0; i--) {
-      const g = this.pending[i];
-      if (!g.removed) this.drawName(r, ui, g.px, g.py, g.name);
-    }
+    // floaters: the popup manager sits in the game layer +0x170, above the HUD's layers (sc/floater.ts)
+    this.floaters?.draw(r, ui);
   }
 
   private drawName(r: ScRenderer, ui: ScLibrary, x: number, y: number, nm: PendingGhost['name']): void {

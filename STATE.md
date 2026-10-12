@@ -150,14 +150,19 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the "Not enough Elixir!" floater of a failed play (0xd77504
-   → listener vt+0x278 0xbe7184 → 0x88cb54: needs `floater_text` and
-   `TID_NOT_ENOUGH_MANA` baked), the own back-row line of 0xbe1500 / 0x8e1fb8
+5. **HUD left:** the play check's other reactions in 0xd77504 (its spell path's
+   TID_INVALID_SPELL_POSITION via battle screen vt+0x230, the vt+0x280 listener
+   of its 0x16 return; not traced) and sounds (none are played), the own
+   back-row line of 0xbe1500 / 0x8e1fb8
    (logic Globals +0x1c8 rows, not written by the Globals loaders), the Log
    leftover's end event (battle screen vt+0xd8 0xbe4340 by projectile id,
    reached from view method 0x84fdcc). Training bridge (M3) and
    the fidelity pass (M5); see [GOAL.md](GOAL.md). Done 2026-10-12: the
-   full-elixir hand wiggle (0x8dc37c → 0x907654 / 0x9077f0 / 0x907ab0), the
+   "Not enough Elixir!" floater of a play rejected for elixir (0xd77504 →
+   0xbe7184, gate SHOW_NOT_ENOUGH_MANA_AFTER_FAILURES; popup manager floaters
+   0x88cb54 / 0x88ce50 / 0x88cc2c / 0x88c7fc, `sc/floater.ts`; decompiles in
+   `work/native/decomp_floater/`), the full-elixir hand wiggle (0x8dc37c →
+   0x907654 / 0x9077f0 / 0x907ab0), the
    unaffordable-drop wait (MAX_SPELL_PENDING_TIME: 0x8e2c04 / 0x8e2d50 /
    0x8e1408 +0x324) and the released play's leftover preview (ghosts, ring,
    name; 0xbe1aa8 → 0x8dd100, dropped by the cast 0xbe5b4c), decompiles in

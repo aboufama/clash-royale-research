@@ -404,9 +404,20 @@ class App {
   private playCard(team: number, slot: number, x: number, y: number): { x: number; y: number } | null {
     const b = this.battle;
     const err = b.play(team, slot, x, y);
-    if (err) { console.info('play rejected:', err); return null; }
-    const cmd = b.commands[b.commands.length - 1];
     const ui = this.ui;
+    if (err) {
+      // an own play the client's check rejects for elixir shows "Not enough Elixir!" (0xd77504 -> 0xbe7184);
+      // the submit 0xbe1634 sends only plays its deploy check accepts, with the snapped position
+      if (err === 'elixir' && ui && team === ui.hud.team) {
+        const p = b.players[team];
+        const card = p.deck[p.hand[slot]];
+        const at = card ? b.deployPlace(team, card, x, y) : null;
+        if (at) ui.notEnoughElixir(at.x, at.y);
+      }
+      console.info('play rejected:', err);
+      return null;
+    }
+    const cmd = b.commands[b.commands.length - 1];
     // the placed card hides in its slot until the slot changes (0xbe1634 -> 0x8d5438 -> 0x8e2868)
     if (ui && team === ui.hud.team) ui.hud.played(slot);
     const pos = cmd ? b.deployPlace(team, cmd.card, x, y) ?? { x, y } : { x, y };

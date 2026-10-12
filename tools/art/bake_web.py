@@ -147,11 +147,13 @@ HUD_EXPORTS = (
     # drag preview (0x8e3fd4 class): footprint tiles, card name text; emote button panel; hand panel
     "spell_placement_1x1", "spell_placement_2x2", "spell_placement_3x3", "spell_placement_4x4",
     "spell_placement_text", "HUD_taunt", "panel_ingame_blue",
+    # popup manager floater text (0x88cb54: "Not enough Elixir!" of a play rejected for elixir, 0xbe7184)
+    "floater_text",
 )
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
              "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
-             "TID_MATCH_OVER", "TID_TIME_M_S", "TID_YOU", "TID_ENEMY")
+             "TID_MATCH_OVER", "TID_TIME_M_S", "TID_YOU", "TID_ENEMY", "TID_NOT_ENOUGH_MANA")
 
 
 def r2(v: float) -> float | int:
