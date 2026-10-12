@@ -19,14 +19,15 @@ import {
   animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, ClipPlayer, EffectPlayer,
   type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer, viewAngle,
 } from './sc/index.ts';
-import { ghostSprite, turretPose } from './sc/anim.ts';
+import { ghostSprite, turretPose, vecSetLength } from './sc/anim.ts';
 import { ClipInstances, McNode } from './sc/movieclip.ts';
 import type { UnitDrawOptions } from './sc/battle_art.ts';
 import type { ScLibrary } from './sc/library.ts';
 import type { CharacterArt } from './sc/manifest.ts';
 import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
-import { condMask, deployElapsed, healthBarState, newBarChoose, newBarFrame, newBarView, SUMMON_WAIT_ALPHA,
-  summonViewDelay } from './sc/unit_view.ts';
+import { condMask, dashPull, deployElapsed, healthBarState, joltStep, jumpMoveSpeed, newBarChoose, newBarFrame, newBarView,
+  SUMMON_WAIT_ALPHA, summonViewDelay } from './sc/unit_view.ts';
+import type { Jolt } from './sc/unit_view.ts';
 import type { BarPartRef, HealthBarFlags, NewBarView } from './sc/unit_view.ts';
 import { BattleUi } from './battle_ui.ts';
 import { Clouds } from './sc/clouds.ts';
@@ -224,6 +225,32 @@ export class ArtWorld implements WorldRenderer {
   private byId = new Map<number, Unit>();
   /** Projectiles by id as of the last onEvents (a projectile spawn's own one left the world this step). */
   private projById = new Map<number, Projectile>();
+  /**
+   * AttackDashTime lunge per view (0x845ce8, view vt+0x40): the point +0xa30 / +0xa34 (= +0xa38 / +0xa3c)
+   * the view is pulled toward, the timer +0xa48 (ms, counted down by the frame dt in 0x839b08) and
+   * AttackDashTime.
+   */
+  private dashes = new Map<number, { x: number; y: number; t: number; d: number }>();
+  /**
+   * The view's shake / recoil (0x839b08 from vt+0xf0 0x83e488 and vt+0xf8 0x83e4d8): timers +0x9f0 (shake,
+   * 0.1 s) and +0x9f4 (recoil, 0.25 s), the vector +0x9f8 / +0x9fc, and this frame's offset (battle px).
+   */
+  private jolts = new Map<number, Jolt>();
+  /** C rand() stand-in for the AttackShakeTime jitter (xorshift; the client's libc sequence is not reproducible) */
+  private randState = 0x2545f491;
+  private readonly rand = (): number => {
+    let x = this.randState;
+    x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
+    this.randState = x;
+    return x >>> 1;
+  };
+  /** the battle's raw data rows by unit name (view-only character columns the engine does not keep) */
+  private rawRows = new Map<string, { vhs: [number, number, number] | null; shake: number; dash: number }>();
+  /** MovieClip instances of the arena clip and of each location object (0x856088; nested clips' playheads) */
+  private arenaInst: McNode | null = null;
+  private decoInsts: (McNode | null)[] = [];
+  private arenaFor: unknown = null;
+  private lastArenaSim = -1;
   /** location cloud shadows (battle layer 11), built for each battle */
   private clouds: Clouds | null = null;
   private cloudsFor: unknown = null;
@@ -246,7 +273,7 @@ export class ArtWorld implements WorldRenderer {
       fx: this.fx, manifest: art.manifest, flip: art.flip, lib: (n) => art.lib(n),
       spritePos: (u) => {
         const fr = this.frame;
-        return fr && fr.battle.units.includes(u) && u.state !== ST_DEAD ? [fr.ux(u), fr.uy(u), fr.uz(u)] : null;
+        return fr && fr.battle.units.includes(u) && u.state !== ST_DEAD ? [this.viewX(u, fr), this.viewY(u, fr), fr.uz(u)] : null;
       },
       sprite: (u) => this.sprites.get(u.id),
       isWater: (x, y) => this.frame?.battle.arena.isWaterAt(x, y) ?? false,
@@ -306,12 +333,25 @@ export class ArtWorld implements WorldRenderer {
       } else if (e.type === 'wobble') {
         // the victim view's vt+0xe8 (0x83e3d8): the damage filter facing this call's vector; the last call wins
         this.hitVec.set(e.id, [e.vx ?? 0, e.vy ?? 0]);
+      } else if (e.type === 'dash') {
+        this.dashStart(b, e.id, e.x, e.y, e.vx ?? 0, e.vy ?? 0, e.r ?? 0);
+      } else if (e.type === 'shake') {
+        this.jolt(this.byId.get(e.id), e.vx ?? 0, e.vy ?? 0, false);
       }
       if (e.type === 'hit' || e.type === 'shoot') {
-        // AttackComp_execute 0xfc619c: TargetedHitEffect (view vt+0x90) and a melee splash's DamageEffect
-        // at its centre (sc/char_effects.ts); the victims' effects come with the 'damage' events
-        this.charFx.onAttack(e.tick, this.byId.get(e.id), e.src !== undefined ? this.byId.get(e.src) : undefined,
-          e.type === 'hit', e.fx === 1, e.x, e.y);
+        // AttackComp_execute 0xfc619c: TargetedHitEffect (view vt+0x90, pivot index = execute's slot: −1 for a
+        // single target, 0, 1, ... for a MultipleTargets attack's target and extra targets, in that order:
+        // 0xfc7e20 → 0xfc8ef4) and a melee splash's DamageEffect at its centre (sc/char_effects.ts); the
+        // victims' effects come with the 'damage' events
+        const a = this.byId.get(e.id);
+        let slot = -1;
+        if (a && a.def.multipleTargets >= 2) {
+          const k = `${e.tick}:${e.id}`;
+          slot = this.slotTick.key === k ? ++this.slotTick.n : 0;
+          this.slotTick = { key: k, n: slot };
+        }
+        this.charFx.onAttack(e.tick, a, e.src !== undefined ? this.byId.get(e.src) : undefined,
+          e.type === 'hit', e.fx === 1, e.x, e.y, slot, e.cancelled === true);
       } else if (e.type === 'damage') {
         this.charFx.onDamage(e.tick, this.byId.get(e.id), e.fx ?? 0, e.name, e.src !== undefined ? this.byId.get(e.src) : undefined);
       } else if (e.type === 'shieldLost') {
@@ -418,6 +458,88 @@ export class ArtWorld implements WorldRenderer {
   }
 
   private stateFor: unknown = null;
+  /** the attacker and tick of the last 'hit' / 'shoot' event and its slot (MultipleTargets slots) */
+  private slotTick = { key: '', n: -1 };
+
+  /**
+   * View vt+0x40 0x845ce8 (AttackComp_update 0xfc7e20, engine event 'dash'): the lunge point = the target's
+   * position + (attacker − target) set to the target's collision radius (Vec_setLength 0x1294d74, target
+   * vt+0xa0), i.e. the point of its circle facing the attacker; the timer +0xa48 = 2 · AttackDashTime.
+   */
+  private dashStart(b: Battle, id: number, tx: number, ty: number, vx: number, vy: number, r: number): void {
+    const u = this.byId.get(id);
+    const d = u ? this.rawRow(b, u.def.name).dash : 0;
+    if (!u || d <= 0) return;
+    const [sx, sy] = vecSetLength(vx, vy, r);
+    this.dashes.set(id, { x: tx + sx, y: ty + sy, t: 2 * d, d });
+  }
+
+  /**
+   * View vt+0xf0 0x83e488 (shake: ShakesTargets, 0xf90640) / vt+0xf8 0x83e4d8 (recoil): not for buildings;
+   * stores the vector (+0x9f8 / +0x9fc) and starts the 0.1 s (+0x9f0) or 0.25 s (+0x9f4) timer.
+   */
+  private jolt(u: Unit | undefined, vx: number, vy: number, recoil: boolean): void {
+    if (!u || u.isBuilding || u.tower !== TOWER_NONE) return;
+    let j = this.jolts.get(u.id);
+    if (!j) { j = { t0: 0, t1: 0, vx: 0, vy: 0, ox: 0, oy: 0 }; this.jolts.set(u.id, j); }
+    j.vx = vx; j.vy = vy;
+    if (recoil) j.t1 = 0.25; else j.t0 = Math.fround(0.1);
+  }
+
+  /** The per-frame part of 0x839b08 for the dash and jolt timers (sc/unit_view.ts), `dt` the frame's seconds (float32). */
+  private viewTimers(dt: number): void {
+    for (const [id, d] of this.dashes) {
+      // +0xa48 = (int)max(0, +0xa48 − dt·1000)
+      d.t = Math.trunc(Math.max(0, Math.fround(d.t - Math.fround(dt * 1000))));
+      if (d.t <= 0) this.dashes.delete(id);
+    }
+    for (const [id, j] of this.jolts) {
+      if (!this.byId.has(id)) { this.jolts.delete(id); continue; } // the view is gone with its actor
+      joltStep(j, dt, this.art.flip);
+    }
+  }
+
+  /** This frame's jolt offset of a view's sprite entries and bar holder (battle px), if any. */
+  private shiftOf(u: Unit): [number, number] | undefined {
+    const j = this.jolts.get(u.id);
+    return j && (j.ox !== 0 || j.oy !== 0) ? [j.ox, j.oy] : undefined;
+  }
+
+  /**
+   * The view position the client draws a character at (0x84d738): the tick-start and current logic positions,
+   * each pulled toward the lunge point while the dash timer runs (0x846f98 / 0x847068 / 0x847138 / 0x847208:
+   * u = max(0, 100 − |t − D|·100 / D); for u ≥ 2, p + (point − p)·(u >> 1) / 100, integer), then interpolated.
+   */
+  private viewX(u: Unit, f: Frame): number {
+    const d = this.dashes.get(u.id);
+    if (d === undefined) return f.ux(u);
+    const q = f.prevPos.get(u.id);
+    const p = q === undefined ? u.x : Math.floor(q / 65536);
+    const a = dashPull(p, d.x, d.t, d.d), c = dashPull(u.x, d.x, d.t, d.d);
+    return a + (c - a) * f.alpha;
+  }
+
+  private viewY(u: Unit, f: Frame): number {
+    const d = this.dashes.get(u.id);
+    if (d === undefined) return f.uy(u);
+    const q = f.prevPos.get(u.id);
+    const p = q === undefined ? u.y : q % 65536;
+    const a = dashPull(p, d.y, d.t, d.d), c = dashPull(u.y, d.y, d.t, d.d);
+    return a + (c - a) * f.alpha;
+  }
+
+  /** View-only columns of a character's data row (the battle's gamedata): VisualHitSpeed per entry, AttackShakeTime, AttackDashTime. */
+  private rawRow(b: Battle, name: string): { vhs: [number, number, number] | null; shake: number; dash: number } {
+    let r = this.rawRows.get(name);
+    if (r) return r;
+    const row = (b.defs.data.units[name] ?? {}) as Record<string, unknown>;
+    const n = (k: string) => (typeof row[k] === 'number' ? row[k] as number : 0);
+    // 0xdde618: entries 2 / 3 copy the VisualHitSpeed of the entry before when theirs is 0
+    const v1 = n('VisualHitSpeed'), v2 = n('VisualHitSpeed2') || v1, v3 = n('VisualHitSpeed3') || v2;
+    r = { vhs: v1 ? [v1, v2, v3] : null, shake: n('AttackShakeTime'), dash: n('AttackDashTime') };
+    this.rawRows.set(name, r);
+    return r;
+  }
 
   /** A new battle: actor ids restart, so drop the per-actor view state. */
   private battleState(b: Battle): void {
@@ -431,6 +553,8 @@ export class ArtWorld implements WorldRenderer {
     this.projById.clear();
     this.muzzled.clear();
     this.charFx.reset();
+    this.dashes.clear();
+    this.jolts.clear();
     this.cast = null;
   }
 
@@ -491,7 +615,7 @@ export class ArtWorld implements WorldRenderer {
     const follow = fx[eff].FollowParent ? () => {
       const f = this.frame;
       const live = f && f.battle.units.includes(u) && u.state !== ST_DEAD;
-      return live && f ? [f.ux(u), f.uy(u), f.uz(u)] as [number, number, number] : null;
+      return live && f ? [this.viewX(u, f), this.viewY(u, f), f.uz(u)] as [number, number, number] : null;
     } : undefined;
     // the parent view gives PivotClip / ParentLookAtOffsetRadius their offsets (0x82bf10 @0x82c2ac)
     this.fx.play(eff, u.x, u.y + front, { team: u.team as Team, z: u.z, follow, filterParent: u.id, parentView: this.charFx.parentView(u) });
@@ -569,6 +693,8 @@ export class ArtWorld implements WorldRenderer {
     this.updateProjectiles(f);
     const fxDt = this.lastFxSim < 0 ? 0 : Math.min(250, Math.max(0, sim - this.lastFxSim));
     this.lastFxSim = sim;
+    // the views' dash and jolt timers (0x839b08), before anything reads a view position this frame
+    this.viewTimers(Math.fround(fxDt / 1000));
     // area-effect views: per-frame update 0x8342c8, removal 0x834038 for objects that left the world
     // (the tiebreak's field clear 0x10cad30 sets their expire flag)
     this.areaViews.update(b, b.areaEffects, b.tiebreakMs > 0 && b.tiebreakMs <= 1500);
@@ -576,7 +702,7 @@ export class ArtWorld implements WorldRenderer {
     // deleted with the instance (0x8348c8 / 0x834e54); the filter clock starts with the view
     this.buffViews.sync(b, b.units, sim, (q) => {
       const fr = this.frame, u = q as Unit;
-      return fr && fr.battle.units.includes(u) && u.state !== ST_DEAD ? [fr.ux(u), fr.uy(u), fr.uz(u)] : null;
+      return fr && fr.battle.units.includes(u) && u.state !== ST_DEAD ? [this.viewX(u, fr), this.viewY(u, fr), fr.uz(u)] : null;
     });
     this.fx.update(fxDt);
     // battle layer update (0x856f28): cloud shadows, then the screen shake (SC px)
@@ -597,8 +723,9 @@ export class ArtWorld implements WorldRenderer {
     // (0x126ab4c: glyph size = stage scale x field size; sc/text.ts)
     r.textStageScale = this.ui.layout.k * dpr;
     r.setView(this.s * dpr, 0, 0, this.s * dpr, (this.vx + this.s * shx) * dpr, (this.vy + this.s * shy) * dpr);
-    art.drawBackground(r, sim);
-    art.drawArenaObjects(r, sim, ['Base']);
+    this.arenaClips(sim);
+    art.drawBackground(r, sim, this.arenaInst ?? undefined);
+    art.drawArenaObjects(r, sim, ['Base'], this.decoInsts);
     // destroyed towers leave the game's rubble on the ground layer
     for (const u of b.units) {
       if (u.tower === TOWER_NONE || u.state !== ST_DEAD) continue;
@@ -611,7 +738,7 @@ export class ArtWorld implements WorldRenderer {
 
     // shadow layer: decorations, crown towers, units (one silhouette buffer, one composite)
     r.beginShadows();
-    art.drawArenaShadows(r, sim);
+    art.drawArenaShadows(r, sim, undefined, this.decoInsts);
     for (const u of b.units) {
       if (u.tower === TOWER_NONE || u.state === ST_DEAD) continue;
       const team = u.team as Team;
@@ -628,7 +755,7 @@ export class ArtWorld implements WorldRenderer {
       // state 11 (summon delay) hides the view, its shadow container included (0x839b08 +0xad5 -> +0x340)
       if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling || u.waitTicks > 0) continue;
       if (!m.characters[u.def.name]) continue;
-      art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), {
+      art.drawUnitShadow(r, u.def.name, u.team as Team, this.viewX(u, f), this.viewY(u, f), {
         sprite: this.sprites.get(u.id) ?? undefined, inst: this.instNow.get(u.id) ?? undefined,
         clipFrame: this.clipFrames.get(u.id), face: [u.dirX, u.dirY], sinceAttackS: this.sinceAttack(u, b, f),
       });
@@ -675,17 +802,18 @@ export class ArtWorld implements WorldRenderer {
       }
     }
     // arena decorations on the object layer
-    for (const o of m.arena.objects) {
-      if (o.layer !== 'Object') continue;
+    m.arena.objects.forEach((o, i) => {
+      if (o.layer !== 'Object') return;
       const py = art.decoPx(o)[1];
-      items.push({ y: py, draw: () => art.drawDeco(r, o, sim) });
-    }
+      const inst = this.decoInsts[i] ?? undefined;
+      items.push({ y: py, draw: () => art.drawDeco(r, o, sim, undefined, inst) });
+    });
     // units (0-HP actors such as death bombs and the Rage bottle are drawn too)
     for (const u of b.units) {
       if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling || u.waitTicks > 0) continue;
       const ca = m.characters[u.def.name];
-      const x = f.ux(u);
-      const y = f.uy(u);
+      const x = this.viewX(u, f);
+      const y = this.viewY(u, f);
       const team = u.team as Team;
       if (!ca) {
         const [px, py] = art.gameToPx(x, y, u.def.flyingHeight);
@@ -710,7 +838,7 @@ export class ArtWorld implements WorldRenderer {
       const o: UnitDrawOptions = { z: lift, deployMs, deployFilter: view?.filter, alpha, buffs, damage,
         sprite: this.sprites.get(u.id) ?? undefined, inst: this.instNow.get(u.id) ?? undefined,
         face: [u.dirX, u.dirY], sinceAttackS: this.sinceAttack(u, b, f),
-        clipFrame: this.clipFrames.get(u.id), color: this.effectFilters(u) };
+        clipFrame: this.clipFrames.get(u.id), color: this.effectFilters(u), shift: this.shiftOf(u) };
       items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, o); } });
     }
     // projectiles: Object layer, sorted by the ground-projected y like the actors (setPos3D 0x851b84;
@@ -761,7 +889,7 @@ export class ArtWorld implements WorldRenderer {
         continue;
       }
       const ca = m.characters[u.def.name];
-      const key = this.sortKey(u, f.ux(u), f.uy(u));
+      const key = this.sortKey(u, this.viewX(u, f), this.viewY(u, f));
       // a "HealthBar" component (client-action bar): 0x83c268 updates it (0x8405c4) and draws no classic bar
       const nbs = this.newBarSpec(u.def.name);
       if (nbs) {
@@ -782,8 +910,9 @@ export class ArtWorld implements WorldRenderer {
       });
       view.barSwapped = st.swapped;
       if (!st.visible) continue;
-      // the bar container follows BASE_SPRITE (or GO_SPRITE) with its z (0x8408f0 -> 0x851b84)
-      const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
+      // the bar container follows BASE_SPRITE (or GO_SPRITE) with its z (0x8408f0 -> 0x851b84), moved by the
+      // view's jolt offset (0x839b08 -> 0x851d54 on +0x618)
+      const [sx, sy] = this.barShift(u, art.unitBarPx(u.def.name, team, this.viewX(u, f), this.viewY(u, f), f.uz(u) - u.def.flyingHeight));
       const hpText = (ca?.showHealthNumber as boolean | undefined) ? st.hp : undefined;
       const flash = this.barFlash(u, sim);
       bars.push({ y: key, draw: () => art.drawUnitHealthBar(r, type, team === 0, sx, sy, st, u.def.level, hpText, flash) });
@@ -799,6 +928,38 @@ export class ArtWorld implements WorldRenderer {
   }
 
   private barItems: { y: number; i?: number; draw: () => void }[] = [];
+
+  /** A bar holder position plus the view's jolt offset (0x839b08: 0x851d54(+0x638 + x, +0x63c + y, +0x618)). */
+  private barShift(u: Unit, p: [number, number]): [number, number] {
+    const j = this.jolts.get(u.id);
+    return j ? [p[0] + j.ox, p[1] + j.oy] : p;
+  }
+
+  /**
+   * The arena clip and each location object's clip as MovieClip instances made with the battle layer
+   * (0x856088: 0x120cc50 for the arena, 0x8578e4 for the objects), playing from frame 0, advanced by the
+   * render each frame (0x123f55c): their nested clips (river, banners, crowds) keep their own playheads. A
+   * deco's shadow copy shares its instance (the client's second copy advances identically, A).
+   */
+  private arenaClips(sim: number): void {
+    const art = this.art, a = art.manifest.arena;
+    const lib = art.lib(a.sc);
+    if (this.arenaFor !== this.stateFor || this.arenaInst === null || this.arenaInst.lib !== lib) {
+      this.arenaFor = this.stateFor;
+      this.arenaInst = McNode.of(lib, a.export);
+      this.decoInsts = a.objects.map((o) => McNode.of(art.lib(o.sc), o.export));
+      this.lastArenaSim = sim;
+    }
+    const dt = Math.max(0, (sim - this.lastArenaSim) / 1000);
+    this.lastArenaSim = sim;
+    this.arenaInst?.advance(dt);
+    a.objects.forEach((o, i) => {
+      let n = this.decoInsts[i];
+      const l = art.lib(o.sc);
+      if (!n || n.lib !== l) { n = McNode.of(l, o.export); this.decoInsts[i] = n; }
+      n?.advance(dt);
+    });
+  }
 
   /** Sort key of an actor's nodes (setPos3D 0x851b84): ground-projected y, +48 px for an air character
    * (vt+0x108 0xf826e8 = FlyingHeight > 0 without the TAG_FORCE_IS_AIR / _GROUND status tags; a river
@@ -1000,7 +1161,7 @@ export class ArtWorld implements WorldRenderer {
       badgeFrame = st.playFrom !== null ? Math.min(last, Math.floor(((sim - st.playFrom) * lib.fps(e)) / 1000)) : st.frame;
     }
     if (u.waitTicks > 0) return null;
-    const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
+    const [sx, sy] = this.barShift(u, art.unitBarPx(u.def.name, team, this.viewX(u, f), this.viewY(u, f), f.uz(u) - u.def.flyingHeight));
     const part = (p: NewBarPartSpec | undefined) => (p ? { exp: exp(p), offset: p.offset } : null);
     const d = {
       base: own ? spec.base[0] : spec.base[1], badge: part(spec.badges[ch.badge]), badgeFrame, showBadge: fr.show,
@@ -1074,6 +1235,8 @@ export class ArtWorld implements WorldRenderer {
       seen.add(u.id);
       const walker = u.def.speed > 0 && !u.isBuilding && u.tower === TOWER_NONE;
       const state = u.state === ST_DEPLOYING ? 4 : u.jumping ? 5 : u.locked ? 2 : walker ? 1 : 0;
+      const raw = u.tower === TOWER_NONE ? this.rawRow(b, u.def.name) : null;
+      const vhs = raw?.vhs ?? null;
       const af = animate(ca, u.team as Team, s, {
         state, dirX: u.dirX, dirY: u.dirY, id: u.id, walker, charge: u.charge,
         walk: u.walkMs, walkPrev: f.prevWalk.get(u.id) ?? u.walkMs,
@@ -1085,6 +1248,11 @@ export class ArtWorld implements WorldRenderer {
         pathFacing: this.pathFacing.get(u.id),
         jumpLeft: state === 5 ? this.jumpLeft(u, b.arena.w) : undefined,
         scale: buffTimeScale(u),
+        // the attack frame's VisualHitSpeed branch (0x845244) and the view's sequence index +0x4cc (the
+        // engine's index each frame, sc/char_effects.ts infernoLevel)
+        visualHitSpeed: vhs ? vhs[0] : 0, visualHitSpeedCur: vhs ? vhs[Math.min(2, Math.max(0, u.seqIndex))] : 0,
+        seqMode: u.tower === TOWER_NONE && u.def.seqMode !== 0,
+        attackShakeTime: raw?.shake ?? 0, battleOver: b.result !== null, rand: this.rand,
       });
       this.sprites.set(u.id, af);
       // the shown direction clip's instance: stopped on this frame, its nested clips advanced by the render
@@ -1199,10 +1367,10 @@ export class ArtWorld implements WorldRenderer {
    * Steps left in a river jump as the character view takes them (0x84440c -> 0xfce8b8): the distance
    * from the actor's logic position to the path's landing cell (movement +0x3c[0], set by 0xfcf594)
    * at cell × 500 (the cell corner, not its centre), saturating isqrt (0x1294e10), ÷ the move speed
-   * vtb8 (JumpSpeed in state 5); undefined below speed 1 (the client skips the landing cap).
+   * vtb8; undefined below speed 1 (the client skips the landing cap).
    */
   private jumpLeft(u: Unit, w: number): number | undefined {
-    const speed = u.def.jumpSpeed;
+    const speed = jumpMoveSpeed(u);
     if (speed < 1 || !u.path.length) return undefined;
     const cell = u.path[u.path.length - 1];
     const dx = (cell % w) * 500 - u.x;

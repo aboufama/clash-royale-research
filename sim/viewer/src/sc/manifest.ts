@@ -71,6 +71,7 @@ export interface CharacterArt {
   dontStopMoveAnim?: boolean;
   rotateAngleSpeed?: number;
   tryToFinishAttackAnimation?: boolean;
+  tryToFinishAttackAnimationBeforeNextAttack?: boolean;
   animationsKeepLastFrame?: boolean;
   jumpEnabled?: number;
   // building clip views (sc/anim.ts animateBuilding)

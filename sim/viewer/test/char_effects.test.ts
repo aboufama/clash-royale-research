@@ -66,12 +66,11 @@ test('0x82a994 beam: R(atan2 d)·S(|d|/FlashWidth, 1) from the position + offset
   assert.ok(Math.abs(r[1] - 1) < 1e-6 && Math.abs(r[2] + 1) < 1e-6);
 });
 
-test('Inferno ramp level from VariableDamageTime1 / 2', () => {
-  const d = { variableDamageTime: [2000, 2000] as [number, number] };
-  assert.equal(infernoLevel({ rampMs: 0, def: d }), 0);
-  assert.equal(infernoLevel({ rampMs: 1999, def: d }), 0);
-  assert.equal(infernoLevel({ rampMs: 2000, def: d }), 1);
-  assert.equal(infernoLevel({ rampMs: 4000, def: d }), 2);
+test('Inferno level = the view\'s +0x4cc = the engine\'s attack sequence index (−1 reads entry 0)', () => {
+  assert.equal(infernoLevel({ seqIndex: -1 }), 0);
+  assert.equal(infernoLevel({ seqIndex: 0 }), 0);
+  assert.equal(infernoLevel({ seqIndex: 1 }), 1);
+  assert.equal(infernoLevel({ seqIndex: 2 }), 2);
 });
 
 /** A recording effect player standing in for EffectPlayer. */
@@ -89,8 +88,8 @@ class RecFx {
 function unit(id: number, name: string, team: number, x: number, y: number, extra: Partial<Unit> = {}): Unit {
   return {
     id, team, x, y, z: 0, radius: 500, state: 1, jumping: false, waitTicks: 0, dirX: 0, dirY: 256, charge: 0,
-    target: null, atkTimer: 0, rampMs: 0,
-    def: { name, areaDamageRadius: 0, selfAsAoeCenter: false, multipleTargets: 0, variableDamage: null, variableDamageTime: [2000, 2000] },
+    target: null, atkTimer: 0, seqIndex: -1,
+    def: { name, areaDamageRadius: 0, selfAsAoeCenter: false, multipleTargets: 0, seqMode: 0 },
     ...extra,
   } as unknown as Unit;
 }
@@ -148,11 +147,12 @@ test('0x83b6d8 Inferno slots: beam / transition / flame per level, deleted and r
   const giant = unit(9, 'Knight', 1, 9000, 16000);
   const inf = unit(8, 'Inferno', 0, 9000, 12000, {
     target: giant, atkTimer: 0,
-    def: { ...unit(0, 'Inferno', 0, 0, 0).def, variableDamage: [1, 2, 3] } as never,
+    def: { ...unit(0, 'Inferno', 0, 0, 0).def, seqMode: 3 } as never,
   });
   c.update([inf, giant]);
   assert.equal(fx.plays.length, 0); // attack timer 0: nothing
   (inf as { atkTimer: number }).atkTimer = 400;
+  (inf as { seqIndex: number }).seqIndex = 0;
   c.update([inf, giant]);
   assert.deepEqual(fx.plays.map((p) => p.name), ['beam1', 'root2', 'flame1']);
   assert.deepEqual(fx.plays[0].o.offset, [0, -80]);
@@ -160,17 +160,56 @@ test('0x83b6d8 Inferno slots: beam / transition / flame per level, deleted and r
   assert.ok(fx.plays[0].o.target && !fx.plays[1].o.target && fx.plays[2].o.target);
   c.update([inf, giant]);
   assert.equal(fx.plays.length, 3); // unchanged
-  (inf as { rampMs: number }).rampMs = 2000;
+  (inf as { seqIndex: number }).seqIndex = 1;
   c.update([inf, giant]);
   assert.deepEqual(fx.plays.slice(3).map((p) => p.name), ['beam2', 'root3', 'flame2']);
   assert.deepEqual(fx.removed, [1, 2, 3]);
-  (inf as { rampMs: number }).rampMs = 4000;
+  (inf as { seqIndex: number }).seqIndex = 2;
   c.update([inf, giant]);
   assert.deepEqual(fx.plays.slice(6).map((p) => p.name), ['beam3', 'flame3']); // level 3 has no transition
   (inf as { atkTimer: number }).atkTimer = 0;
   c.update([inf, giant]);
   assert.equal(fx.plays.length, 8);
   assert.equal(fx.removed.length, 3 + 3 + 2);
+});
+
+test('0x83b6d8: an unchanged slot effect keeps its first target after a retarget; a new one waits for a target', () => {
+  const fx = new RecFx();
+  const c = new CharEffects(host(fx));
+  const a = unit(9, 'Knight', 1, 9000, 16000), b = unit(10, 'Knight', 1, 8000, 16000);
+  const inf = unit(8, 'Inferno', 0, 9000, 12000, { target: a, atkTimer: 400, seqIndex: 0,
+    def: { ...unit(0, 'Inferno', 0, 0, 0).def, seqMode: 3 } as never });
+  c.update([inf, a, b]);
+  assert.deepEqual(fx.plays.map((p) => p.name), ['beam1', 'root2', 'flame1']);
+  (inf as { target: Unit }).target = b;
+  c.update([inf, a, b]);
+  assert.equal(fx.plays.length, 3); // same effects: no restart, the beam still aims at its first target
+  assert.deepEqual(fx.plays[0].o.target!(), [9000, 16000, 1000]);
+  (inf as { target: Unit | null }).target = null;
+  (inf as { seqIndex: number }).seqIndex = 1;
+  c.update([inf, a, b]);
+  assert.deepEqual(fx.plays.slice(3).map((p) => p.name), ['root3']); // beam and flame need a target
+  (inf as { target: Unit }).target = b;
+  c.update([inf, a, b]);
+  assert.deepEqual(fx.plays.slice(4).map((p) => p.name), ['beam2', 'flame2']);
+});
+
+test('MultipleTargets: execute\'s slot is vt+0x90\'s pivot index; a cancelled hit plays nothing', () => {
+  const fx = new RecFx();
+  const c = new CharEffects(host(fx));
+  const tesla = unit(1, 'Tesla', 0, 9000, 12000);
+  const k1 = unit(2, 'Knight', 1, 9000, 16000), k2 = unit(3, 'Knight', 1, 8000, 16000);
+  let idx: number[] = [];
+  (c as unknown as { pivot: (u: Unit, i: number) => null }).pivot = (_u, i) => { idx.push(i); return null; };
+  c.onAttack(5, tesla, k1, true, false, 0, 0, 0);
+  c.onAttack(5, tesla, k2, true, false, 0, 0, 1);
+  assert.deepEqual(idx, [0, 1]);
+  c.onDamage(5, k2, 2, 'Tesla', tesla); // no extra beam from the damage entry
+  assert.equal(fx.plays.filter((p) => p.name === 'Tesla_beam').length, 2);
+  idx = [];
+  c.onAttack(6, tesla, k1, true, false, 0, 0, -1, true);
+  assert.equal(fx.plays.filter((p) => p.name === 'Tesla_beam').length, 2);
+  assert.deepEqual(idx, []);
 });
 
 test('0xf8f618 chain beam: from the start with the shooter as parent, then from each hit target', () => {

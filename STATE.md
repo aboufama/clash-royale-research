@@ -2,7 +2,7 @@
 
 The single source of truth for where the project stands. Read it after
 [GOAL.md](GOAL.md) and [AGENTS.md](AGENTS.md), and keep it current.
-Last updated 2026-10-12 (hud4: emotes, the result's confetti and OK button, the intro's touch hold; periodic spawners and the world after the end ported; 70 cards with original art).
+Last updated 2026-10-12 (view5: VisualHitSpeed, attack finish and shake, Bats lunge, view jolts, Inferno beam entries, Electro Wizard beam pivots, arena clip instances; hud4: emotes, the result's confetti and OK button, the intro's touch hold; 70 cards with original art).
 
 ## The owner and what they want
 
@@ -292,8 +292,8 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    `impact.src` / `z` (no simulation change). Its finding for the engine (0xf8aac8 deploys a
    spawner's member with hitpoints only with SpawnCharacterWithDeploy) is ported (eng3, item 1).
    Left: Tesla's AttackStartEffect (single-clip
-   buildings), Electro Dragon's LoadAttackEffects (sound only), the Inferno view's
-   +0x4cc sync to the attack clip (A), the sprite recoils (vt+0xf8).
+   buildings), Electro Dragon's LoadAttackEffects (sound only); the Inferno view's +0x4cc and the
+   view jolts are done (view5 below).
    Done 2026-10-12 (fix3, audit items; decompiles in `work/native/decomp_fix3/`, tests in
    `sim/viewer/test/view_fix3.test.ts`): nested clips of unit, building, crown tower, projectile and
    ghost views play on their own playheads (`sc/movieclip.ts` ClipInstances, renderer `inst`; 0x84a310 /
@@ -304,8 +304,24 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    `damage.vx/vy` = the entry's vector; no simulation change), TryToFinishAttackAnimation stops while
    frozen, and the legacy sprite pickers (`sc/units.ts`, BattleArt.viewAngle, art.ts unitState /
    attackPhase) are gone: every sprite comes from the ported 0x844f78 → 0x84a7f8 path (the sc-test gallery
-   too). Left: the turret's frame-apply reset on root frame changes (–), the sprite / shadow clip copies
-   share one instance and the Electro Wizard's extra targets carry no hit vector (A).
+   too). Left: the sprite / shadow clip copies share one instance and the Electro Wizard's extra targets
+   carry no hit vector (A); the turret's frame-apply reset is traced and invisible (view5 below).
+   Done 2026-10-12 (view5, decompiles in `work/native/decomp_view5/`, tests in `sim/viewer/test/view5.test.ts`):
+   the attack frame's VisualHitSpeed branch 0x845244 (the Inferno Dragon's attack clip loops every 1200 ms
+   of the timer and plays no AttackStartEffect), TryToFinishAttackAnimationBeforeNextAttack (Valkyrie's
+   swing goes on after a kill restarts the timer, @0x8427a8), AttackShakeTime (@0x842c44), the AttackDashTime
+   lunge of the Bats (view vt+0x40 0x845ce8 → the position getters 0x846f98…: half way to the target's edge
+   at the hit), the view jolts of ShakesTargets (vt+0xf0 0x83e488 → 0x839b08: Executioner, Magic Archer,
+   Barbarian Barrel), the Inferno beam entry = the engine's sequence index every frame with 0x83b6d8's
+   effect-only slot rule, the Electro Wizard's two beams from attack_pivot_1 / _2 (execute's slot; the old
+   third beam is gone, cancelled hits play none; pivots are text-field rect centres), arena / decoration /
+   effect SWF clips on per-instance playheads, vtb8 for the jump clip; new recorded engine events `dash`
+   and `shake` (no simulation change). Checked and left as is: the Miner's tunnel effect already follows
+   the logic position (its dirt stays where emitted, as the client's emitters do), AttackFinishTime only
+   matters for AttackStateCount ≥ 2 (no supported user), and the turret frame-apply reset of 0x123f7b4
+   happens only while the turret has sign +1 and no recoil (invisible). The Electro Wizard beam overshoot
+   could not be reproduced (4,416 beam frames of an AI battle and the single / two-target / tower / red-side
+   cases end within 8 px of their target).
 
 ## Open questions for the owner
 

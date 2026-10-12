@@ -1823,6 +1823,7 @@ export class Battle {
     const q0 = Math.floor(t0 / HS);
     if (t) { u.dirX = t.x - u.x; u.dirY = t.y - u.y; }
     this.advanceClock(u);
+    if (this.recordEvents && t !== null) this.recordDash(u, t, t0, HS);
     const q1 = Math.floor(u.atkTimer / HS);
     u.hitStarted = u.atkTimer % HS > 50;
     if ((d.seqMode & ~1) === 2) u.seqIndex = this.seqIndexAt(d, u.atkTimer);
@@ -1838,6 +1839,20 @@ export class Battle {
       if (pick === null && d.allTargetsHit) pick = u.target;
       if (pick !== null) this.execute(u, pick, i + 1);
     }
+  }
+
+  /**
+   * Recorded only (no simulation effect): AttackComp_update 0xfc7e20 faces the target and calls the attacker
+   * view's vt+0x40 (0x845ce8) when (AttackDashTime + timer) / HitSpeed grows this update (C division of the
+   * timer before and after the clock step); the facing it sets is the one faceTarget set this update. Only
+   * AttackDashTime > 0 lunges (0x845ce8 sets the view's timer to 2 · AttackDashTime).
+   */
+  private recordDash(u: Unit, t: Unit, t0: number, HS: number): void {
+    const dash = this.defs.data.units[u.def.name]?.AttackDashTime;
+    if (typeof dash !== 'number' || dash <= 0) return;
+    if (Math.trunc((dash + t0) / HS) >= Math.trunc((dash + u.atkTimer) / HS)) return;
+    this.events.push({ tick: this.tick, type: 'dash', team: u.team, x: t.x, y: t.y, name: u.def.name, id: u.id, src: t.id,
+      vx: u.x - t.x, vy: u.y - t.y, r: t.radius });
   }
 
   /**
@@ -3578,6 +3593,11 @@ export class Battle {
     if (this.mobile(a) && def.pushback >= 1) {
       if (def.directionalPushback) this.directionalPushback(a, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
       else this.applyPushback(a, p.x, p.y, def.pushback, def.pushbackAll);
+    }
+    // ShakesTargets (projectile data +0x1a2): the victim view's vt+0xf0 with victim − projectile (0xf90640), recorded only
+    if (this.recordEvents && this.defs.data.projectiles[def.name]?.ShakesTargets === true) {
+      this.events.push({ tick: this.tick, type: 'shake', team: a.team, x: a.x, y: a.y, name: a.def.name, id: a.id, src: p.id,
+        vx: a.x - p.x, vy: a.y - p.y });
     }
     if (def.targetBuff !== null && def.buffTime > 0) this.applyBuff(a, def.targetBuff, def.buffTime, p.id);
     if (hp > 0 && def.checkCollisions) { p.reached = true; p.alive = false; return true; }

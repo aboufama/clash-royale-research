@@ -139,8 +139,11 @@ export function damageEffectName(m: Manifest, fx: number, src: string): string |
 }
 
 /**
- * Centre of a named child of a clip frame in the clip's space (SC px): the child's matrix applied to
- * its own frame-0 bounds' centre (0x84eb7c: bounds + child x / y; the child's scale is applied too, A).
+ * Centre of a named child of a clip frame in the clip's space (SC px). The attack pivots are text fields:
+ * 0x84eb7c finds them with the clip's vt+0x168 (by name) and takes the field's rect (0x126f52c: left, top,
+ * right, bottom at +180) moved by the instance's x / y (+0x20 / +0x24, its scale and rotation not applied):
+ * (tx + (left + right) / 2, ty + (top + bottom) / 2). Any other child: its matrix applied to its own frame-0
+ * bounds' centre (A).
  */
 export function childCenter(lib: ScLibrary, exp: string, frame: number, name: string): [number, number] | null {
   const clip = lib.clip(exp);
@@ -151,6 +154,12 @@ export function childCenter(lib: ScLibrary, exp: string, frame: number, name: st
     const ci = clip.elements[i * 3];
     if (clip.names[ci] !== name) continue;
     const mi = clip.elements[i * 3 + 1];
+    const tf = lib.textFields.get(clip.children[ci]);
+    if (tf) {
+      const r = (tf as { rect?: number[] }).rect;
+      const tx = mi >= 0 ? bm[mi * 6 + 4] : 0, ty = mi >= 0 ? bm[mi * 6 + 5] : 0;
+      return r && r.length >= 4 ? [tx + r[0] + (r[2] - r[0]) * 0.5, ty + r[1] + (r[3] - r[1]) * 0.5] : [tx, ty];
+    }
     const m = mi >= 0 ? bm.subarray(mi * 6, mi * 6 + 6) : [1, 0, 0, 1, 0, 0];
     const b: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
     accBounds(lib, clip.children[ci], [1, 0, 0, 1, 0, 0], b, 0);
@@ -204,10 +213,15 @@ function infernoEntry(ca: CharacterArt, lvl: number): { beam?: string; trans?: s
   };
 }
 
-/** Engine Inferno ramp → level index (battle.ts execute: VariableDamageTime1 / 2; D). */
-export function infernoLevel(u: { rampMs: number; def: { variableDamageTime: [number, number] } }): number {
-  const [t1, t2] = u.def.variableDamageTime;
-  return u.rampMs < t1 ? 0 : u.rampMs < t1 + t2 ? 1 : 2;
+/**
+ * The view's attack sequence index +0x4cc as 0x83b6d8 reads it: 0x839b08 reloads it from the attack
+ * component (+0x20, the engine's `seqIndex`) whenever it is −1, and for both supported sequence users
+ * 0x840d44 sets it back to −1 at the end of every frame (Inferno Dragon: 0x845244's VisualHitSpeed branch
+ * raises its flag, @0x844874; Inferno Tower: no attack clip, so the non-attack branch resets it, @0x841de4),
+ * so each frame it is the engine's index. An index not set yet (−1 before the first swing) reads entry 0.
+ */
+export function infernoLevel(u: { seqIndex: number }): number {
+  return u.seqIndex < 0 ? 0 : u.seqIndex;
 }
 
 /**
@@ -232,8 +246,6 @@ export class CharEffects {
   private prevAction = new Map<number, number>();
   /** Inferno slots per view: 0 beam, 1 transition, 2 flame */
   private inferno = new Map<number, [Slot, Slot, Slot]>();
-  /** this tick's primary target and next pivot index per attacker (TargetedHitEffect of extra targets) */
-  private hitTargets = new Map<number, { tick: number; target: number; next: number }>();
   /** tunnel effect per tunnelling actor (view +0x9b0 handle, +0x9b4 water flag) */
   private tunnels = new Map<number, { water: boolean; handle: number }>();
   /** chain-beam source per projectile (+0x174..+0x180, Projectile_setup 0xf8e6fc / 0xf8f618) */
@@ -253,7 +265,6 @@ export class CharEffects {
     this.prevAction.clear();
     for (const s of this.inferno.values()) for (const q of s) if (q.handle) this.h.fx.remove(q.handle);
     this.inferno.clear();
-    this.hitTargets.clear();
     this.chainFrom.clear();
     this.tunnels.clear();
     this.kingStates.clear();
@@ -444,14 +455,21 @@ export class CharEffects {
 
   // ------------------------------------------------------------------------------------- events
 
-  /** Engine 'hit' / 'shoot' (AttackComp_execute 0xfc619c), after the attacker's state of this step. */
-  onAttack(tick: number, a: Unit | undefined, t: Unit | undefined, melee: boolean, special: boolean, x: number, y: number): void {
-    if (!a) return;
+  /**
+   * Engine 'hit' / 'shoot' (AttackComp_execute 0xfc619c), after the attacker's state of this step. `slot` is
+   * execute's slot argument: −1 for a single-target attacker, else 0 for the target and i + 1 for the i-th
+   * extra target of a MultipleTargets attack (0xfc7e20 → 0xfc8ef4); it is the pivot index of vt+0x90. A
+   * cancelled hit (LOGIC_CANCEL_HIT_FROM_LONG_DISTANCE) makes no view call and no melee hit (0xfc64e8 is
+   * skipped).
+   */
+  onAttack(_tick: number, a: Unit | undefined, t: Unit | undefined, melee: boolean, special: boolean, x: number, y: number,
+    slot = -1, cancelled = false): void {
+    if (!a || cancelled) return;
     const ca = this.art(a);
     if (t) {
-      this.hitTargets.set(a.id, { tick, target: t.id, next: 1 });
-      // TargetedHitEffect(special) via view vt+0x90 (0xfc64e8); special attacks are not in the engine
-      this.playTargeted(a, t, ca?.effects?.targetedHitEffect, -1);
+      // TargetedHitEffect(special) via view vt+0x90 (0xfc64e8) with the slot as pivot index; special attacks
+      // are not in the engine
+      this.playTargeted(a, t, ca?.effects?.targetedHitEffect, slot);
     }
     // melee splash (0xfc7080 → World_areaDamage, then world listener vt+0x48 at the centre): the
     // attacker's DamageEffect(Special) (else "Damage") at the target snapshot (or the attacker with
@@ -469,18 +487,13 @@ export class CharEffects {
   }
 
   /**
-   * Engine 'damage' (Health_applyHit 0xfcb29c): the entry's effect on the victim's view (vt+0xc0). An
-   * Electro Wizard's extra targets also get its TargetedHitEffect (0xfc8fc8, pivot index 1, 2, ...).
+   * Engine 'damage' (Health_applyHit 0xfcb29c): the entry's effect on the victim's view (vt+0xc0). (A
+   * MultipleTargets attacker's extra targets get their TargetedHitEffect from their own execute call:
+   * onAttack's slot.)
    */
-  onDamage(tick: number, victim: Unit | undefined, kind: number, src: string, srcUnit: Unit | undefined): void {
+  onDamage(_tick: number, victim: Unit | undefined, kind: number, src: string, _srcUnit?: Unit): void {
     if (!victim) return;
     this.playOnActor(victim, damageEffectName(this.h.manifest, kind, src));
-    if (kind === 2 && srcUnit && srcUnit.def.multipleTargets > 1) {
-      const h = this.hitTargets.get(srcUnit.id);
-      if (h && h.tick === tick && h.target !== victim.id) {
-        this.playTargeted(srcUnit, victim, this.art(srcUnit)?.effects?.targetedHitEffect, h.next++);
-      }
-    }
   }
 
   /** Engine 'shieldLost' (0xfcb29c → 0xf85730 → view vt+0x110 0x846850): ShieldLostEffect via vt+0xc0. */
@@ -583,7 +596,7 @@ export class CharEffects {
       if (!ca) continue;
       const ce = ca.effects?.continuousEffect;
       if (ce && !this.continuous.has(u.id)) this.continuous.set(u.id, this.playAttachedLoop(u, ce));
-      if (u.def.variableDamage && ca.effects?.targettedDamageEffect1) this.updateInferno(u, ca);
+      if (u.def.seqMode !== 0 && ca.effects?.targettedDamageEffect1) this.updateInferno(u, ca);
       if (u.tunneling) this.updateTunnel(u, ca);
       else if (this.tunnels.has(u.id)) this.endTunnel(u);
       filterParents?.(u.id);
@@ -630,14 +643,15 @@ export class CharEffects {
   }
 
   /**
-   * 0x83b6d8 (attack-sequence data, attack component present): with the attack timer (+0x24) > 0 the
-   * level entry of the view's attack sequence index (+0x4cc) gives the beam (slot 0:
-   * TargettedDamageEffect), the level transition (slot 1) and the flame (slot 2); otherwise all are
-   * null. A slot whose effect differs from the running one deletes it (0x82e160) and, when there is a
-   * target (and an effect), starts the new one with 0x82dedc on the actor; the beam and the flame get
-   * the target (0x82d484) and the offset (0, TargetEffectY) (vt+0x48). The level is the engine's ramp
-   * level (the view's +0x4cc follows the attack sequence index at the attack clip's cycle, A), and a new
-   * target restarts the beam and flame (A: the client keeps the slot when the effect is unchanged).
+   * 0x83b6d8 (attack-sequence data, attack component present): with the attack timer (+0x24) ≥ 1 the
+   * entry of the view's attack sequence index (+0x4cc, infernoLevel) gives the beam (slot 0: entry +0xb0
+   * TargettedDamageEffect), the level transition (slot 1: +0xd0) and the flame (slot 2: +0xb8); below 1 all
+   * three are null (slot 6, entry +0xd8 AttackSeqStateEffect, is set by no supported card). A slot is
+   * touched only when its effect differs from the one it holds: the old one is deleted (0x82e160) and the
+   * new one started with 0x82dedc on the actor (looping, attached); the beam and the flame need a target
+   * (fc3ca0: the attack component's) and get it (0x82d484) with the offset (0, TargetEffectY) (vt+0x48),
+   * the transition starts without one. An unchanged effect keeps running with the target it started with,
+   * even after a retarget; once that target is gone the looping beam hides itself (0x82a994).
    */
   private updateInferno(u: Unit, ca: CharacterArt): void {
     let s = this.inferno.get(u.id);
@@ -648,30 +662,25 @@ export class CharEffects {
     const active = u.state !== ST_DEPLOYING && u.waitTicks <= 0;
     if (!active) return;
     const t = u.target && u.target.state !== ST_DEAD ? u.target : null;
-    const attacking = u.atkTimer > 0;
-    const lvl = infernoLevel(u);
-    const e = attacking ? infernoEntry(ca, lvl) : {};
+    const attacking = u.atkTimer >= 1;
+    const e = attacking ? infernoEntry(ca, infernoLevel(u)) : {};
     const ty = (ca as { targetEffectY?: number }).targetEffectY ?? 0;
     const want: [string | undefined, string | undefined, string | undefined] = [e.beam, e.trans, e.flame];
     const fx = this.h.fx;
     for (let i = 0; i < 3; i++) {
       const q = s[i];
       const targeted = i !== 1;
-      const tid = targeted && t ? t.id : -1;
-      if (want[i] === q.eff && (!targeted || tid === q.target)) continue;
+      if (want[i] === q.eff) continue;
       if (q.handle) { fx.remove(q.handle); q.handle = 0; }
       q.eff = undefined;
       q.target = -1;
-      // slot 1 (transition) starts without a target; slots 0 and 2 need one (0x83b6d8: local_68 != 0)
-      if (!want[i] || (targeted && !t)) {
-        if (!targeted) q.eff = want[i];
-        continue;
-      }
+      // slots 0 and 2 need a target (local_68 != 0) and stay empty without one (retried next frame)
+      if (!want[i] || (targeted && !t)) continue;
       const extra: PlayOptions = targeted && t
         ? { target: this.targetPoint(t), targetPivot: () => this.targetPivot(t), offset: [0, ty] } : {};
       q.handle = this.playAttachedLoop(u, want[i]!, extra);
       q.eff = want[i];
-      q.target = tid;
+      q.target = targeted && t ? t.id : -1;
     }
   }
 }

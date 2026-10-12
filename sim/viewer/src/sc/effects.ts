@@ -96,6 +96,7 @@ import { beamMatrix } from './beam.ts';
 import { filterClipLength, filterFrame } from './area_view.ts';
 import { fxSoundStop, fxSoundUpdate } from './sound.ts';
 import { sin1024 } from '../../../core/src/trig.ts';
+import { McNode } from './movieclip.ts';
 
 /** logic units → world units */
 const W = 0.002;
@@ -123,7 +124,8 @@ export interface PlayOptions {
   hidden?: () => boolean;
   /**
    * Beam target (0x82d484 → each SWF component's +0x190, sc/beam.ts): the target actor's logic
-   * [x, y, z + 2·CollisionRadius] each frame; null once it is gone (the last point is kept, A).
+   * [x, y, z + 2·CollisionRadius] each frame; null once it is gone (a looping beam then hides, another keeps
+   * its last matrix: 0x82b40c / 0x82a994).
    */
   target?: () => [number, number, number] | null;
   /** the target view's damage pivot in battle-layer px (0x84eb7c(view, −1, 1)), added to the beam end */
@@ -642,10 +644,17 @@ class SwfComp {
   alpha = 1;
   x = 0; y = 0; z = 0;
   readonly scale: number;
+  /**
+   * The component's MovieClip (0x82a360 → 0x1210b30, param_1[0x27]): its root is stopped on the component's
+   * frame each update (0x1242234) and the render advances it, so its nested clips keep their own playheads
+   * (0x123f55c); null while the library loads.
+   */
+  readonly inst: McNode | null;
   constructor(ctx: Ctx, c: EffectComponent, lib: ScLibrary, scale: number, len = -1, hold = 0) {
     this.scale = scale;
     this.c = c;
     this.lib = lib;
+    this.inst = c.export && typeof lib.clip === 'function' ? McNode.of(lib, c.export) : null; // (test stand-ins have no clips)
     this.frames = Math.max(1, c.frames ?? lib.frameCount(c.export!) ?? 1);
     const fps = c.fps || 30;
     // 0x82a360: D = −1 becomes (int)(frame time · (frames · 1000)) in float32
@@ -660,8 +669,11 @@ class SwfComp {
   ox = 0; oy = 0;
   setOffset(x: number, y: number): void { this.ox = x; this.oy = y; }
   isDone(): boolean { return this.done; }
+  /** the beam clip's last matrix relative to the component's position (kept once its target is gone) */
+  beamLocal: Mat | null = null;
   /** 0x82a994 (no forced frame percent +0x154, no beam targets +0x188 / +0x190) */
   update(dt: number): boolean {
+    if (this.done) return true; // finished by its beam losing its target (+0x181)
     const D = this.dur, E = this.hold;
     if (!this.loop) {
       if (E + D <= this.t) { this.done = true; return true; }
@@ -676,7 +688,10 @@ class SwfComp {
         this.alpha = alphaByte(Math.fround((D - this.t + E) / E)) / 255;
       }
       this.frame = f;
+      this.inst?.gotoAndStop(f);
     }
+    // the render's advance of the component's clip (a 1-frame root plays on its own, 0x82a994 skips the goto)
+    this.inst?.advance(dt / 1000);
     this.t += dt;
     return false;
   }
@@ -923,10 +938,13 @@ class Fx {
     return this.isDone();
   }
 
-  private lastTarget: [number, number, number] | null = null;
-
-  /** 0x82a994's beam matrix for a SWF component with FlashWidth and a target (sc/beam.ts), else null. */
-  private beam(c: EffectComponent, o0: SwfComp, px: number, py: number, sc: number): Mat | null {
+  /**
+   * 0x82a994's beam matrix for a SWF component with FlashWidth and a target (sc/beam.ts), else null. Once the
+   * target actor is gone (0x82b40c clears +0x190 on its removal): a looping component hides its clip and
+   * finishes (+0x181), 'hide'; any other skips the beam block, so its clip keeps the last matrix relative to
+   * the component.
+   */
+  private beam(c: EffectComponent, o0: SwfComp, px: number, py: number, sc: number): Mat | 'hide' | null {
     const flash = (c.flashWidth as number | undefined) ?? 0;
     const o = this.opts;
     if (!flash || (!o.target && !o.targetPoint)) return null;
@@ -935,14 +953,19 @@ class Fx {
     if (o.targetPoint) {
       end = art.gameToPx(o.targetPoint[0], o.targetPoint[1], o.targetPoint[2]);
     } else {
-      const t = o.target!() ?? this.lastTarget;
-      if (!t) return null;
-      this.lastTarget = t;
+      const t = o.target!();
+      if (!t) {
+        if (o0.loop) { o0.done = true; return 'hide'; }
+        const l = o0.beamLocal;
+        return l ? [l[0], l[1], l[2], l[3], px + l[4], py + l[5]] : null;
+      }
       end = art.gameToPx(t[0], t[1], t[2]);
       const pv = o.targetPivot?.();
       if (pv) end = [end[0] + pv[0], end[1] + pv[1]];
     }
-    return beamMatrix([px, py], [o0.ox, o0.oy], end, flash, sc);
+    const m = beamMatrix([px, py], [o0.ox, o0.oy], end, flash, sc);
+    o0.beamLocal = [m[0], m[1], m[2], m[3], m[4] - px, m[5] - py];
+    return m;
   }
 
   /** this instance's running Filter components for `parent` (0x82ebdc), nested effects included */
@@ -970,11 +993,15 @@ class Fx {
         const sc = o.scale, lib = o.lib, exp = s.c.export!, f = o.frame;
         const col: Col = [1, 1, 1, a * o.alpha, 0, 0, 0];
         // the inner clip sits at the offset inside the component's scale (0x82a8e0 → 0x123c548)
-        const m = this.beam(s.c, o, px, py, sc) ?? [sc, 0, 0, sc, px + sc * o.ox, py + sc * o.oy];
+        const bm = this.beam(s.c, o, px, py, sc);
+        if (bm === 'hide') continue;
+        const m = bm ?? [sc, 0, 0, sc, px + sc * o.ox, py + sc * o.oy];
         // the instance's text on its own components' TextInstanceName child (0x82c58c, +0x2c != 0)
         const tn = (s.c as { textInstanceName?: string }).textInstanceName;
-        const text = this.depth === 0 && tn && this.opts.text ? { text: { [tn]: this.opts.text } } : undefined;
-        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, f, m, col, text) });
+        const text = this.depth === 0 && tn && this.opts.text ? { [tn]: this.opts.text } : undefined;
+        const inst = o.inst;
+        const dopts = inst ? (text ? { inst, text } : { inst }) : (text ? { text } : undefined);
+        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, inst ? inst.frame : f, m, col, dopts) });
         continue;
       }
       const em = o;

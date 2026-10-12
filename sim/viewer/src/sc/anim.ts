@@ -124,11 +124,15 @@ export interface AnimState {
   swing: boolean;
   /** the attack's time step of the last attacking frame (view +0xa98, 0xfc94bc(attack, 50)): the finish clock's rate */
   scale: number;
+  /** the last attack frame was past frame 0 (view +0xc68): TryToFinishAttackAnimationBeforeNextAttack finishes it */
+  midSwing: boolean;
+  /** AttackShakeTime: the position each direction clip was last given (vt+0x20 on the clip; 0x840d44 @0x842c44) */
+  shakes: Map<string, [number, number]> | null;
 }
 
 export function newAnimState(): AnimState {
   return { angle: -1, hold: 0, rot: 0, sign: 1, action: -1, actionStart: 0, stepToggle: 0, stopped: false,
-    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false, scale: 50 };
+    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false, scale: 50, midSwing: false, shakes: null };
 }
 
 /** Logic inputs for one character view frame (native names in brackets). */
@@ -171,6 +175,21 @@ export interface AnimInput {
    * move speed is below 1 (no landing cap).
    */
   jumpLeft?: number;
+  /**
+   * VisualHitSpeed of the attack sequence's first entry (0xde0c98(data, 0), entry +0xa4; 0 or absent: none)
+   * and of the entry at the view's sequence index +0x4cc (the loader 0xdde618 copies an entry's missing
+   * VisualHitSpeed from the one before). With a VisualHitSpeed the attack frame comes from 0x845244's own
+   * branch, not from 0x84a9cc.
+   */
+  visualHitSpeed?: number;
+  visualHitSpeedCur?: number;
+  /** CharData_hasAttackSeqMode 0xde0be8 (data +0x3d8 != 0: the Inferno attack sequence) */
+  seqMode?: boolean;
+  /** AttackShakeTime (data +0x688) and whether the battle is over (0xd4220c: no shake then) */
+  attackShakeTime?: number;
+  battleOver?: boolean;
+  /** C rand() stand-in for the shake (0..2^31−1); the client's libc sequence is not reproducible */
+  rand?: () => number;
 }
 
 export interface AnimFrame {
@@ -186,6 +205,29 @@ export interface AnimFrame {
    * AttackStartEffect (0x83e524 -> vt+0xc0)
    */
   attackStart?: boolean;
+  /** AttackShakeTime: the direction clip's position inside the sprite (SC px of the clip, 0x840d44 @0x842c44) */
+  shake?: [number, number];
+}
+
+/**
+ * 0x845244: the attack clip's frame for `time` on the attack slot. Without an action_frame (or
+ * action_frame1) label: frame 0. Without a VisualHitSpeed (0xde0c98(data, 0) = 0) it is 0x84a9cc with the
+ * sequence flag (the buff freeze frame of 0xfc21d8 / 0xfc2238 is not ported); with one the swing flag
+ * stays clear (so 0x840d44 plays no AttackStartEffect) and the clip follows the VisualHitSpeed of the
+ * view's sequence entry: in sequence mode frame = (time mod V)·frames / V (the clip loops every V ms,
+ * whatever the HitSpeed), otherwise 0x84a9cc's formula with hitSpeed V (0x845244's inlined copy, flag set
+ * as there). The InfernoDragon_EV1 name test of the client does not concern supported cards.
+ */
+export function attackFrame845244(keepLast: boolean, seqMode: boolean, vhs0: number, vhsCur: number, hitSpeed: number, time: number,
+  frames: number, clipMs: number, actionFrame: number, extra: number): { frame: number; done: boolean } {
+  if (actionFrame < 0) return { frame: 0, done: false };
+  if (!vhs0) return attackFrame(keepLast, seqMode, hitSpeed, time, frames, clipMs, actionFrame, extra);
+  const v = vhsCur;
+  if (seqMode) {
+    const q = v !== 0 ? t(time / v) : 0;
+    return { frame: v !== 0 ? t(((time - q * v) * frames) / v) : 0, done: false };
+  }
+  return attackFrame(keepLast, false, v, time, frames, clipMs, actionFrame, extra);
 }
 
 function slotArt(art: CharacterArt, team: 0 | 1, slot: number): [string, ActionArt] | null {
@@ -329,22 +371,58 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   if (slot === 2) {
     const clipMs = t((a.frames * 1000) / a.fps);
     const af = a.actionFrame ?? labelFrame(a, 'action_frame1');
+    const keepLast = !!art.animationsKeepLastFrame;
+    const seqMode = !!i.seqMode;
+    const vhs0 = i.visualHitSpeed ?? 0, vhsCur = i.visualHitSpeedCur ?? vhs0;
+    const dataHs = i.hitSpeed ?? art.hitSpeed ?? 1000;
     let time = i.atk;
+    let hs = dataHs;
+    let extra = 0;
+    // +0xa94 += dt · (+0xa98 · 20): the step of the last attacking frame (stored @0x842850), float32 (0x840d44 @0x8418fc)
+    const finishStep = () => { s.finishClock = Math.fround(s.finishClock + Math.fround(dt * Math.fround(s.scale * 20))); return t(s.finishClock); };
+    let f: { frame: number; done: boolean };
     if (s.finishing) {
-      // +0xa94 += dt · (+0xa98 · 20): the step of the last attacking frame (stored @0x842850), float32 (0x840d44 @0x8418fc)
-      s.finishClock = Math.fround(s.finishClock + Math.fround(dt * Math.fround(s.scale * 20)));
-      time = t(s.finishClock);
+      // TryToFinishAttackAnimation out of the attack state: the view clock, HitSpeed, no finish time (local_124 = 0)
+      time = finishStep();
+      f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, 0);
+      if (f.frame === 0) s.finishing = false;
     } else {
       if (i.atkPrev !== i.atk) time = t(i.atkPrev + i.alpha * (i.atk - i.atkPrev));
-      s.finishClock = time;
-      s.scale = scale;
+      extra = i.finish > 0 ? t(i.alpha * 50) + i.finish : 0;
+      f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, extra);
+      if (f.frame === 0 && s.midSwing && art.tryToFinishAttackAnimationBeforeNextAttack) {
+        // 0x8427a8: the timer's frame is back at 0 (a new cycle, or the timer restarted) while the last frame
+        // was not: the old swing goes on, on the view clock +0xa94 with HitSpeed, until it reaches frame 0;
+        // +0xa98 keeps its value
+        time = finishStep();
+        hs = dataHs;
+        f = attackFrame845244(keepLast, seqMode, vhs0, vhsCur, hs, time, a.frames, clipMs, af, extra);
+        if (f.frame === 0) s.midSwing = false;
+      } else {
+        // 0x842828: +0xc68 = frame > 0, +0xa94 = the shown attack time, +0xa98 = this frame's step
+        s.midSwing = f.frame > 0;
+        s.finishClock = time;
+        s.scale = scale;
+      }
     }
-    const extra = i.finish > 0 ? t(i.alpha * 50) + i.finish : 0;
-    if (af >= 0) {
-      const f = attackFrame(!!art.animationsKeepLastFrame, false, i.hitSpeed ?? art.hitSpeed ?? 1000, time, a.frames, clipMs, af, extra);
-      frame = f.frame;
-      swing = f.done;
-      if (s.finishing && f.frame === 0) s.finishing = false;
+    frame = f.frame;
+    swing = f.done;
+    // AttackShakeTime (0x842c44): while the swing flag is up and was up last frame (+0xa15), the clip sits at
+    // (0, 0) (@0x842c94) until (time mod hit speed) reaches hit speed − AttackShakeTime, then at a random
+    // offset of −1.2..1.176 px per axis each frame (two rand() @0x8435d8, x first), (0, 0) once the battle is
+    // over (0xd4220c)
+    const ast = i.attackShakeTime ?? 0;
+    if (ast !== 0 && swing && s.swing) {
+      const m = hs !== 0 ? time - t(time / hs) * hs : time;
+      let off: [number, number] = [0, 0];
+      if (!(m < hs - ast) && !i.battleOver) {
+        const r = i.rand ?? (() => 0);
+        // fmadd s = (rand % 100) · 0.024f + (−1.2f), one rounding (@0x843618)
+        const x = Math.fround((r() % 100) * Math.fround(0.024) + Math.fround(-1.2));
+        const y = Math.fround((r() % 100) * Math.fround(0.024) + Math.fround(-1.2));
+        off = [x, y];
+      }
+      (s.shakes ??= new Map()).set(`${a.export}_${dir.idx + 1}`, off);
     }
   } else if (slot === 4) {
     // the jump action (id 4: the slot holds _jump1_, or _run1_ without one, 0x835fd0) at 0x84440c:
@@ -361,6 +439,8 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
       if (cap <= frame) frame = cap;
     }
   } else if (slot === 0 || slot === 3) {
+    // the walk branch puts the clip back at (0, 0) every frame (vt+0x20(0, 0), 0x840d44 @0x843c0c)
+    if (s.shakes) s.shakes.set(`${a.export}_${dir.idx + 1}`, [0, 0]);
     const walk = i.walkPrev + i.alpha * (i.walk - i.walkPrev);
     const sma = art.stopMovementAfterMS ?? 0;
     if (sma < 1) {
@@ -402,7 +482,11 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   if (frame < 0) frame += a.frames;
   const attackStart = swing && !s.swing;
   s.swing = swing;
-  return { export: `${a.export}_${dir.idx + 1}`, frame, mirror: dir.sign < 0, action: slot, key, attackStart };
+  const exp = `${a.export}_${dir.idx + 1}`;
+  const out: AnimFrame = { export: exp, frame, mirror: dir.sign < 0, action: slot, key, attackStart };
+  const sh = s.shakes?.get(exp);
+  if (sh && (sh[0] !== 0 || sh[1] !== 0)) out.shake = sh;
+  return out;
 }
 
 /**

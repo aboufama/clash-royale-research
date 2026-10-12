@@ -53,6 +53,8 @@ export interface SpriteRef {
   export: string;
   frame: number;
   mirror: boolean;
+  /** AttackShakeTime: the direction clip's own position inside the sprite container (0x840d44 @0x842c44) */
+  shake?: [number, number];
 }
 
 /** The facing a crown tower or building view starts with (blue faces +y, red −y; logic units). */
@@ -86,6 +88,8 @@ export interface UnitDrawOptions {
    * the last attack (recoil) */
   face?: [number, number];
   sinceAttackS?: number;
+  /** the view's shake / recoil offset (battle px) on its sprite entries (0x839b08 from vt+0xf0 / vt+0xf8) */
+  shift?: [number, number];
 }
 
 export class BattleArt {
@@ -226,27 +230,30 @@ export class BattleArt {
   // -- arena -----------------------------------------------------------------------------------
 
   /**
-   * The arena clip. Its nested clips (river, flags, ...) loop on their own from the battle's start
-   * (24 fps clips, one shared clock).
+   * The arena clip. With `inst` (its MovieClip instance, made with the battle layer 0x856088 → 0x120cc50)
+   * the nested clips (river, flags, crowds) play on their own playheads; without one they loop on one
+   * shared clock from the battle's start (gallery).
    */
-  drawBackground(r: ScRenderer, timeMs = 0): void {
+  drawBackground(r: ScRenderer, timeMs = 0, inst?: ClipInst): void {
     const a = this.manifest.arena;
     const lib = this.lib(a.sc);
-    r.draw(lib, a.export, 0, this.flip ? [-1, 0, 0, -1, 0, 768] : [1, 0, 0, 1, 0, 0], undefined,
-      { childFrame: Math.floor((timeMs * (lib.fps(a.export) || 24)) / 1000) });
+    r.draw(lib, a.export, inst ? inst.frame : 0, this.flip ? [-1, 0, 0, -1, 0, 768] : [1, 0, 0, 1, 0, 0], undefined,
+      inst ? { inst } : { childFrame: Math.floor((timeMs * (lib.fps(a.export) || 24)) / 1000) });
   }
 
-  /** A decoration at its position; nested clips (the water wheel) loop on the deco's clock. */
-  drawDeco(r: ScRenderer, o: Manifest['arena']['objects'][number], timeMs: number, m?: Mat): void {
+  /** A decoration at its position: on its clip instance's playheads (`inst`), else on the deco's clock. */
+  drawDeco(r: ScRenderer, o: Manifest['arena']['objects'][number], timeMs: number, m?: Mat, inst?: ClipInst): void {
     const [px, py] = this.decoPx(o);
     const t = Math.floor((timeMs * (o.fps || 30)) / 1000);
+    if (inst) { r.draw(this.lib(o.sc), o.export, inst.frame, m ?? [1, 0, 0, 1, px, py], undefined, { inst }); return; }
     r.draw(this.lib(o.sc), o.export, o.frames && o.frames > 1 ? t : 0, m ?? [1, 0, 0, 1, px, py], undefined, { childFrame: t });
   }
 
-  /** Decorations of one or more layers ('Base', 'Ground', 'Object'), in data order. */
-  drawArenaObjects(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object']): void {
-    for (const o of this.manifest.arena.objects) {
-      if (layers.includes(o.layer)) this.drawDeco(r, o, timeMs);
+  /** Decorations of one or more layers ('Base', 'Ground', 'Object'), in data order; `insts` by object index. */
+  drawArenaObjects(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object'], insts?: readonly (ClipInst | null)[]): void {
+    const objs = this.manifest.arena.objects;
+    for (let i = 0; i < objs.length; i++) {
+      if (layers.includes(objs[i].layer)) this.drawDeco(r, objs[i], timeMs, undefined, insts?.[i] ?? undefined);
     }
   }
 
@@ -289,13 +296,15 @@ export class BattleArt {
       [offX ? 100 / (blur * offX) : 0, offY ? 100 / (blur * offY) : 0]);
   }
 
-  /** Decoration shadows (decos.csv Shadow* fields, no ScaleY default). */
-  drawArenaShadows(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object']): void {
-    for (const o of this.manifest.arena.objects) {
+  /** Decoration shadows (decos.csv Shadow* fields, no ScaleY default); `insts` by object index. */
+  drawArenaShadows(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object'], insts?: readonly (ClipInst | null)[]): void {
+    const objs = this.manifest.arena.objects;
+    for (let i = 0; i < objs.length; i++) {
+      const o = objs[i];
       if (!layers.includes(o.layer) || !o.shadowScaleX) continue;
       const [px, py] = this.decoPx(o);
       this.drawDeco(r, o, timeMs,
-        this.shadowMatrix(o.shadowScaleX, o.shadowScaleY ?? 0, o.shadowSkew ?? 0, o.shadowX ?? 0, o.shadowY ?? 0, px, py));
+        this.shadowMatrix(o.shadowScaleX, o.shadowScaleY ?? 0, o.shadowSkew ?? 0, o.shadowX ?? 0, o.shadowY ?? 0, px, py), insts?.[i] ?? undefined);
     }
   }
 
@@ -460,7 +469,8 @@ export class BattleArt {
     const art = this.character(name);
     const sp = o.sprite;
     if (!sp) return art.clip ? this.drawBuilding(r, name, team, x, y, 0, o) : null;
-    const m = this.filterMatrix(art, o, this.unitMatrix(art, sp, x, y, o.z ?? 0));
+    const m = this.filterMatrix(art, o, this.unitMatrix(art, sp, x, y, o.z ?? 0), sp.shake);
+    if (o.shift) { m[4] += o.shift[0]; m[5] += o.shift[1]; }
     r.draw(this.lib(art.sc), sp.export, sp.frame, m, this.unitColor(o), o.inst ? { inst: o.inst } : {});
     return sp;
   }
@@ -492,9 +502,11 @@ export class BattleArt {
    * The view's filter slot (+0x4c0): the deploy filter (DeployBaseAnimExportName) or, once hit, the
    * damage filter facing the hit. Played at its own fps until its last frame (0x839b08); each frame
    * the filter's first child matrix F is composed outside the sprite's scale/mirror (0x83d2e0):
-   * world = T(position) * F * local. Matrix only: the colour transform is reset to identity.
+   * world = T(position) * F * local. Matrix only: the colour transform is reset to identity. `clipPos` is the
+   * clip's own position inside the sprite container (AttackShakeTime), kept under F (0x83d2e0 multiplies the
+   * clip's whole matrix).
    */
-  filterMatrix(art: CharacterArt, o: UnitDrawOptions, m: Mat): Mat {
+  filterMatrix(art: CharacterArt, o: UnitDrawOptions, m: Mat, clipPos?: [number, number]): Mat {
     let f: { m: Mat; c: Col | null } | null = null;
     if (o.damage && art.damageFilters) {
       const ref = art.damageFilters[o.damage.dir];
@@ -504,8 +516,9 @@ export class BattleArt {
     if (!f && !o.damage && o.deployMs !== undefined && deploy) {
       f = this.filterAt(deploy.sc, deploy.export, o.deployMs);
     }
-    if (!f) return m;
-    const local: Mat = [m[0], m[1], m[2], m[3], 0, 0];
+    const lx = clipPos ? clipPos[0] : 0, ly = clipPos ? clipPos[1] : 0;
+    if (!f) return clipPos ? [m[0], m[1], m[2], m[3], m[4] + lx, m[5] + ly] : m;
+    const local: Mat = [m[0], m[1], m[2], m[3], lx, ly];
     return matMul(matMul([1, 0, 0, 1, m[4], m[5]], f.m), local);
   }
 

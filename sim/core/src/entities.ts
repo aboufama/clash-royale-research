@@ -532,7 +532,7 @@ export interface BattleEvent {
   tick: number;
   type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path'
     | 'areaRing' | 'pushRing' | 'landing' | 'aoePulse' | 'elixir' | 'projEnd' | 'reject'
-    | 'damage' | 'shieldLost' | 'wobble' | 'kingActivate';
+    | 'damage' | 'shieldLost' | 'wobble' | 'kingActivate' | 'dash' | 'shake';
   team: number;
   x: number;
   y: number;
@@ -572,6 +572,11 @@ export interface BattleEvent {
    *   SpawnCharacterEffect), else absent.
    * - hit / shoot: `src` = the target id; `fx` = 1 for a charged attack (movement +0x1e0 >= 10000).
    * - impact: `src` = the projectile's target id (-1: none); `z` = the projectile's z (+0x8c) at the hit.
+   * - dash: AttackComp_update 0xfc7e20 calls the attacker view's vt+0x40 (0x845ce8, the AttackDashTime lunge)
+   *   when (AttackDashTime + attack timer) / HitSpeed steps up this tick; `id` the attacker, `src` the target,
+   *   `x`/`y` its position, `vx`/`vy` attacker − target, `r` its collision radius (target vt+0xa0).
+   * - shake: a piercing hit 0xf8ff74 of a ShakesTargets projectile calls the victim view's vt+0xf0 (0x83e488)
+   *   with `vx`/`vy` = victim − projectile (0xf90640).
    */
   fx?: number;
   src?: number;

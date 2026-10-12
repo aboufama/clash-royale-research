@@ -41,6 +41,7 @@
 //   (+0x4c0 = +0xb08, time 0) and restores the alpha.
 
 import { nativeAngle } from './anim.ts';
+import type { Unit } from '../../../core/src/index.ts';
 
 /** health_bars.csv flags the bar logic reads (manifest hud.healthBars). */
 export interface HealthBarFlags {
@@ -286,3 +287,58 @@ export function newBarChoose(v: NewBarView, badges: readonly (BarPartRef & { int
   v.flags = flags;
   return { badge: b, bar, badgeChanged: changed, intro };
 }
+
+// ---------------------------------------------------------------------------------------------- jolts
+
+/**
+ * A view's shake / recoil (0x839b08 from vt+0xf0 0x83e488 and vt+0xf8 0x83e4d8): timers +0x9f0 (shake,
+ * 0.1 s) and +0x9f4 (recoil, 0.25 s), the vector +0x9f8 / +0x9fc (logic units) and this frame's offset (battle px).
+ */
+export interface Jolt { t0: number; t1: number; vx: number; vy: number; ox: number; oy: number }
+
+/**
+ * One frame of 0x839b08's jolt part (@0x83b3c4), `dt` the frame's seconds (float32): both timers lose dt (not
+ * below 0); k = (0.05 − 2·|t0 − 0.05|)·0.025 while the recoil timer is out, else (0.125 − 2·|t1 − 0.125|)·0.025;
+ * the offset k·(+0x9f8, +0x9fc), negated in the turned view (0x84f424), goes on the view's sprite entries
+ * except BASE_SPRITE (+0x138) and those flagged +0x2d (vt+0x28 on top of 0x84d738's position; the shadow
+ * container is not one of them) and on the bar holder (0x851d54 on +0x618). A view keeps −0.00125·v once
+ * its timers run out, as the client does.
+ */
+export function joltStep(j: Jolt, dt: number, flip: boolean): void {
+  const f = Math.fround;
+  j.t0 = Math.max(0, f(j.t0 - dt));
+  j.t1 = Math.max(0, f(j.t1 - dt));
+  const a0 = Math.abs(f(j.t0 + f(-0.05)));
+  let base: number, a: number;
+  if (j.t1 > 0) { base = 0.125; const d = f(j.t1 - 0.125); a = f(Math.abs(d) * 2); } else { base = f(0.05); a = f(a0 + a0); }
+  const k = f(f(base - a) * f(0.025));
+  const sgn = flip ? -1 : 1;
+  j.ox = sgn * f(k * j.vx);
+  j.oy = sgn * f(k * j.vy);
+}
+
+/**
+ * vtb8 0xf82a18 of a jumping character (state 5), the speed the engine's jump step uses: 0 with the
+ * TAG_NO_MOVE / TAG_NO_MOVE_ALLOW_ATTRACT status tags (set by no supported buff or action), a dash in
+ * progress (attack +0x48 > 0, actor +0x1f0 > 0: no supported jumper dashes) or an axe in flight (attack
+ * +0x64 > 0), else JumpSpeed unscaled (the state 3 / 5 path returns before Buff_speedScale, so a frozen
+ * or stunned jumper keeps it).
+ */
+export function jumpMoveSpeed(u: Unit): number {
+  return u.axeWait > 0 ? 0 : u.def.jumpSpeed;
+}
+
+/**
+ * 0x846f98 / 0x847068 / 0x847138 / 0x847208: a view coordinate `v` pulled toward the lunge point `to` while the
+ * dash timer t (+0xa48) runs: p = |t − D|·100 / D, u = max(0, 100 − p); u ≥ 2 gives v + (to − v)·(u >> 1) / 100
+ * (C integer division), so the view goes half way to the point at t = D (the hit) and back over 2·D.
+ */
+export function dashPull(v: number, to: number, t: number, D: number): number {
+  if (t <= 0) return v;
+  const q = t - D < 0 ? D - t : t - D;
+  const p = D !== 0 ? Math.trunc((q * 100) / D) : 0;
+  const u = Math.max(0, 100 - p);
+  if (u < 2) return v;
+  return Math.trunc(((to - v) * (u >> 1)) / 100) + v;
+}
+
