@@ -116,6 +116,10 @@ PROJ_EFFECT_FIELDS = ("HitEffect", "TrailEffect", "DeathEffect", "PingpongDeathE
 HUD_EXPORTS = (
     # bottom panel: hand, elixir bar, next card
     "HUD_player", "spell_card_ingame", "spell_card_ingame_reveal", "card_item_elixir_ingame",
+    # in-hand card parts drawn by BattleArt.drawCard (frame, icon box, radial mask, dimmers)
+    "card_item_frame", "card_item_frame_legendary", "card_item_frame_champion", "card_item_image",
+    "card_mask_normal", "card_mask_legendary", "card_mask_champion", "card_item_dimmer",
+    "card_item_dimmer_legendary", "card_item_dimmer_champion", "card_item_disabled",
     "Elixir_bar_drop_anim", "elixir_float_txt", "elixir_float_txt_blue", "elixir_float_txt_red",
     # top: timer, crowns, player names
     "HUD_topLeft", "HUD_topRight", "HUD_topRight_overtime", "HUD_topRight_double_elixir",
