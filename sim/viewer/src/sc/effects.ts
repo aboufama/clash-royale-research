@@ -1,167 +1,797 @@
-// EffectPlayer: plays legacy_vfx effects (manifest.effects / manifest.emitters) at game positions.
+// EffectPlayer: the client's legacy_vfx effect system, ported from libg 160402020 (visual only).
 //
 //   const fx = new EffectPlayer(art);
-//   fx.play('Fireball_explosion', x, y, { team: 0 });
-//   fx.update(dtMs);
-//   for (const it of fx.collect('Object')) ... (it.sortY, it.draw(r))   // interleave with units
-//   fx.draw(r, 'Ground'); fx.draw(r, 'Base'); ... fx.draw(r, 'Above');
+//   const h = fx.play('Fireball_explosion', x, y, { team: 0, angle: 90 });   // logic units, degrees
+//   fx.update(dtMs);                                   // integer-ms steps like the client
+//   fx.draw(r, 'Ground'); for (const it of fx.collect('Object')) ... (it.sortY, it.draw(r))
 //
-// Components: SWF (plays the export once, or loops with the effect), Effect (nested), ParticleEmitter
-// (below), Filter (not drawn here; filters are applied to units, see BattleArt.filterAt).
-// Component `Time` = start delay (ms); effect `Scale` x component `RenderableScale` scale everything.
-// `EnemyVersion` is used for team 1. `Loop` effects restart until stop(); `FollowParent` effects
-// track a callback position.
+// Effect instance (vtable 0x188c2a0; ctor 0x82b7ac, update 0x82bf10, stop 0x82d074, isDone 0x82cf98,
+// setLoop 0x82cc5c, parent removed 0x82d300): an age in integer ms; each RenderableComponent is created
+// on the first update with age >= its Time (0x82c58c) and then updated with the frame's dt; age += dt
+// after the components. A Loop effect never finishes until stopped; with ForcedLength it restarts
+// (components destroyed) every ForcedLength ms, and a non-looping one finishes at ForcedLength;
+// otherwise it is done when every component has started and finished. Stopping (or the followed
+// parent disappearing, for a looping effect) stops every component. FollowParent / attached effects
+// take the parent sprite's position each update with y ± 0.01 world (in front of the parent). The
+// enemy's effects use EnemyVersion (0x82dcb0 → 0xe22124) and their emitters' EnemyVersion (0xe56cbc).
 //
-// Particle emitter model (field names from legacy_vfx/emitters.json; the semantics are inferred,
-// not recovered from the game code, so this is an approximation):
-//   - emitter lifetime = rand(MinLife, MaxLife) ms; one particle every rand(ParticleMin/MaxInterval) ms
-//     while alive; with no interval, a single burst of ParticleCount particles.
-//   - ParticleCount caps the number of live particles.
-//   - particle lifetime rand(ParticleMinLife, ParticleMaxLife) ms; position starts at radius
-//     rand(ParticleMin/MaxRadius) px along the emission angle rand(ParticleMin/MaxAngle) deg
-//     (0 = screen up, clockwise; evenly spread unless ParticleRandomAngle), plus a random point in
-//     ParticleStartXYAreaRadius and ParticleStartX; height ParticleStartZ px.
-//   - horizontal speed rand(ParticleMin/MaxSpeed) px/s along the angle, vertical rand(Min/MaxVelocityZ)
-//     px/s, gravity ParticleGravity px/s^2 on z (negative = falls); ground-plane y is foreshortened
-//     like the arena and heights are projected by zScale (0.585); particles bounce on z = 0 (half speed) unless NoBounce / StopOnBounce.
-//   - Inertia = percent of the parent's velocity inherited (trails use ~1).
-//   - scale StartScale -> EndScale (percent, +-RandomScale), alpha fades over FadeIn/FadeOutDuration.
-//   - RotateToDirection orients the clip along its screen velocity; RotateMin/MaxSpeed spin (deg/s).
-//   - the particle clip plays at its own fps from birth; LoopParticleClip loops, otherwise it holds
-//     its last frame.  Shadow draws a dark copy on the ground (Shadow layer, alpha ShadowMulA).
-//   - not implemented: tails (ParticleMin/MaxTailLength), ribbon trails (TrailSWF), SpecialEffect,
-//     Modifiers, AngularSpeed, FrameFromAngle/ResourceFromAngle.
+// SWF component (0x82a360, update 0x82a994): the clip lasts D = frames · frame time; while not looping
+// it is done once t >= D, frame ⌊t·frames / D⌋ (looping: t mod D); scale RenderableScale% × effect
+// Scale; placed at the effect position (setPos3D 0x851b84).
+//
+// Particle emitter (SpecialEffect None; ctor 0x830b90, update 0x8319e8, spawn 0x831b90, new particle
+// 0x8311e8): life = MinLife' + rand(MaxLife − MinLife') with MinLife' = max(MinLife, 1) (setLoop:
+// looping → 0 = forever; else 0 → 2000; stop → 1). Each update steps the live particles (removing the
+// dead ones), then spawns while life = 0 or age < life, then age += dt. Spawning: with the next-spawn
+// timer >= 1 it counts down by dt; otherwise, while fewer than ParticleCount (≤ 100) are alive, spawn
+// one pre-aged by −timer and add MinInterval + rand(MaxInterval − MinInterval) to the timer. A new
+// particle picks a random resource; its angle is base + MinAngle + rand(range) (ParticleRandomAngle)
+// or base + MinAngle + (⌊i·range / ParticleCount⌋ mod range) for the i-th spawn, + the parent's angle
+// (ParticleAngleRelativeToParent); speed MinSpeed + rand(Δ)·effect Scale; vz (MinVZ + rand(Δ))·0.1;
+// radius (MinR + rand(Δ)) / 2 along the angle; ParticleStartX/Z · 0.1; ParticleStartXYAreaRadius
+// adds (sin a · 15, −cos a · 12) · (rand() mod R) · 0.002. Positions are world units (logic · 0.002).
+//
+// Particle (container, vtable 0x188c578; ctor 0x82f2c0, update 0x83094c → step 0x82fcc4, integrate
+// 0x8306a4, bounce 0x831d08): Inertia ≠ 0 steps in fixed 16 ms slices. Integration from the launch:
+// speed −= Inertia · dt / 1000 (clamped at 0); x += speed · cos · dt · 1e−4, y += speed · sin · dt · 1e−4;
+// z = z0 + (vz + g · t/2) · t / 1000 with g = Gravity · 1e−4 and t the time since launch; hitting z = 0
+// (unless NoBounce) restarts the arc at 0 with direction and vz × 0.65 (StopOnBounce: everything 0 and
+// the clip stops). Scale RandomScale-jittered × RenderableScale% × lerp(StartScale, EndScale)/100 over
+// life (only when either is set); FadeIn/FadeOut alpha; RotateToDirection turns the clip by the launch
+// angle; RotateMin/MaxSpeed spin per step. Clips play once over the particle's life (frame
+// ⌊age·n/life⌋) unless LoopParticleClip (loop) or PlayParticleClipOnce / a "playOnce" first label
+// (play once at fps). Tails (Min/MaxTailLength ms): a second point integrated `tail` ms behind; the
+// clip is stretched from it to the head ((|d| + w)·s / w along atan2 d). Shadow emitters add a copy in
+// the Ground layer at (x, y, 0) offset (−5, 15 + ShadowYShift) px, skew 0.6, flipped vertically,
+// tinted by the location shadow colour × ShadowMul% and alpha ShadowA · ShadowMulA / 25500.
+//
+// Layers (0xe22490 / 0x8569f0, drawn in this order): Base, Shadow (the shadow silhouette), Ground,
+// GroundAbility, Object, Above. Base, Ground and Object are sorted every frame by the key vt+0x168
+// (0x856a88): the ground-projected y of each sprite (+ SortingOffset for particles); GroundAbility and
+// Above keep creation order. A missing Layer means Ground (0xe65a8c).
+//
+// Approximations (A): the client's Mersenne-Twister effect RNG is replaced by a seeded xorshift;
+// emitter modifiers (EmitterReplaceType), trails (TrailSWF), SpecialEffect emitter types 1/2,
+// FrameFromAngle / ResourceFromAngle, AngularSpeed spirals around a parent and the 3D/light paths are
+// not ported; area effects can be scaled by radius (`radius`/`refRadius`) and cut off (`durationMs`)
+// by the caller.
 
 import type { Col, Mat } from './math.ts';
 import type { ScLibrary } from './library.ts';
 import type { ClipRef, EffectComponent, EffectDef, EmitterDef } from './manifest.ts';
 import type { ScRenderer } from './renderer.ts';
 import type { BattleArt } from './battle_art.ts';
+import { ClipPlayer } from './anim.ts';
+
+/** logic units → world units */
+const W = 0.002;
 
 export interface PlayOptions {
-  z?: number; // game units above ground
-  team?: 0 | 1;
-  angle?: number; // engine angle (radians) for ParticleAngleRelativeToParent
-  scale?: number; // extra multiplier
-  /** follow a moving parent: return [x, y, z] in game units, or null when the parent is gone */
+  z?: number; // logic units above ground
+  team?: 0 | 1; // 1 = the enemy of the viewing player: EnemyVersion effects/emitters
+  /** effect angle in degrees (world space, the client's 0..360), e.g. the hit direction */
+  angle?: number;
+  scale?: number; // extra multiplier (effect scale)
+  /** attach to a moving parent: its drawn position [x, y, z] in logic units, or null once it is gone */
   follow?: () => [number, number, number] | null;
-  /** parent velocity in game units / s (for Inertia) */
-  velocity?: () => [number, number, number];
-  /** end the effect after this many ms: loops stop, clips fade out over `fadeMs`, emitters stop */
+  /** the parent's angle in degrees (ParticleAngleRelativeToParent), e.g. a projectile's flight */
+  parentAngle?: () => number;
+  /** end the effect after this many ms (area effects): it is stopped and its clips fade over `fadeMs` */
   durationMs?: number;
-  /** fade-out length for clips when `durationMs` elapses (default 300) */
   fadeMs?: number;
-  /** area effects: scale everything by radius / refRadius (ScaledEffects are authored at refRadius) */
+  /** area effects: scale by radius / refRadius (ScaledEffects are authored at refRadius) */
   radius?: number;
   refRadius?: number;
-  /** skip emitters whose particles are permanent (life >= 100 s), e.g. the rubble a tower death effect
-   * leaves behind; draw that with BattleArt.drawKingTower/drawPrincessTower(destroyed) instead */
+  /** skip emitters whose particles are permanent (ParticleMinLife >= 100 s), e.g. tower rubble */
   skipPersistent?: boolean;
+  /** draw nothing (HideWhenDelayed parents) while this returns true */
+  hidden?: () => boolean;
 }
 
 export interface DrawItem {
   layer: string;
-  sortY: number; // SC px of the effect origin on the ground (for depth sorting with units)
+  sortY: number; // sort key: ground-projected SC px y (+ SortingOffset)
   draw(r: ScRenderer): void;
 }
 
-interface Particle {
-  clip: ClipRef;
-  lib: ScLibrary;
-  x: number; y: number; z: number; // px, relative to the emitter origin (y ground plane, down)
-  vx: number; vy: number; vz: number; // px/s
-  age: number; life: number;
-  s0: number; s1: number;
-  rot: number; spin: number;
-  stopped: boolean;
+/** Visual-only random numbers: rand(n) in [0, n), 0 for n <= 0 (stands in for 0x12949ec). */
+class Rng {
+  private s: number;
+  constructor(seed: number) { this.s = seed >>> 0 || 1; }
+  u32(): number {
+    let s = this.s;
+    s ^= s << 13; s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5; s >>>= 0;
+    this.s = s;
+    return s;
+  }
+  int(n: number): number {
+    n = Math.trunc(n);
+    return n > 0 ? this.u32() % n : 0;
+  }
+  /** C rand(): 0..2^31−1 */
+  crand(): number { return this.u32() >>> 1; }
 }
 
-interface SwfComp { kind: 'swf'; c: EffectComponent; start: number; done: boolean; lib: ScLibrary | undefined }
-interface EmitComp {
-  kind: 'emit'; c: EffectComponent; e: EmitterDef; start: number; done: boolean; started: boolean;
-  life: number; nextEmit: number; emitted: number; parts: Particle[];
+interface Ctx {
+  art: BattleArt;
+  rng: Rng;
+  seq: () => number;
+  /** draw particle shadow copies */
+  shadows: boolean;
+  shadowCol: Col;
+  shadowA: number;
 }
-interface NestComp { kind: 'nest'; c: EffectComponent; start: number; done: boolean; inst: EffectInst | null }
-type Comp = SwfComp | EmitComp | NestComp;
 
-interface EffectInst {
-  name: string;
-  def: EffectDef;
-  age: number; // ms since start (not reset by loops)
-  killAt: number; // ms (Infinity = never)
-  killed: boolean;
-  fade: number; // 1 -> 0 while fading out after killAt
-  x: number; y: number; z: number; // game units (current)
-  t: number;
-  scale: number;
-  team: 0 | 1;
-  angle: number;
-  comps: Comp[];
-  stopped: boolean;
-  done: boolean;
-  opts: PlayOptions;
-  parent: EffectInst | null;
+// ---------------------------------------------------------------------------------- particles
+
+interface Motion {
+  tAge: number; // ms since launch (int)
+  x: number; y: number; z0: number; z: number;
+  dirX: number; dirY: number; vz: number; speed: number;
 }
+
+class Particle {
+  readonly lib: ScLibrary;
+  readonly exp: string;
+  readonly frames: number;
+  readonly seq: number;
+  /** 'life': frame by age over life; 'clip': the clip plays on its own (loop or once) */
+  mode: 'life' | 'clip';
+  player: ClipPlayer | null = null;
+  frame = 0;
+  m: Motion;
+  t: Motion | null = null; // tail point
+  tail: number;
+  age = 0;
+  life = 0;
+  acc = 0; // fixed-step accumulator (Inertia)
+  rs = 1; // random scale factor (+0x1e4)
+  compScale = 1; // RenderableScale (+0x1bc)
+  clipRot: number; // RotateToDirection clip rotation, degrees
+  rotSpeed: number;
+  rotAcc = 0;
+  /** container matrix a, b, c, d and screen position */
+  a = 1; b = 0; c = 0; d = 1;
+  px = 0; py = 0; gy = 0;
+  alpha = 1;
+  readonly floor: number;
+  readonly g: number;
+  readonly sortOff: number;
+  readonly em: Emitter;
+
+  constructor(em: Emitter, ref: ClipRef, lib: ScLibrary, x: number, y: number, z: number, vz: number, g: number,
+    radius: number, angle: number, speed: number, tail: number, bounces: boolean, sortOff: number, seq: number) {
+    this.em = em;
+    const e = em.e;
+    this.lib = lib;
+    this.exp = ref.export;
+    this.frames = Math.max(1, ref.frames ?? lib.frameCount(ref.export) ?? 1);
+    this.seq = seq;
+    const rad = angle * 0.017453294;
+    let cx = Math.cos(rad), sy = Math.sin(rad);
+    x += radius * cx;
+    y += radius * sy;
+    if (e.InverseSpeed) { cx = -cx; sy = -sy; }
+    this.m = { tAge: 0, x, y, z0: z, z, dirX: cx, dirY: sy, vz, speed };
+    this.tail = tail;
+    if (tail) this.t = { tAge: -tail, x, y, z0: z, z, dirX: cx, dirY: sy, vz, speed };
+    this.g = g;
+    this.floor = bounces ? 0 : -1e6;
+    this.sortOff = sortOff;
+    this.clipRot = e.RotateToDirection ? angle : 0;
+    // the clip plays on its own when its first label is "playOnce", PlayParticleClipOnce or LoopParticleClip
+    const once = ref.labels?.['0'] === 'playOnce' || !!e.PlayParticleClipOnce;
+    if (once || e.LoopParticleClip) {
+      this.mode = 'clip';
+      this.player = new ClipPlayer(this.frames, ref.fps || 30);
+      if (once) this.player.playRange(0, this.frames - 1, false);
+    } else {
+      this.mode = 'life';
+    }
+    const rnd = (e.RandomScale as number | undefined) ?? 0;
+    if (rnd > 0) this.rs += (em.ctx.rng.int(rnd * 2) - rnd) * 0.01;
+    const rmin = (e.RotateMinSpeed as number | undefined) ?? 0, rmax = (e.RotateMaxSpeed as number | undefined) ?? 0;
+    this.rotSpeed = ((((rmax - rmin) * em.ctx.rng.int(100)) / 100 | 0) + rmin) * 0.01;
+    const amin = (e.ParticleMinSpawnAngle as number | undefined) ?? 0, amax = (e.ParticleMaxSpawnAngle as number | undefined) ?? 0;
+    if (amin !== amax) this.setRot(amin + em.ctx.rng.int(amax - amin), this.rs);
+    this.place(this.m);
+  }
+
+  private setRot(deg: number, s: number): void {
+    const r = deg * 0.017453292;
+    const c = Math.cos(r), sn = Math.sin(r);
+    this.a = c * s; this.b = sn * s; this.c = -sn * s; this.d = c * s;
+  }
+
+  /** setPos3D: world position (relative to the emitter with ParticlesFollowParent) → screen + sort key */
+  private place(m: Motion): void {
+    const em = this.em;
+    let x = m.x, y = m.y;
+    if (em.followParticles) { x += em.x; y += em.y; }
+    const art = em.ctx.art;
+    const [px, py] = art.gameToPx(x / W, y / W, m.z / W);
+    this.px = px; this.py = py;
+    this.gy = art.gameToPx(x / W, y / W, 0)[1];
+  }
+
+  /** 0x8306a4 */
+  private integrate(dt: number, m: Motion): void {
+    const e = this.em.e;
+    const oldZ = m.z;
+    const t = Math.max(m.tAge, 0);
+    m.z = m.z0;
+    const ang = (e.AngularSpeed as number | undefined) ?? 0;
+    if (ang !== 0) {
+      const r = (((((e.ParticleStartXYAreaRadius as number | undefined) ?? 0) * t) | 0) * 0.01) / (this.life || 1);
+      const a = (e.InverseSpeed ? -0.0001 : 0.0001) * (t * ang);
+      m.dirX = Math.sin(a) * r;
+      m.dirY = Math.cos(a) * r;
+    }
+    const sp = m.speed + ((e.Inertia as number | undefined) ?? 0) * dt * -0.001;
+    m.speed = sp;
+    if (sp >= 0) {
+      m.x += sp * m.dirX * dt * 0.0001;
+      m.y += dt * 0.0001 * m.speed * m.dirY;
+    } else {
+      m.speed = 0;
+    }
+    let z = m.z + (m.vz + this.g * (t / 2)) * t * 0.001;
+    if (z < this.floor) z = this.floor;
+    m.z = z;
+    this.place(m);
+    if (m.z <= this.floor && this.floor < oldZ) {
+      m.z0 = this.floor;
+      // 0x831d08 (no emitter modifiers): restart the arc
+      m.tAge = 0;
+      if (!e.StopOnBounce) {
+        m.dirX *= 0.65; m.dirY *= 0.65; m.vz *= 0.65;
+      } else {
+        m.dirX = 0; m.dirY = 0; m.vz = 0;
+        if (this.mode === 'life') this.mode = 'clip';
+        if (this.player) this.player.gotoAndStop(this.player.frame);
+        else { this.player = new ClipPlayer(this.frames, 30); this.player.gotoAndStop(this.frame); }
+      }
+    }
+  }
+
+  /** 0x83094c: true when dead */
+  update(dt: number): boolean {
+    if (!this.em.e.Inertia) return this.step(dt);
+    this.acc += dt;
+    if (this.acc < 16) return false;
+    let dead = false;
+    for (;;) {
+      dead = this.step(16);
+      if (dead) break;
+      const a = this.acc;
+      this.acc = a - 16;
+      if (a <= 0x1f) break;
+    }
+    return dead;
+  }
+
+  /** 0x82fcc4 */
+  private step(dt: number): boolean {
+    const e = this.em.e;
+    let tx = 0, ty = 0;
+    if (this.t) {
+      this.t.tAge += dt;
+      this.integrate(this.t.tAge < 0 ? 0 : dt, this.t);
+      tx = this.px; ty = this.py;
+    }
+    this.m.tAge += dt;
+    this.integrate(dt, this.m);
+    let s = this.rs;
+    const s0 = (e.StartScale as number | undefined) ?? 0, s1 = (e.EndScale as number | undefined) ?? 0;
+    if (s0 || s1) {
+      s = this.rs * 0.01 * this.compScale * ((this.age * (s1 - s0)) / (this.life || 1) + s0);
+      this.a = s; this.d = s;
+    }
+    if (this.t) {
+      const w = this.width();
+      const dx = this.px - tx, dy = this.py - ty;
+      if (w > 0) {
+        const len = ((Math.sqrt(dx * dx + dy * dy) + w) * s) / w;
+        const r = Math.atan2(dy, dx);
+        const c = Math.cos(r), sn = Math.sin(r);
+        this.a = c * len; this.b = sn * len; this.c = -sn * s; this.d = c * s;
+      }
+      this.px = tx + dx * 0.5;
+      this.py = ty + dy * 0.5;
+    }
+    if (this.mode === 'life') {
+      let f = this.life ? Math.trunc((this.age * this.frames) / this.life) : 0;
+      if (f < 0) f = 0;
+      if (f >= this.frames) f = this.frames - 1;
+      this.frame = f;
+    }
+    if (Math.abs(this.rotSpeed) > 0.05) {
+      this.rotAcc += this.rotSpeed;
+      this.setRot((e.RotateToDirection ? this.clipRot : 0) + this.rotAcc, s);
+    }
+    let a = 1;
+    const fin = (e.FadeInDuration as number | undefined) ?? 0;
+    if (this.age < fin) a = this.age / fin;
+    const fout = (e.FadeOutDuration as number | undefined) ?? 0;
+    if (fout > 0) {
+      const from = this.life - fout, into = this.age - from;
+      if (into !== 0 && from <= this.age) a *= 1 - into / fout;
+    }
+    this.alpha = Math.max(0, Math.min(1, a));
+    this.age += dt;
+    return this.life <= this.age;
+  }
+
+  private wCache = -1;
+  /** clip width (0x123ca58) for tail stretching */
+  private width(): number {
+    if (this.wCache < 0) {
+      const b = this.lib.frameBounds(this.exp, 0);
+      this.wCache = b ? Math.max(0, b[2] - b[0]) : 0;
+    }
+    return this.wCache;
+  }
+
+  advanceClip(dtS: number): void {
+    if (this.player) {
+      this.player.advance(dtS);
+      this.frame = this.player.frame;
+    }
+  }
+
+  item(layer: string, alphaMul: number): DrawItem | null {
+    const al = this.alpha * alphaMul;
+    if (al <= 0.002) return null;
+    const lib = this.lib, exp = this.exp, f = this.frame;
+    const cr = this.clipRot * 0.017453292;
+    const kc = Math.cos(cr), ks = Math.sin(cr);
+    // container [a, b, c, d] times the clip's own rotation (RotateToDirection)
+    const m: Mat = [this.a * kc + this.c * ks, this.b * kc + this.d * ks, this.c * kc - this.a * ks, this.d * kc - this.b * ks, this.px, this.py];
+    const col: Col = [1, 1, 1, Math.trunc(al * 255) / 255, 0, 0, 0];
+    return { layer, sortY: this.gy + this.sortOff, draw: (r) => r.draw(lib, exp, f, m, col) };
+  }
+
+  shadowItem(alphaMul: number): DrawItem | null {
+    const e = this.em.e;
+    const ctx = this.em.ctx;
+    const al = this.alpha * alphaMul * ((ctx.shadowA * ((e.ShadowMulA as number | undefined) ?? 0)) / 25500);
+    if (al <= 0.002) return null;
+    const art = ctx.art;
+    let x = this.m.x, y = this.m.y;
+    if (this.em.followParticles) { x += this.em.x; y += this.em.y; }
+    const [gx, gy] = art.gameToPx(x / W, y / W, 0);
+    const shift = (e.ShadowYShift as number | undefined) ?? 0;
+    const flip = !e.IgnoreShadowFlip;
+    const m: Mat = [this.a, this.b, flip ? 0.6 : this.c, flip ? -this.d : this.d, gx - 5, gy + shift + 15];
+    const mul = (k: string) => Math.min(1, Math.max(0, ((ctx.shadowCol[k === 'R' ? 0 : k === 'G' ? 1 : 2] * 255) *
+      ((e[`ShadowMul${k}`] as number | undefined) ?? 0)) / 25500));
+    const col: Col = [mul('R'), mul('G'), mul('B'), al, 0, 0, 0];
+    const lib = this.lib, exp = this.exp, f = this.frame;
+    return { layer: 'Ground', sortY: gy, draw: (r) => r.draw(lib, exp, f, m, col) };
+  }
+}
+
+// ---------------------------------------------------------------------------------- emitter
+
+class Emitter {
+  readonly kind = 'emit';
+  readonly e: EmitterDef;
+  readonly ctx: Ctx;
+  readonly fx: Fx;
+  readonly layer: string;
+  life: number;
+  age = 0;
+  next = 0;
+  count: number;
+  counter = 0;
+  parts: Particle[] = [];
+  x = 0; y = 0; z = 0; // world units
+  readonly followParticles: boolean;
+  /** effect Scale (+0x8c), RenderableScale (+0x90), base angle in degrees (+0xd8) */
+  readonly scale: number;
+  readonly compScale: number;
+  readonly baseAngle: number;
+
+  constructor(ctx: Ctx, fx: Fx, e: EmitterDef, layer: string, scale: number, compScale: number, baseAngle: number) {
+    this.scale = scale;
+    this.compScale = compScale;
+    this.baseAngle = baseAngle;
+    this.ctx = ctx;
+    this.fx = fx;
+    this.e = e;
+    this.layer = layer;
+    const min = Math.max(e.MinLife ?? 0, 1), max = e.MaxLife ?? 0;
+    this.life = ctx.rng.int(max - min) + min;
+    // ParticleCount; the low-end quarter count is not applied (high-quality client, A), capped at 100
+    this.count = Math.min(100, e.ParticleCount ?? 0);
+    this.followParticles = !!e.ParticlesFollowParent;
+  }
+
+  setLoop(loop: boolean): void {
+    if (loop) this.life = 0;
+    else if (this.life === 0) this.life = 2000;
+  }
+
+  stop(): void { this.life = 1; }
+
+  setPos(x: number, y: number, z: number): void { this.x = x; this.y = y; this.z = z; }
+
+  isDone(): boolean { return this.life !== 0 && this.life <= this.age && this.parts.length === 0; }
+
+  /** 0x8319e8: true when finished */
+  update(dt: number): boolean {
+    const n0 = this.parts.length;
+    const emitting = !(this.life !== 0 && this.life <= this.age);
+    if (n0 || emitting) {
+      for (let i = this.parts.length - 1; i >= 0; i--) {
+        if (this.parts[i].update(dt)) this.parts.splice(i, 1);
+      }
+      if (emitting) this.spawn(dt);
+      this.age += dt;
+    }
+    for (const p of this.parts) p.advanceClip(dt / 1000);
+    return n0 === 0 && !emitting;
+  }
+
+  /** 0x831b90 */
+  private spawn(dt: number): void {
+    const e = this.e;
+    if (!e.particles.length) return;
+    let next = this.next;
+    if (next >= 1) { this.next = next - dt; return; }
+    if (this.parts.length < this.count) {
+      const minI = e.ParticleMinInterval ?? 0, maxI = e.ParticleMaxInterval ?? 0;
+      let p = this.newParticle(-next);
+      while (p) {
+        next = minI + next + this.ctx.rng.int(maxI - minI);
+        this.next = next;
+        if (this.count <= this.parts.length || next > 0) return;
+        p = this.newParticle(-next);
+      }
+    }
+    this.next = 0;
+  }
+
+  /** 0x8311e8 */
+  private newParticle(preAge: number): Particle | null {
+    if (this.parts.length >= this.count) return null;
+    const e = this.e, rng = this.ctx.rng;
+    const ref = e.particles[rng.int(e.particles.length)];
+    const lib = this.ctx.art.libs.get(ref.sc);
+    const minA = e.ParticleMinAngle ?? 0, rangeA = (e.ParticleMaxAngle ?? 0) - minA;
+    let angle: number;
+    if (!e.ParticleRandomAngle) {
+      const n = rangeA < 2 ? 1 : rangeA; // unsigned compare in the client
+      const i = this.counter++;
+      const v = this.count ? Math.trunc((i * n) / this.count) : 0;
+      angle = this.baseAngle + ((v - Math.trunc(v / n) * n) + minA);
+    } else {
+      angle = this.baseAngle + (rng.int(rangeA) + minA);
+    }
+    if (e.ParticleAngleRelativeToParent && this.fx.parentAngle) angle += this.fx.parentAngle();
+    const minS = e.ParticleMinSpeed ?? 0;
+    const speed = Math.trunc(minS + rng.int((e.ParticleMaxSpeed ?? 0) - minS) * this.scale);
+    const minVz = e.ParticleMinVelocityZ ?? 0;
+    const vz = (rng.int((e.ParticleMaxVelocityZ ?? 0) - minVz) + minVz) * 0.1;
+    const minT = e.ParticleMinTailLength ?? 0;
+    const tail = rng.int((e.ParticleMaxTailLength ?? 0) - minT) + minT;
+    const minR = e.ParticleMinRadius ?? 0;
+    const radius = (rng.int((e.ParticleMaxRadius ?? 0) - minR) + minR) / 2;
+    let x = this.followParticles ? 0 : this.x;
+    let y = this.followParticles ? 0 : this.y;
+    const area = e.ParticleStartXYAreaRadius ?? 0;
+    const angSpeed = (e.AngularSpeed as number | undefined) ?? 0;
+    if (area && angSpeed < 1) {
+      const a = (rng.crand() % 360) * 0.01745328;
+      const d = (rng.crand() % area) * 0.002;
+      x += Math.sin(a) * 15 * d;
+      y -= Math.cos(a) * 12 * d;
+    }
+    const lifeMin = e.ParticleMinLife ?? 0;
+    const life = rng.int((e.ParticleMaxLife ?? 0) - lifeMin) + lifeMin;
+    if (!lib) return null;
+    const p = new Particle(this, ref, lib, x + (e.ParticleStartX ?? 0) * 0.1, y, this.z + (e.ParticleStartZ ?? 0) * 0.1, vz,
+      (e.ParticleGravity ?? 0) * 0.0001, radius, angle, speed, tail, !e.NoBounce,
+      (e.SortingOffset as number | undefined) ?? 0, this.ctx.seq());
+    // vt+0x30(effect scale) before the scale curve, then RenderableScale (0x8309f8)
+    p.a = this.scale; p.d = this.scale;
+    p.compScale = this.compScale;
+    p.life = life;
+    p.update(preAge);
+    this.parts.push(p);
+    return p;
+  }
+}
+
+// ---------------------------------------------------------------------------------- SWF component
+
+class SwfComp {
+  readonly kind = 'swf';
+  readonly lib: ScLibrary;
+  readonly c: EffectComponent;
+  readonly frames: number;
+  readonly dur: number;
+  readonly seq: number;
+  loop = false;
+  t = 0;
+  frame = 0;
+  done = false;
+  x = 0; y = 0; z = 0;
+  readonly scale: number;
+  constructor(ctx: Ctx, c: EffectComponent, lib: ScLibrary, scale: number) {
+    this.scale = scale;
+    this.c = c;
+    this.lib = lib;
+    this.frames = Math.max(1, c.frames ?? lib.frameCount(c.export!) ?? 1);
+    const fps = c.fps || 30;
+    this.dur = Math.trunc(Math.fround(1 / fps) * this.frames * 1000);
+    this.seq = ctx.seq();
+  }
+  setLoop(loop: boolean): void { this.loop = loop; }
+  stop(): void { this.loop = false; }
+  setPos(x: number, y: number, z: number): void { this.x = x; this.y = y; this.z = z; }
+  isDone(): boolean { return this.done; }
+  /** 0x82a994 */
+  update(dt: number): boolean {
+    const D = this.dur;
+    if (!this.loop) {
+      if (D <= this.t) { this.done = true; return true; }
+    } else if (D) {
+      this.t %= D;
+    }
+    if (this.frames >= 2) {
+      let f = D ? Math.trunc((this.t * this.frames) / D) : 0;
+      if (D <= this.t) f = this.frames - 1;
+      this.frame = f;
+    }
+    this.t += dt;
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------------- effect instance
+
+type CompObj = Emitter | SwfComp | Fx;
+interface CompSlot { c: EffectComponent; started: boolean; obj: CompObj | null }
+
+class Fx {
+  readonly kind = 'nest';
+  readonly ctx: Ctx;
+  readonly def: EffectDef;
+  readonly name: string;
+  readonly opts: PlayOptions;
+  readonly enemy: boolean;
+  readonly scale: number;
+  readonly angle: number;
+  age = 0;
+  loop: boolean;
+  follow: boolean;
+  stopped = false;
+  x: number; y: number; z: number; // world units
+  slots: CompSlot[];
+  /** area effects: fade multiplier after durationMs */
+  fade = 1;
+  killAt: number;
+  readonly depth: number;
+  parentAngle: (() => number) | undefined;
+
+  constructor(ctx: Ctx, name: string, def: EffectDef, x: number, y: number, z: number, opts: PlayOptions, scale: number, depth: number) {
+    this.ctx = ctx;
+    this.name = name;
+    this.def = def;
+    this.opts = opts;
+    this.enemy = opts.team === 1;
+    this.x = x; this.y = y; this.z = z;
+    this.scale = scale;
+    this.angle = opts.angle ?? 0;
+    this.loop = !!def.Loop;
+    this.follow = !!opts.follow;
+    this.parentAngle = opts.parentAngle;
+    this.depth = depth;
+    this.killAt = opts.durationMs ?? Infinity;
+    this.slots = def.components.map((c) => ({ c, started: false, obj: null }));
+  }
+
+  setLoop(loop: boolean): void {
+    this.loop = loop;
+    for (const s of this.slots) s.obj?.setLoop(loop);
+  }
+
+  /** 0x82d074 */
+  stop(): void {
+    for (const s of this.slots) { s.obj?.stop(); s.started = true; }
+    this.setLoop(false);
+    this.stopped = true;
+  }
+
+  setPos(x: number, y: number, z: number): void {
+    this.x = x; this.y = y; this.z = z;
+    for (const s of this.slots) s.obj?.setPos(x, y, z);
+  }
+
+  /** 0x82cf98 */
+  isDone(): boolean {
+    if (this.loop) return false;
+    const forced = this.def.ForcedLength ?? 0;
+    if (forced) return forced <= this.age;
+    return this.slots.every((s) => s.started && (!s.obj || s.obj.isDone()));
+  }
+
+  private make(c: EffectComponent): CompObj | null {
+    const ctx = this.ctx;
+    const compScale = (c.scale ?? 100) * 0.01;
+    if (c.type === 'SWF') {
+      const lib = c.sc && c.export ? ctx.art.libs.get(c.sc) : undefined;
+      if (!lib) return null;
+      return new SwfComp(ctx, c, lib, compScale * this.scale);
+    }
+    if (c.type === 'ParticleEmitter' && c.emitter) {
+      const m = ctx.art.manifest.emitters;
+      let e = m[c.emitter];
+      if (!e) return null;
+      if (this.enemy && e.EnemyVersion && m[e.EnemyVersion]) e = m[e.EnemyVersion];
+      if (this.opts.skipPersistent && (e.ParticleMinLife ?? 0) >= 100000) return null;
+      return new Emitter(ctx, this, e, c.layer || 'Ground', this.scale, compScale, this.angle);
+    }
+    if (c.type === 'Effect' && c.effect) {
+      if (this.depth > 8) return null;
+      const effects = ctx.art.manifest.effects;
+      let name = c.effect;
+      let def = effects[name];
+      if (!def) return null;
+      if (this.enemy && def.EnemyVersion && effects[def.EnemyVersion]) { name = def.EnemyVersion; def = effects[name]; }
+      // a nested effect keeps its own Scale (0x82b7ac reads it from its data); the caller's extra
+      // scale and the area-effect radius scale (A) carry over
+      const rs = this.opts.radius && this.opts.refRadius ? this.opts.radius / this.opts.refRadius : 1;
+      const fx = new Fx(ctx, name, def, this.x, this.y, this.z, { ...this.opts, durationMs: undefined },
+        effectScale(def) * (this.opts.scale ?? 1) * rs, this.depth + 1);
+      fx.parentAngle = this.parentAngle;
+      return fx;
+    }
+    return null;
+  }
+
+  /** 0x82bf10: true when done */
+  update(dt: number): boolean {
+    if (this.follow && this.opts.follow) {
+      const p = this.opts.follow();
+      if (p) {
+        // the parent sprite's position, y + 0.01 world (−0.01 before the flip) so it sorts in front
+        this.x = p[0] * W; this.y = p[1] * W + (this.ctx.art.flip ? -0.01 : 0.01); this.z = p[2] * W;
+      } else {
+        // 0x82d300: the parent is gone; a looping attached effect stops
+        this.follow = false;
+        if (this.loop) this.stop();
+      }
+    }
+    if (this.age >= this.killAt) {
+      if (!this.stopped) this.stop();
+      this.fade = Math.max(0, 1 - (this.age - this.killAt) / (this.opts.fadeMs ?? 300));
+    }
+    const forced = this.def.ForcedLength ?? 0;
+    if (forced && forced <= this.age && this.loop) {
+      for (const s of this.slots) { s.obj = null; s.started = false; }
+      this.age = 0;
+    }
+    for (const s of this.slots) {
+      if ((s.c.time ?? 0) > this.age) continue;
+      if (!s.started) {
+        s.started = true;
+        if (!this.stopped) {
+          s.obj = this.make(s.c);
+          if (s.obj) {
+            if (s.obj instanceof Fx) {
+              const nf = s.obj.def.ForcedLength ?? 0;
+              if (nf) s.obj.setLoop(false);
+              else if (!s.obj.loop) s.obj.setLoop(this.loop);
+            } else {
+              s.obj.setLoop(this.loop && !forced);
+            }
+            s.obj.setPos(this.x, this.y, this.z);
+          }
+        }
+      }
+      const o = s.obj;
+      if (!o) continue;
+      if (this.follow) o.setPos(this.x, this.y, this.z);
+      if (o.update(dt)) s.obj = null;
+    }
+    this.age += dt;
+    if (this.fade <= 0) return true;
+    return this.isDone();
+  }
+
+  collect(layer: string, out: DrawItem[], alphaMul: number): void {
+    if (this.opts.hidden?.()) return;
+    const a = alphaMul * this.fade;
+    for (const s of this.slots) {
+      const o = s.obj;
+      if (!o) continue;
+      if (o instanceof Fx) { o.collect(layer, out, a); continue; }
+      if (o instanceof SwfComp) {
+        if ((s.c.layer || 'Ground') !== layer || o.done) continue;
+        const art = this.ctx.art;
+        const [px, py] = art.gameToPx(o.x / W, o.y / W, o.z / W);
+        const gy = art.gameToPx(o.x / W, o.y / W, 0)[1];
+        const sc = o.scale, lib = o.lib, exp = s.c.export!, f = o.frame;
+        const col: Col = [1, 1, 1, a, 0, 0, 0];
+        out.push({ layer, sortY: gy, draw: (r) => r.draw(lib, exp, f, [sc, 0, 0, sc, px, py], col) });
+        continue;
+      }
+      const em = o;
+      const own = em.layer === layer;
+      const shadow = layer === 'Ground' && !!em.e.Shadow && this.ctx.shadows;
+      if (!own && !shadow) continue;
+      for (const p of em.parts) {
+        if (own) { const it = p.item(layer, a); if (it) out.push(it); }
+        if (shadow) { const it = p.shadowItem(a); if (it) out.push(it); }
+      }
+    }
+  }
+}
+
+function effectScale(def: EffectDef): number {
+  return def.Scale ? def.Scale * 0.01 : 1;
+}
+
+/** Layers sorted by the sort key every frame (0x856f28 → 0x856a88). */
+const SORTED = new Set(['Base', 'Ground', 'Object']);
 
 export class EffectPlayer {
   readonly art: BattleArt;
-  private list: EffectInst[] = [];
-  private seed: number;
+  private list: Fx[] = [];
   private nextId = 1;
-  private handles = new Map<number, EffectInst>();
-  /** set false to skip drawing particle shadows */
-  shadows = true;
-  /** screen projection of particle heights (orthographic camera: zPxPer1000 / pxPerTileX) */
-  zScale: number;
-  /** emitted screen-shake intensity of the last update (ms-weighted, effect ShakeScreen) */
+  private handles = new Map<number, Fx>();
+  private ctx: Ctx;
+  private seqN = 0;
+  private dtAcc = 0;
+  /** set false to skip particle shadow copies */
+  get shadows(): boolean { return this.ctx.shadows; }
+  set shadows(v: boolean) { this.ctx.shadows = v; }
+  /** screen-shake intensity of the last update (effect ShakeScreen) */
   shake = 0;
 
   constructor(art: BattleArt, seed = 12345) {
     this.art = art;
-    this.seed = seed >>> 0 || 1;
-    this.zScale = art.zPxPer1000 / art.pxPerTileX;
+    const sh = art.manifest.arena?.shadow ?? {};
+    this.ctx = {
+      art, rng: new Rng(seed), seq: () => this.seqN++, shadows: true,
+      shadowCol: [(sh.ShadowR ?? 0) / 255, (sh.ShadowG ?? 0) / 255, (sh.ShadowB ?? 0) / 255, 1, 0, 0, 0],
+      shadowA: sh.ShadowA ?? 0,
+    };
   }
 
-  private rnd(): number {
-    // xorshift32 (visual-only randomness)
-    let s = this.seed;
-    s ^= s << 13; s >>>= 0;
-    s ^= s >>> 17;
-    s ^= s << 5; s >>>= 0;
-    this.seed = s;
-    return s / 4294967296;
-  }
+  get count(): number { return this.list.length; }
 
-  private range(a: number | undefined, b: number | undefined): number {
-    const lo = a ?? 0, hi = b ?? lo;
-    return lo + (hi - lo) * this.rnd();
-  }
+  has(name: string): boolean { return !!this.art.manifest.effects[name]; }
 
-  get count(): number {
-    return this.list.length;
-  }
-
-  has(name: string): boolean {
-    return !!this.art.manifest.effects[name];
-  }
-
-  /** Start an effect; returns a handle for stop(). Unknown names return 0. */
+  /** Start an effect at logic (x, y); returns a handle for stop(). Unknown names return 0. */
   play(name: string, x: number, y: number, opts: PlayOptions = {}): number {
-    const inst = this.make(name, x, y, opts, null);
-    if (!inst) return 0;
-    this.list.push(inst);
+    const effects = this.art.manifest.effects;
+    let def = effects[name];
+    if (!def) return 0;
+    if (opts.team === 1 && def.EnemyVersion && effects[def.EnemyVersion]) { name = def.EnemyVersion; def = effects[name]; }
+    const radiusScale = opts.radius && opts.refRadius ? opts.radius / opts.refRadius : 1;
+    let px = x, py = y, pz = opts.z ?? 0;
+    const f = opts.follow?.();
+    if (f) { px = f[0]; py = f[1]; pz = f[2]; }
+    const fx = new Fx(this.ctx, name, def, px * W, py * W, pz * W, opts, effectScale(def) * (opts.scale ?? 1) * radiusScale, 0);
+    if (def.ShakeScreen) this.shake = Math.max(this.shake, def.ShakeScreen);
+    this.list.push(fx);
     const id = this.nextId++;
-    this.handles.set(id, inst);
+    this.handles.set(id, fx);
     return id;
   }
 
-  /** Stop a (looping) effect: no new particles/loops; live particles finish. With `fadeOut`,
-   * clips also fade out (as when `durationMs` elapses). */
+  /** Stop an effect (0x82d074): no new particles or loops; live particles finish. With `fadeOut`,
+   * clips also fade out as when `durationMs` elapses (area effects, A). */
   stop(handle: number, fadeOut = false): void {
     const e = this.handles.get(handle);
     if (e) {
-      e.stopped = true;
-      if (fadeOut && !e.killed) e.killAt = e.age;
+      e.stop();
+      if (fadeOut && e.killAt === Infinity) e.killAt = e.age;
     }
     this.handles.delete(handle);
   }
@@ -171,288 +801,31 @@ export class EffectPlayer {
     this.handles.clear();
   }
 
-  private make(name: string, x: number, y: number, opts: PlayOptions, parent: EffectInst | null): EffectInst | null {
-    const effects = this.art.manifest.effects;
-    let def = effects[name];
-    if (!def) return null;
-    const team = opts.team ?? 0;
-    if (team === 1 && def.EnemyVersion && effects[def.EnemyVersion]) {
-      name = def.EnemyVersion;
-      def = effects[name];
-    }
-    // a nested effect that (via EnemyVersion or directly) contains itself would recurse forever
-    let depth = 0;
-    for (let p = parent; p; p = p.parent) {
-      if (p.name === name || ++depth > 8) return null;
-    }
-    const radiusScale = opts.radius && opts.refRadius ? opts.radius / opts.refRadius : 1;
-    const inst: EffectInst = {
-      name, def, age: 0, killAt: opts.durationMs ?? Infinity, killed: false, fade: 1,
-      x, y, z: opts.z ?? 0, t: 0, scale: ((def.Scale ?? 100) / 100) * (opts.scale ?? 1) * radiusScale, team,
-      angle: opts.angle ?? 0, comps: [], stopped: false, done: false, opts, parent,
-    };
-    inst.comps = this.makeComps(inst);
-    return inst;
-  }
-
-  private makeComps(inst: EffectInst): Comp[] {
-    const out: Comp[] = [];
-    for (const c of inst.def.components) {
-      const start = c.time ?? 0;
-      if ((c.type === 'SWF') && c.sc && c.export) {
-        out.push({ kind: 'swf', c, start, done: false, lib: this.art.libs.get(c.sc) });
-      } else if (c.type === 'ParticleEmitter' && c.emitter) {
-        let e = this.art.manifest.emitters[c.emitter];
-        if (!e) continue;
-        if (inst.opts.skipPersistent && (e.ParticleMinLife ?? 0) >= 100000) continue;
-        if (inst.team === 1 && e.EnemyVersion && this.art.manifest.emitters[e.EnemyVersion]) {
-          e = this.art.manifest.emitters[e.EnemyVersion];
-        }
-        out.push({ kind: 'emit', c, e, start, done: false, started: false, life: 0, nextEmit: 0, emitted: 0, parts: [] });
-      } else if (c.type === 'Effect' && c.effect) {
-        out.push({ kind: 'nest', c, start, done: false, inst: null });
-      }
-    }
-    return out;
-  }
-
+  /** Advance every effect by dtMs (split into integer-ms updates like the client's frame dt). */
   update(dtMs: number): void {
     this.shake = 0;
-    for (const e of this.list) this.step(e, dtMs);
-    this.list = this.list.filter((e) => !e.done);
-    for (const [h, e] of this.handles) if (e.done) this.handles.delete(h);
+    this.dtAcc += Math.max(0, dtMs);
+    const dt = Math.floor(this.dtAcc);
+    if (dt <= 0) return;
+    this.dtAcc -= dt;
+    this.list = this.list.filter((e) => !e.update(dt));
+    const live = new Set(this.list);
+    for (const [h, e] of this.handles) if (!live.has(e)) this.handles.delete(h);
   }
 
-  private step(e: EffectInst, dt: number): void {
-    if (e.opts.follow) {
-      const p = e.opts.follow();
-      if (p) {
-        e.x = p[0]; e.y = p[1]; e.z = p[2];
-      } else {
-        e.stopped = true;
-      }
-    } else if (e.parent && e.def.FollowParent !== false) {
-      e.x = e.parent.x; e.y = e.parent.y; e.z = e.parent.z;
-    }
-    const t0 = e.t;
-    e.t += dt;
-    e.age += dt;
-    if (e.age >= e.killAt) {
-      e.stopped = true;
-      e.killed = true;
-      e.fade = Math.max(0, 1 - (e.age - e.killAt) / (e.opts.fadeMs ?? 300));
-    }
-    if (t0 === 0 && e.def.ShakeScreen) this.shake = Math.max(this.shake, e.def.ShakeScreen);
-    const forced = e.def.ForcedLength;
-    let allDone = true;
-    for (const c of e.comps) {
-      if (c.done) continue;
-      const lt = e.t - c.start;
-      if (lt < 0) {
-        if (e.stopped) c.done = true;
-        else allDone = false;
-        continue;
-      }
-      if (c.kind === 'swf') {
-        const frames = c.c.frames ?? 1, fps = c.c.fps || 30;
-        if (!e.def.Loop && (lt * fps) / 1000 >= frames) c.done = true;
-        if (e.def.Loop && e.stopped && !e.killed) c.done = true;
-        if (e.killed && e.fade <= 0) c.done = true;
-      } else if (c.kind === 'nest') {
-        if (!c.inst) {
-          c.inst = this.make(c.c.effect!, e.x, e.y, {
-            team: e.team, angle: e.angle, scale: e.scale * ((c.c.scale ?? 100) / 100), z: e.z, velocity: e.opts.velocity,
-            durationMs: Number.isFinite(e.killAt) ? Math.max(0, e.killAt - e.age) : undefined, fadeMs: e.opts.fadeMs,
-            skipPersistent: e.opts.skipPersistent,
-          }, e);
-          if (!c.inst) { c.done = true; continue; }
-        }
-        if (e.stopped) c.inst.stopped = true;
-        this.step(c.inst, c.inst.t === 0 ? lt : dt);
-        if (c.inst.done) c.done = true;
-      } else {
-        this.stepEmitter(e, c, lt, dt);
-      }
-      if (!c.done) allDone = false;
-    }
-    if (forced && e.t >= forced) allDone = true;
-    if (allDone) {
-      if (e.def.Loop && !e.stopped && e.t > 0) {
-        e.t = 0;
-        e.comps = this.makeComps(e);
-      } else {
-        e.done = true;
-      }
-    }
-  }
-
-  private stepEmitter(e: EffectInst, c: EmitComp, lt: number, dt: number): void {
-    const em = c.e;
-    const sc = e.scale * ((c.c.scale ?? 100) / 100);
-    if (!c.started) {
-      c.started = true;
-      c.life = em.MinLife !== undefined || em.MaxLife !== undefined ? this.range(em.MinLife, em.MaxLife) : 0;
-      c.nextEmit = 0;
-      dt = lt; // first step covers the time since the component's start
-    }
-    const max = em.ParticleCount ?? 1;
-    const hasInterval = (em.ParticleMinInterval ?? 0) > 0 || (em.ParticleMaxInterval ?? 0) > 0;
-    const emitting = !e.stopped || (!e.def.Loop && !e.killed);
-    if (emitting && em.particles.length) {
-      if (!hasInterval) {
-        if (c.emitted === 0) for (let i = 0; i < max; i++) this.emit(e, c, sc, i, max, 0);
-      } else {
-        const end = Math.min(lt, Math.max(c.life, 0.0001));
-        let guard = 0;
-        while (c.nextEmit <= end && guard++ < 500) {
-          if (c.parts.length < max) this.emit(e, c, sc, c.emitted, max, lt - c.nextEmit);
-          c.nextEmit += Math.max(0.5, this.range(em.ParticleMinInterval, em.ParticleMaxInterval));
-        }
-      }
-    }
-    // integrate particles
-    const g = em.ParticleGravity ?? 0;
-    for (const p of c.parts) {
-      p.age += dt;
-      if (p.stopped) continue;
-      const s = dt / 1000;
-      p.vz += g * s * sc;
-      p.x += p.vx * s;
-      p.y += p.vy * s;
-      p.z += p.vz * s;
-      if (p.z < 0 && p.vz < 0) {
-        p.z = 0;
-        if (em.StopOnBounce) {
-          p.vx = p.vy = p.vz = 0;
-          p.stopped = true;
-        } else if (em.NoBounce) {
-          p.vz = 0;
-        } else {
-          p.vz = -p.vz * 0.45;
-          p.vx *= 0.6;
-          p.vy *= 0.6;
-          if (Math.abs(p.vz) < 20 * sc) p.vz = 0;
-        }
-      }
-      p.rot += p.spin * s;
-    }
-    c.parts = c.parts.filter((p) => p.age < p.life);
-    const emitterOver = !hasInterval ? c.emitted > 0 || !em.particles.length : lt >= c.life;
-    if ((emitterOver || e.stopped) && c.parts.length === 0) c.done = true;
-  }
-
-  private emit(e: EffectInst, c: EmitComp, sc: number, index: number, count: number, preAge: number): void {
-    const em = c.e;
-    const ref = em.particles[Math.floor(this.rnd() * em.particles.length)];
-    const lib = this.art.libs.get(ref.sc);
-    c.emitted++;
-    if (!lib) return;
-    const minA = em.ParticleMinAngle ?? 0, maxA = em.ParticleMaxAngle ?? 0;
-    let deg = em.ParticleRandomAngle || count <= 1 ? this.range(minA, maxA) : minA + ((maxA - minA) * index) / count;
-    if (em.ParticleAngleRelativeToParent) deg += 90 - (this.art.viewAngle(e.angle) * 180) / Math.PI; // engine angle -> screen-up-based
-    const a = (deg * Math.PI) / 180;
-    const dx = Math.sin(a), dy = -Math.cos(a); // 0 = up (screen), clockwise
-    const rad = this.range(em.ParticleMinRadius, em.ParticleMaxRadius) * sc;
-    const aspect = (em.ParticleRadiusAspect ?? 100) / 100;
-    let x = dx * rad + (em.ParticleStartX ?? 0) * sc, y = dy * rad * aspect;
-    if (em.ParticleStartXYAreaRadius) {
-      const rr = Math.sqrt(this.rnd()) * em.ParticleStartXYAreaRadius * sc, aa = this.rnd() * Math.PI * 2;
-      x += Math.cos(aa) * rr;
-      y += Math.sin(aa) * rr;
-    }
-    const speed = this.range(em.ParticleMinSpeed, em.ParticleMaxSpeed) * sc;
-    let vx = dx * speed, vy = dy * speed;
-    if (em.Inertia && e.opts.velocity) {
-      const [evx, evy] = e.opts.velocity();
-      const [pvx, pvy] = this.art.viewVec(evx, evy);
-      const k = em.Inertia / 100;
-      vx += (pvx / 1000) * this.art.pxPerTileX * k;
-      vy -= (pvy / 1000) * this.art.pxPerTileX * k;
-    }
-    const rs = em.RandomScale ? 1 + ((this.rnd() * 2 - 1) * em.RandomScale) / 100 : 1;
-    const p: Particle = {
-      clip: ref, lib, x, y, z: (em.ParticleStartZ ?? 0) * sc,
-      vx, vy, vz: this.range(em.ParticleMinVelocityZ, em.ParticleMaxVelocityZ) * sc,
-      age: 0, life: Math.max(1, this.range(em.ParticleMinLife, em.ParticleMaxLife)),
-      s0: ((em.StartScale ?? 100) / 100) * rs * sc, s1: ((em.EndScale ?? em.StartScale ?? 100) / 100) * rs * sc,
-      rot: 0, spin: (this.range(em.RotateMinSpeed, em.RotateMaxSpeed) * Math.PI) / 180, stopped: false,
-    };
-    if (preAge > 0) p.age = Math.min(preAge, p.life * 0.5);
-    c.parts.push(p);
-  }
-
-  // -- drawing ---------------------------------------------------------------------------------
-
-  /** Draw items of one layer in creation order. */
+  /** Draw the items of one layer (sorted layers by key, the others in creation order). */
   draw(r: ScRenderer, layer: string): void {
     for (const it of this.collect(layer)) it.draw(r);
   }
 
-  /** Draw items of a layer with their sort keys (SC px y of the effect origin). */
+  /** Items of a layer with their sort keys; Base/Ground/Object come sorted, others in creation order. */
   collect(layer: string): DrawItem[] {
     const out: DrawItem[] = [];
-    for (const e of this.list) this.collectInst(e, layer, out);
+    for (const e of this.list) e.collect(layer, out, 1);
+    if (SORTED.has(layer)) {
+      // stable: equal keys keep creation order
+      return out.map((it, i) => ({ it, i })).sort((p, q) => p.it.sortY - q.it.sortY || p.i - q.i).map((p) => p.it);
+    }
     return out;
-  }
-
-  private collectInst(e: EffectInst, layer: string, out: DrawItem[]): void {
-    const [ox, oy] = this.art.gameToPx(e.x, e.y, e.z);
-    const [, groundY] = this.art.gameToPx(e.x, e.y, 0);
-    for (const c of e.comps) {
-      const lt = e.t - c.start;
-      if (lt < 0) continue;
-      if (c.kind === 'nest') {
-        if (c.inst && !c.inst.done) this.collectInst(c.inst, layer, out);
-        continue;
-      }
-      if (c.kind === 'swf') {
-        if (c.done || c.c.layer !== layer || !c.lib) continue;
-        const lib = c.lib, comp = c.c;
-        const s = e.scale * ((comp.scale ?? 100) / 100);
-        const fps = comp.fps || 30, frames = comp.frames ?? 1;
-        let f = Math.floor((lt * fps) / 1000);
-        f = e.def.Loop ? f % frames : Math.min(frames - 1, f);
-        const col: Col = [1, 1, 1, e.fade, 0, 0, 0];
-        out.push({ layer, sortY: groundY, draw: (r) => r.draw(lib, comp.export!, f, [s, 0, 0, s, ox, oy], col) });
-        continue;
-      }
-      const em = c.e;
-      const own = c.c.layer === layer;
-      const shadowCopy = this.shadows && !!em.Shadow && layer === 'Shadow' && !own;
-      if (!own && !shadowCopy) continue;
-      for (const p of c.parts) {
-        const item = this.particleItem(p, em, ox, oy, groundY, own ? null : 'shadow');
-        if (item) out.push(item);
-      }
-    }
-  }
-
-  private particleItem(p: Particle, em: EmitterDef, ox: number, oy: number, groundY: number,
-    mode: 'shadow' | null): DrawItem | null {
-    const t = p.age / p.life;
-    const sc = p.s0 + (p.s1 - p.s0) * t;
-    let alpha = 1;
-    const fin = em.FadeInDuration ?? 0, fout = em.FadeOutDuration ?? 0;
-    if (fin > 0 && p.age < fin) alpha *= p.age / fin;
-    if (fout > 0) alpha *= Math.min(1, (p.life - p.age) / fout);
-    if (alpha <= 0.002 || sc <= 0) return null;
-    const frames = p.clip.frames ?? 1, fps = p.clip.fps || 30;
-    let f = Math.floor((p.age * fps) / 1000);
-    f = em.LoopParticleClip ? f % frames : Math.min(frames - 1, f);
-    let rot = p.rot;
-    if (em.RotateToDirection) {
-      const vy = p.vy * this.art.yScale - p.vz * this.zScale;
-      if (Math.abs(p.vx) + Math.abs(vy) > 1e-3) rot += Math.atan2(vy, p.vx) + Math.PI / 2;
-    }
-    const cs = Math.cos(rot) * sc, sn = Math.sin(rot) * sc;
-    const lib = p.lib, exp = p.clip.export;
-    if (mode === 'shadow') {
-      const m: Mat = [cs, sn * 0.5, -sn, cs * 0.5, ox + p.x, oy + p.y * this.art.yScale];
-      const col: Col = [0, 0, 0, alpha * ((em.ShadowMulA ?? 60) / 100), 0, 0, 0];
-      return { layer: 'Shadow', sortY: groundY, draw: (r) => r.draw(lib, exp, f, m, col) };
-    }
-    const m: Mat = [cs, sn, -sn, cs, ox + p.x, oy + p.y * this.art.yScale - p.z * this.zScale];
-    const col: Col = [1, 1, 1, alpha, 0, 0, 0];
-    return { layer: '', sortY: groundY + p.y * this.art.yScale, draw: (r) => r.draw(lib, exp, f, m, col) };
   }
 }

@@ -127,7 +127,13 @@ HUD_EXPORTS = (
     "deployArea_corner_rightTop", "deployArea_innerCorner_bottomLeft", "deployArea_innerCorner_bottomRight",
     "deployArea_innerCorner_topLeft", "deployArea_innerCorner_topRight", "deployArea_side_bottom",
     "deployArea_side_left", "deployArea_side_right", "deployArea_side_top",
+    # drag preview (0x8e3fd4 class): footprint tiles, card name text; emote button panel; hand panel
+    "spell_placement_1x1", "spell_placement_2x2", "spell_placement_3x3", "spell_placement_4x4",
+    "spell_placement_text", "HUD_taunt", "panel_ingame_blue",
 )
+# Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
+HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
+             "TID_SPELL_ITEM_LEVEL_SHORT")
 
 
 def r2(v: float) -> float | int:
@@ -566,7 +572,7 @@ class Baker:
         comps = []
         for c in e.get("RenderableComponents", []):
             t = c.get("Type")
-            d = {"type": t, "layer": c.get("Layer") or "Object"}
+            d = {"type": t, "layer": c.get("Layer") or "Ground"}  # no Layer = Ground (0xe65a8c)
             if c.get("Time"):
                 d["time"] = c["Time"]
             if c.get("RenderableScale") not in (None, 100):
@@ -664,7 +670,8 @@ class Baker:
                 d["redShadow"] = p["RedShadowExportName"]
         for k in ("Scale", "Speed", "Gravity", "ConstantHeight", "Radius", "RadiusY", "use360Frames",
                   "ShadowDisableRotate", "Homing", "AlwaysResetAnimation", "ProjectileRadius", "ProjectileRadiusY",
-                  "ProjectileRange", "MinDistance", "BuffTime"):
+                  "ProjectileRange", "MinDistance", "BuffTime", "CheckCollisions", "Scatter", "HideWhenDelayed",
+                  "MinimumLengthForVisualAngleCalculation"):
             if k in p:
                 d[k[0].lower() + k[1:]] = p[k]
         for k in PROJ_EFFECT_FIELDS:
@@ -922,6 +929,7 @@ class Baker:
              "turretFrames": 36,
              "destroyed": "kingtower_destroyed", "scale": king.get("Scale", 100),
              "attachedHeight": king.get("AttachedCharacterHeight"), "projectileStartZ": king.get("ProjectileStartZ"),
+             "collisionRadius": king.get("CollisionRadius"),
              "healthBar": king.get("HealthBar"), "healthBarOffsetYBlue": king.get("HealthBarOffsetYBlue"),
              "healthBarOffsetYRed": king.get("HealthBarOffsetYRed"), "turretMovement": king.get("TurretMovement"),
              "shadow": {s: king.get(f"Shadow{s}") for s in ("ScaleX", "ScaleY", "Skew", "X", "Y")}}
@@ -934,6 +942,7 @@ class Baker:
         p = {"sc": self.want(bt, prin["BlueExportName"]), "base": {"blue": prin["BlueExportName"], "red": prin["RedExportName"]},
              "top": {"blue": prin["BlueTopExportName"], "red": prin["RedTopExportName"]},
              "character": prin.get("AttachedCharacter"), "attachedHeight": prin.get("AttachedCharacterHeight"),
+             "projectileStartZ": prin.get("ProjectileStartZ"), "collisionRadius": prin.get("CollisionRadius"),
              "destroyed": "princesstower_destroyed", "scale": prin.get("Scale", 100),
              "healthBar": prin.get("HealthBar"), "healthBarOffsetYBlue": prin.get("HealthBarOffsetYBlue"),
              "healthBarOffsetYRed": prin.get("HealthBarOffsetYRed"),
@@ -1080,6 +1089,18 @@ class Baker:
         for e in HUD_EXPORTS:
             if self.want(ui, e):
                 out["exports"].append(e)
+        # radius indicator texture of the spell drag (0xcf0464 loads image/range.png: a 2x32 white ramp)
+        if apk.exists("image/range.png"):
+            OUT.mkdir(parents=True, exist_ok=True)
+            (OUT / "range.png").write_bytes(apk.read("image/range.png"))
+            out["rangeImage"] = "range.png"
+        texts = {}
+        tx_csv = RAW / "csv_client" / "texts.csv"
+        if tx_csv.exists():
+            for r in list(csv.DictReader(io.StringIO(tx_csv.read_text(encoding="utf-8"))))[1:]:
+                if r.get("Name") in HUD_TEXTS:
+                    texts[r["Name"]] = r.get("EN", "")
+        out["texts"] = texts
         hb_csv = RAW / "csv_client" / "health_bars.csv"
         rows = list(csv.DictReader(io.StringIO(hb_csv.read_text())))[1:]
         for r in rows:

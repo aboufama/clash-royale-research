@@ -98,6 +98,16 @@ export interface ProjectileArt {
   hitEffect?: string;
   trailEffect?: string;
   deathEffect?: string;
+  // read by the client's projectile view (sc/projectile_view.ts)
+  homing?: boolean;
+  projectileRadius?: number;
+  projectileRange?: number;
+  checkCollisions?: boolean;
+  scatter?: string;
+  minimumLengthForVisualAngleCalculation?: number;
+  hideWhenDelayed?: boolean;
+  alwaysResetAnimation?: boolean;
+  spawnProjectile?: string;
   [k: string]: unknown;
 }
 
@@ -224,6 +234,7 @@ export interface TowerArt {
     scale?: number; attachedHeight?: number;
     healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
     shadow: Record<string, number>; effects: Record<string, string>; projectile?: string;
+    projectileStartZ?: number; collisionRadius?: number;
   };
   princess: {
     sc: string; base: { blue: string; red: string }; top: { blue: string; red: string }; character: string;
@@ -231,6 +242,7 @@ export interface TowerArt {
     scale?: number; attachedHeight?: number;
     healthBar?: string; healthBarOffsetYBlue?: number; healthBarOffsetYRed?: number;
     shadow: Record<string, number>; effects: Record<string, string>; projectile?: string;
+    projectileStartZ?: number; collisionRadius?: number;
   };
 }
 
@@ -287,7 +299,11 @@ export interface Manifest {
   arena: ArenaArt;
   cards: Record<string, CardArt>;
   hud: { sc: string; exports: string[]; healthBars: Record<string, Record<string, string | number | boolean>>;
-    healthBarParts: Record<string, Record<string, unknown>> };
+    healthBarParts: Record<string, Record<string, unknown>>;
+    /** image/range.png copied by the bake (drag radius indicator texture) */
+    rangeImage?: string;
+    /** texts.csv EN strings the HUD fills in (TID_* -> text) */
+    texts?: Record<string, string> };
   fonts: Record<string, string>;
 }
 

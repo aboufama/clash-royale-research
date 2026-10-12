@@ -1,5 +1,5 @@
-// 2D overlay drawn above the world: HP bars, deploy timers, pending plays, clock, crowns,
-// and the drag/placement preview with the legal deploy zone.
+// 2D overlay for the placeholder renderer only (no baked art): HP bars, deploy timers, pending
+// plays, clock, crowns, and the drag/placement preview. With the original art it draws nothing.
 import { ARENA_H, ARENA_W, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE, type Battle } from '../../core/src/index.ts';
 import type { Frame } from './frame.ts';
 
@@ -30,6 +30,9 @@ export class Overlay {
     const b = f.battle;
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     c.clearRect(0, 0, cam.width, cam.height);
+    // With the original art everything the battle shows (HUD, deploy preview, timers, health bars)
+    // is drawn by the art renderer with the game's own exports: no custom overlay.
+    if (this.artMode) return;
     if (f.drag) this.drawDeployZone(f, b);
 
     // pending plays: the game shows a placement marker until the card lands

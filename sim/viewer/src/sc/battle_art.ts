@@ -9,14 +9,17 @@
 import type { Col, Mat } from './math.ts';
 import { matMul, WHITE } from './math.ts';
 import { ScLibraryCache } from './library.ts';
-import type { ScLibrary } from './library.ts';
+import type { ScLibrary, ShapeCmd } from './library.ts';
 import type { BuildingClip, CharacterArt, Manifest } from './manifest.ts';
 import { loadManifest } from './manifest.ts';
 import type { DrawOptions } from './renderer.ts';
 import { ScRenderer } from './renderer.ts';
 import type { EffectPlayer } from './effects.ts';
-import { projectileSprite, turretFrame, unitSprite } from './units.ts';
+import { turretFrame, unitSprite } from './units.ts';
+import { newProjectileViewState, projectileMatrix, projectileView } from './projectile_view.ts';
+import type { ProjectileViewFrame } from './projectile_view.ts';
 import { turretPose, viewAngle as nativeViewAngle } from './anim.ts';
+import { radialFillStrip } from './ui_port.ts';
 import type { ActionName, UnitSprite } from './units.ts';
 
 export type Team = 0 | 1;
@@ -568,7 +571,8 @@ export class BattleArt {
 
   /**
    * Render a card (drawCard: frame + original in-battle icon + elixir cost) into an offscreen canvas
-   * and return a PNG data URL for DOM use. width in CSS px (height = width * 198 / 146).
+   * and return a PNG data URL for DOM use. width in CSS px (height = width * 168 / 130: the card_item_frame
+   * plus the elixir drop below it).
    */
   cardThumbnail(card: string, width = 120, opts: { elixir?: number; dim?: boolean; pixelRatio?: number } = {}): Promise<string> {
     const pr = opts.pixelRatio ?? (typeof devicePixelRatio === 'number' ? devicePixelRatio : 1);
@@ -577,7 +581,7 @@ export class BattleArt {
     if (p) return p;
     p = (async () => {
       if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-      const w = Math.round(width * pr), h = Math.round(((width * 198) / 146) * pr);
+      const w = Math.round(width * pr), h = Math.round(((width * 168) / 130) * pr);
       if (!this.thumbCanvas) {
         this.thumbCanvas = document.createElement('canvas');
         this.thumbCanvas.width = w;
@@ -586,9 +590,9 @@ export class BattleArt {
       }
       const cv = this.thumbCanvas, r = this.thumbRenderer!;
       if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-      const s = w / 146;
+      const s = w / 130;
       r.begin([0, 0, 0, 0]);
-      this.drawCard(r, card, [s, 0, 0, s, w / 2, 110.5 * s], { elixir: opts.elixir, dim: opts.dim });
+      this.drawCard(r, card, [s, 0, 0, s, w / 2, 81 * s], { elixir: opts.elixir, dim: opts.dim });
       r.end();
       return cv.toDataURL('image/png');
     })();
@@ -614,25 +618,46 @@ export class BattleArt {
 
   // -- projectiles -----------------------------------------------------------------------------
 
-  /** Projectile at game (x, y, z) moving with (vx, vy, vz) (engine units / s). */
+  /**
+   * Projectile sprite as the client's projectile view draws it (sc/projectile_view.ts, 0x8554b0):
+   * the export (RedExportName for the enemy, 0x8545e0) at logic (x, y) and `v.height` world units,
+   * container scale v.scale, clip rotation v.rotation degrees, frame v.frame (or `clipFrame` for clips
+   * running on their own timeline, e.g. rolling projectiles); nested clips get `childFrame`.
+   */
+  drawProjectileView(r: ScRenderer, name: string, team: Team, x: number, y: number, v: ProjectileViewFrame,
+    clipFrame = 0, childFrame?: number): void {
+    const p = this.manifest.projectiles[name];
+    if (!p || !p.sc || !p.export) return;
+    const lib = this.lib(p.sc);
+    const exp = (team === 1 && p.redExport) ? p.redExport : p.export;
+    const [px, py] = this.gameToPx(x, y, v.height / 0.002);
+    const frame = v.frame ?? clipFrame;
+    r.draw(lib, exp, frame, projectileMatrix(v.rotation, v.scale, px, py), WHITE, { childFrame: childFrame ?? frame });
+  }
+
+  /** The projectile's shadow clip at (x, y, 0), rotated like the sprite unless ShadowDisableRotate and not
+   * scaled (0x8545e0 / 0x8554b0); draw it inside the shadow pass (silhouette, 0x856a40). */
+  drawProjectileShadow(r: ScRenderer, name: string, team: Team, x: number, y: number, v: ProjectileViewFrame): void {
+    const p = this.manifest.projectiles[name];
+    const exp = (team === 1 && p?.redShadow) ? p.redShadow : p?.shadow;
+    if (!p || !p.sc || !exp) return;
+    const [gx, gy] = this.gameToPx(x, y, 0);
+    r.draw(this.lib(p.sc), exp, 0, projectileMatrix(v.shadowRotation, 1, gx, gy));
+  }
+
+  /** Gallery helper: a projectile at game (x, y, z) moving with (vx, vy, vz) (engine units / s), through
+   * the same view code with a level flight (pitch from vz). */
   drawProjectile(r: ScRenderer, name: string, team: Team, x: number, y: number, z: number,
     vx: number, vy: number, vz: number, timeMs: number, shadow = true): void {
     const p = this.manifest.projectiles[name];
     if (!p || !p.sc || !p.export) return;
-    const lib = this.lib(p.sc);
-    const s = (p.scale ?? 100) / 100;
-    [vx, vy] = this.viewVec(vx, vy);
-    const sp = projectileSprite(p, team, vx, vy, vz, this.yScale, this.zPxPer1000 / this.pxPerTileX);
-    if (shadow && p.shadow) {
-      const [gx, gy] = this.gameToPx(x, y, 0);
-      const rot = p.shadowDisableRotate ? 0 : Math.atan2(-vy * this.yScale, vx);
-      const cs = Math.cos(rot) * s, sn = Math.sin(rot) * s;
-      r.draw(lib, (team === 1 && p.redShadow) ? p.redShadow : p.shadow, 0, [cs, sn, -sn, cs, gx, gy]);
-    }
-    const [px, py] = this.gameToPx(x, y, z);
-    const cs = Math.cos(sp.rotation) * s, sn = Math.sin(sp.rotation) * s;
-    const frame = (p.frames ?? 1) > 1 ? sp.frame : Math.floor((timeMs * (p.fps ?? 30)) / 1000);
-    r.draw(lib, sp.export, frame, [cs, sn, -sn, cs, px, py]);
+    const st = newProjectileViewState();
+    const dz = (vz / 1000) * 50; // per tick
+    const v = projectileView(p, p.frames ?? 1, st, { x, y, tx: x + vx, ty: y + vy, z: z + dz, prevZ: z, alpha: 0,
+      flip: this.flip, own: team === 0, name });
+    if (shadow) this.drawProjectileShadow(r, name, team, x, y, v);
+    const clip = Math.floor((timeMs * (p.fps ?? 30)) / 1000) % Math.max(1, p.frames ?? 1);
+    this.drawProjectileView(r, name, team, x, y, v, clip);
   }
 
   // -- health bars -----------------------------------------------------------------------------
@@ -731,32 +756,84 @@ export class BattleArt {
   }
 
   /**
-   * In-hand card: ui.sc `spell_card_ingame` with its `card_image` placeholder replaced by the
-   * card icon (ui_spells / IconSWF) and the elixir cost in `elixar_count`. m places the card
-   * origin; the card spans about 146 x 198 px at scale 1.
+   * In-battle hand card as the client builds it (hand card 0x8e0750 on the card base 0x8b25e8; card
+   * visual +0x130 rebuilt by 0x90ab14, element group +0x1d8 by 0x8b293c), back to front:
+   *   - the card icon (IconSWF / icon export, 0x90bb28) at the centre of card_item_image's `image`
+   *     child bounds (its own scale, no translation: 0x123c5ac with no target space), scaled uniformly
+   *     to that width / the icon's width;
+   *   - the frame of CardForm BasicForm (0x90acc8 -> 0xdd5058): card_item_frame, card_item_frame_legendary
+   *     for legendary cards, card_item_frame_champion for champions, stopped on frame 0;
+   *   - card_item_elixir_ingame with `count` = the cost (0x9085e8 with flags 0x8000, 0x908da4);
+   *   - the RadialFill card_mask_* (0x8e0b84 -> 0x89f9b4) with `fill` = available / cost while the card
+   *     is not affordable (0x8e1408 -> 0x89fd04, drawn by 0x89fd24: sc/ui_port.ts radialFillStrip);
+   * everything through the grayscale program while the card cannot be played (0x8e1408 vt+0xd0 ->
+   * 0x123c580). m places the card origin (the frame spans x -64..64, y -79.3..81.05 at scale 1).
    */
-  drawCard(r: ScRenderer, card: string, m: Mat, opts: { elixir?: number; dim?: boolean } = {}): void {
+  drawCard(r: ScRenderer, card: string, m: Mat, opts: { elixir?: number; dim?: boolean; grayscale?: boolean;
+    fill?: number | null; noCost?: boolean; alpha?: number } = {}): void {
     const c = this.manifest.cards[card];
     const hud = this.libs.get(this.manifest.hud.sc);
     if (!c) return;
-    if (!hud || !hud.has('spell_card_ingame')) {
+    if (!hud || !hud.has('card_item_frame')) {
       r.draw(this.lib(c.sc), c.export, 0, m);
       return;
     }
+    const a = opts.alpha ?? 1;
+    const col: Col = [1, 1, 1, a, 0, 0, 0];
+    const gray = !!(opts.grayscale ?? opts.dim);
     const rare = c.rarity ?? 'Common';
-    const icon = 0.5208; // placeholder 128x156 vs icon 236x300
-    r.draw(hud, 'spell_card_ingame', 0, m, opts.dim ? [0.55, 0.55, 0.55, 1, 0, 0, 0] : WHITE, {
-      named: {
-        card_image: { lib: this.lib(c.sc), export: c.export, frame: 0, matrix: [icon, 0, 0, icon, 0, 0] },
-        frame_legendary: { hide: rare !== 'Legendary' },
-        frame_champion: { hide: rare !== 'Champion' },
-        frame: { hide: rare === 'Legendary' || rare === 'Champion' },
-        card_evolution_frame: { hide: true },
-        card_evolution: { hide: true },
-        dark_elixir_count: { hide: true },
-      },
-      text: { count: String(opts.elixir ?? c.elixir ?? '') },
-    });
+    const suffix = rare === 'Legendary' ? '_legendary' : rare === 'Champion' ? '_champion' : '';
+    const frameExp = hud.has(`card_item_frame${suffix}`) ? `card_item_frame${suffix}` : 'card_item_frame';
+    // icon fitted to the card_item_image `image` rect (0x90bb28)
+    const lib = this.lib(c.sc);
+    const box = this.cardImageRect(hud);
+    const ib = lib.frameBounds(c.export, 0);
+    if (box && ib && ib[2] > ib[0]) {
+      const s = (box[2] - box[0]) / (ib[2] - ib[0]);
+      r.draw(lib, c.export, 0, matMul(m, [s, 0, 0, s, (box[0] + box[2]) * 0.5, (box[1] + box[3]) * 0.5]), col, { grayscale: gray });
+    }
+    r.draw(hud, frameExp, 0, m, col, { grayscale: gray });
+    if (!opts.noCost && hud.has('card_item_elixir_ingame')) {
+      r.draw(hud, 'card_item_elixir_ingame', 0, m, col, { grayscale: gray, text: { count: String(opts.elixir ?? c.elixir ?? '') } });
+    }
+    const fill = opts.fill;
+    if (fill !== undefined && fill !== null && fill < 1) {
+      const maskExp = hud.has(`card_mask${suffix || '_normal'}`) ? `card_mask${suffix || '_normal'}` : 'card_mask_normal';
+      const shape = this.firstShapeCmd(hud, maskExp);
+      const strip = shape ? radialFillStrip(shape.verts, shape.count, fill) : null;
+      if (shape && strip) r.drawImageStrip(hud.textures[shape.tex], strip, m, col, 0, gray);
+    }
+  }
+
+  private cardImageBox: [number, number, number, number] | null | undefined;
+
+  /** Bounds of card_item_image's `image` child with its own scale and no translation (0x90bb28 / 0x123c5ac). */
+  private cardImageRect(hud: ScLibrary): [number, number, number, number] | null {
+    if (this.cardImageBox !== undefined) return this.cardImageBox;
+    this.cardImageBox = null;
+    const clip = hud.clip('card_item_image');
+    if (!clip) return null;
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const ci = clip.elements[i * 3];
+      if (clip.names?.[ci] !== 'image') continue;
+      const mi = clip.elements[i * 3 + 1];
+      const bm = hud.banks[clip.bank].m;
+      const lin: Mat = mi >= 0 ? [bm[mi * 6], bm[mi * 6 + 1], bm[mi * 6 + 2], bm[mi * 6 + 3], 0, 0] : [1, 0, 0, 1, 0, 0];
+      this.cardImageBox = idBounds(hud, clip.children[ci], lin);
+      break;
+    }
+    return this.cardImageBox;
+  }
+
+  /** First draw command of the first shape child of an export's frame 0 (RadialFill source, 0x89f9b4). */
+  private firstShapeCmd(lib: ScLibrary, exportName: string): ShapeCmd | null {
+    const clip = lib.clip(exportName);
+    if (!clip) return null;
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const sh = lib.shapes.get(clip.children[clip.elements[i * 3]]);
+      if (sh && sh.length) return sh[0];
+    }
+    return null;
   }
 
   /**
@@ -807,6 +884,35 @@ export class BattleArt {
       this.drawCard(r, next, matMul(m, [s, 0, 0, s, (nr[0] + nr[2]) / 2, (nr[1] + nr[3]) / 2 + 11.5 * s]));
     }
   }
+}
+
+/** Bounds of a shape or clip (frame 0) through matrix m. */
+function idBounds(lib: ScLibrary, id: number, m: Mat, depth = 0): [number, number, number, number] | null {
+  const b: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+  const visit = (cid: number, mm: Mat, d: number): void => {
+    if (d > 16) return;
+    const sh = lib.shapes.get(cid);
+    if (sh) {
+      for (const cmd of sh) {
+        const v = cmd.verts;
+        for (let i = 0; i < cmd.count; i++) {
+          const x = mm[0] * v[i * 4] + mm[2] * v[i * 4 + 1] + mm[4], y = mm[1] * v[i * 4] + mm[3] * v[i * 4 + 1] + mm[5];
+          if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y;
+        }
+      }
+      return;
+    }
+    const c = lib.clips.get(cid);
+    if (!c) return;
+    const bm = lib.banks[c.bank].m;
+    for (let i = c.frameStart[0]; i < c.frameStart[1]; i++) {
+      const mi = c.elements[i * 3 + 1];
+      const cm: Mat = mi >= 0 ? [bm[mi * 6], bm[mi * 6 + 1], bm[mi * 6 + 2], bm[mi * 6 + 3], bm[mi * 6 + 4], bm[mi * 6 + 5]] : [1, 0, 0, 1, 0, 0];
+      visit(c.children[c.elements[i * 3]], matMul(mm, cm), d + 1);
+    }
+  };
+  visit(id, m, depth);
+  return b[0] <= b[2] ? b : null;
 }
 
 function colMulTo(p: Col, q: Col): Col {

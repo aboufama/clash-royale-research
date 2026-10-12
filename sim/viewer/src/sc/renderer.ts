@@ -55,6 +55,9 @@ export interface DrawOptions {
   text?: Record<string, string>;
   /** force a blend mode for everything drawn (0 = use the file's modes) */
   blend?: number;
+  /** draw with the stage's grayscale program (DisplayObject flag 4, 0x123c580 -> program 3,
+   * builtin_stage_grayscale: rgb = mul.rgb * dot(tex.rgb, (0.30, 0.59, 0.11)) + add * tex.a) */
+  grayscale?: boolean;
 }
 
 export interface RenderStats {
@@ -101,7 +104,14 @@ vec4 sampleSlot(int s, vec2 uv) {
   return vec4(0.0);
 }
 void main() {
-  vec4 s = sampleSlot(vSlot, vUv);
+  // slot >= 16: grayscale program (builtin_stage_grayscale.frag with the premultiplied stage colours)
+  bool gray = vSlot >= 16;
+  vec4 s = sampleSlot(gray ? vSlot - 16 : vSlot, vUv);
+  if (gray && uMode == 0) {
+    float l = dot(s.rgb, vec3(0.30000001, 0.58999997, 0.11));
+    outColor = vec4((vMul.rgb * l + vAdd * s.a) * vMul.a, s.a * vMul.a);
+    return;
+  }
   // render.py: rgb = s.rgb * mul + a * add / 255 ; clamp rgb <= a ; then * alphaMul
   vec3 rgb = min(s.rgb * vMul.rgb + s.a * vAdd, vec3(s.a));
   vec4 o = vec4(rgb, s.a) * vMul.a;
@@ -184,6 +194,8 @@ export class ScRenderer {
   private fbos: { fb: WebGLFramebuffer; tex: WebGLTexture }[] = [];
   private fboSize: [number, number] = [0, 0];
   private inShadows = false;
+  /** grayscale program for the vertices being emitted (DrawOptions.grayscale / drawImageStrip) */
+  private gray = false;
 
   constructor(canvas: HTMLCanvasElement | OffscreenCanvas, attrs: WebGLContextAttributes = {}) {
     this.canvas = canvas;
@@ -303,7 +315,9 @@ export class ScRenderer {
     const m = this.matStack[0], c = this.colStack[0];
     for (let i = 0; i < 6; i++) m[i] = matrix[i];
     for (let i = 0; i < 7; i++) c[i] = color[i];
+    this.gray = !!opts.grayscale;
     this.node(lib, id, Math.floor(frame), Math.floor(opts.childFrame ?? frame), 0, opts.blend ?? 0, opts);
+    this.gray = false;
   }
 
   /** Solid rectangle in SC px (premultiplied colour), for debug overlays. */
@@ -320,6 +334,31 @@ export class ScRenderer {
     }
     this.pushIdx(base, base + 1, base + 2);
     this.pushIdx(base + 1, base + 3, base + 2);
+  }
+
+  /**
+   * Textured triangle strip from a standalone image (e.g. image/range.png for the drag radius
+   * indicator): verts = [x, y, u, v] * n in SC px through `matrix`, colour transform `color`.
+   */
+  drawImageStrip(src: TextureSource, verts: Float32Array, matrix: Readonly<Mat> = IDENTITY,
+    color: Readonly<Col> = WHITE, blend = 0, grayscale = false): void {
+    const n = verts.length >> 2;
+    if (n < 3) return;
+    const tex = this.glTexture(src);
+    this.gray = grayscale;
+    this.setBlend(blend);
+    if (this.nv + n > MAX_VERTS || this.ni + (n - 2) * 3 > MAX_INDICES) this.flush();
+    const slot = this.slotFor(tex.tex);
+    const m = matrix, c = color;
+    const base = this.nv;
+    for (let k = 0; k < n; k++) {
+      const x = verts[k * 4], y = verts[k * 4 + 1];
+      this.pushVert(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5], verts[k * 4 + 2], verts[k * 4 + 3],
+        c[0], c[1], c[2], c[3], c[4] / 255, c[5] / 255, c[6] / 255, slot);
+    }
+    for (let k = 0; k < n - 2; k++) this.pushIdx(base + k, base + k + 1, base + k + 2);
+    this.stats.triangles += n - 2;
+    this.gray = false;
   }
 
   /** Start drawing shadow silhouettes into an offscreen buffer (alpha only, max-blended). */
@@ -433,6 +472,7 @@ export class ScRenderer {
           const direct = lib.textFields.get(cid);
           const tf = direct ? { def: direct, m: null } : this.findTextField(lib, cid);
           if (tf) {
+            if (ov?.matrix) this.mulInPlace(cm, ov.matrix); // e.g. the HUD's elixir number bounce
             this.drawText(tf.def, txt, tf.m ? this.tmpMul(cm, tf.m) : cm, cc, b);
             continue;
           }
@@ -515,7 +555,7 @@ export class ScRenderer {
     const o = this.nv * FLOATS, a = this.verts;
     a[o] = x; a[o + 1] = y; a[o + 2] = u; a[o + 3] = v;
     a[o + 4] = mr; a[o + 5] = mg; a[o + 6] = mb; a[o + 7] = ma;
-    a[o + 8] = ar; a[o + 9] = ag; a[o + 10] = ab; a[o + 11] = slot;
+    a[o + 8] = ar; a[o + 9] = ag; a[o + 10] = ab; a[o + 11] = this.gray ? slot + 16 : slot;
     this.nv++;
   }
 

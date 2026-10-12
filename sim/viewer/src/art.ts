@@ -18,8 +18,35 @@ import {
   actionFrameMs, animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, ClipPlayer, EffectPlayer,
   type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer,
 } from './sc/index.ts';
+import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
+import { BattleUi } from './battle_ui.ts';
+import type { ProjectileViewFrame, ProjectileViewState } from './sc/projectile_view.ts';
 
 type Team = 0 | 1;
+
+/** Per engine projectile: the client's projectile view (sc/projectile_view.ts, 0x8545e0 / 0x8554b0). */
+interface ProjView {
+  name: string;
+  state: ProjectileViewState;
+  /** logic height this tick and last tick, and the tick they belong to */
+  z: number;
+  prevZ: number;
+  tick: number;
+  startX: number;
+  startY: number;
+  /** estimated start/aim heights when the engine stores no z (0xf8e4c8 / 0xf9f47c) */
+  startZ: number;
+  /** clip running on its own timeline (rolling projectiles), ms since the view was made */
+  clip: ClipPlayer | null;
+  ageMs: number;
+  /** this frame's view, drawn position and height (logic) */
+  v: ProjectileViewFrame | null;
+  x: number;
+  y: number;
+  /** attached TrailEffect (0x8545e0 → 0x82dcb0, follows the sprite) */
+  trail: number;
+  seen: boolean;
+}
 
 export function createArt(_manifest: unknown): ArtHooks {
   const thumbs = new Map<string, string>();
@@ -41,7 +68,9 @@ export function createArt(_manifest: unknown): ArtHooks {
       }));
       const r = new ScRenderer(canvas);
       r.clearTextCache();
-      return new ArtWorld(art, r, cam, canvas);
+      const world = new ArtWorld(art, r, cam, canvas);
+      await world.ui.load();
+      return world;
     },
     cardImage(card: string): string | null {
       return thumbs.get(card) ?? null;
@@ -77,6 +106,11 @@ export class ArtWorld implements WorldRenderer {
   /** Hit filter per unit (direction picked from the hit vector, sim ms it started) and hits seen. */
   private hits = new Map<number, { dir: 'down' | 'left' | 'up' | 'right'; start: number }>();
   private hitVec = new Map<number, [number, number]>();
+  /** Client projectile views by engine projectile id. */
+  private projViews = new Map<number, ProjView>();
+  private lastFxSim = -1;
+  /** In-battle UI: HUD, illegal-area overlay, drag preview, deploy timers (battle_ui.ts). */
+  readonly ui: BattleUi;
   /** SC px -> CSS px scale and offset (screen = s * px + v). */
   private s = 1;
   private vx = 0;
@@ -88,25 +122,25 @@ export class ArtWorld implements WorldRenderer {
     this.cam = cam;
     this.canvas = canvas;
     this.fx = new EffectPlayer(art, 7);
-    // Show the field plus a margin of the stadium, with the art's foreshortening.
+    this.ui = new BattleUi(art);
     cam.aspectY = art.yScale;
     cam.mirrorX = art.flip; // the blue player's native view runs logic x right-to-left
-    // Width: the client's stage is 1024 / min(h/w, 1.77) SC px wide (content scale 0x772a70), i.e.
-    // 578.5 px on any phone taller than 16:9, centred on the battle layer (cloud wrap 0x85751c);
-    // 0.03 px per unit -> +-9642 units around x = 9000. Height: the field plus a stadium margin.
-    const half = 1024 / 1.77 / 2 / 0.03;
-    cam.world = { x0: 9000 - half, y0: -2200, x1: 9000 + half, y1: 32800 };
   }
 
   resize(width: number, height: number, dpr: number): void {
     this.canvas.width = Math.round(width * dpr);
     this.canvas.height = Math.round(height * dpr);
+    // The client's stage and battle layer placement (sc/ui_port.ts stageLayout: content scale
+    // 0x772a70, battle layer scale/position 0xbdefac); the camera maps input with the same transform.
+    this.ui.resize(width, height);
+    const L = this.ui.layout;
+    this.s = L.k * L.battleScale;
+    this.vx = L.k * L.battleX;
+    this.vy = L.k * L.battleY;
+    const fl = this.art.flip ? -1 : 1;
+    const [x0, y0] = this.art.gameToPx(0, 0);
+    this.cam.setAffine(this.s * 0.03 * fl, this.vx + this.s * x0, this.s * 0.024 * fl, this.vy + this.s * y0);
     this.cam.fit(width, height, dpr);
-    // Derive the SC-pixel view from the camera: gameToPx is affine with the same scales.
-    this.s = (this.cam.scaleX * 1000) / this.art.pxPerTileX;
-    const [px, py] = this.art.gameToPx(9000, 16000);
-    this.vx = this.cam.sx(9000) - this.s * px;
-    this.vy = this.cam.sy(16000) - this.s * py;
   }
 
   // ---------------------------------------------------------------- events -> effects
@@ -150,9 +184,14 @@ export class ArtWorld implements WorldRenderer {
         if (u && eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team });
       }
       if (e.type === 'impact') {
-        const p = m.projectiles[e.name] ?? (m.spells[e.name] ? m.projectiles[m.spells[e.name].projectile ?? ''] : undefined);
+        // HitEffect at the aim point, z = the projectile's height on arrival (0 unless ConstantHeight),
+        // angle = the start -> hit direction (0xf9188c -> 0xf8f978 -> world listener vt+0x48 0x850258)
+        const pv = this.projViews.get(e.id);
+        const p = (pv ? m.projectiles[pv.name] : undefined) ?? m.projectiles[e.name] ??
+          (m.spells[e.name] ? m.projectiles[m.spells[e.name].projectile ?? ''] : undefined);
         const eff = p?.hitEffect;
-        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
+        const ang = pv && (e.x !== pv.startX || e.y !== pv.startY) ? nativeAngle(e.x - pv.startX, e.y - pv.startY) : 0;
+        if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team, angle: ang });
       } else if (e.type === 'death' || e.type === 'tower') {
         const ca = m.characters[e.name];
         let eff = ca?.effects?.deathEffect as string | undefined;
@@ -179,6 +218,7 @@ export class ArtWorld implements WorldRenderer {
         if (eff && this.fx.has(eff)) this.fx.play(eff, e.x, e.y, { team });
       }
     }
+    this.ui.onEvents(b);
   }
 
   // ---------------------------------------------------------------- frame
@@ -189,11 +229,16 @@ export class ArtWorld implements WorldRenderer {
     const b = f.battle;
     const m = art.manifest;
     const now = f.now;
-    const dt = this.lastNow ? Math.min(100, now - this.lastNow) : 0;
     this.lastNow = now;
-    this.fx.update(dt);
     const sim = f.simMs;
+    // projectile views first (0x8554b0), so attached trails follow this frame's sprite position; the
+    // effects then advance on simulation time (pausing freezes them, speed scales them)
+    this.updateProjectiles(f);
+    const fxDt = this.lastFxSim < 0 ? 0 : Math.min(250, Math.max(0, sim - this.lastFxSim));
+    this.lastFxSim = sim;
+    this.fx.update(fxDt);
     this.updateAnims(f, sim);
+    this.ui.update(fxDt / 1000, f);
     const dpr = this.cam.dpr;
 
     r.begin([0.05, 0.08, 0.05, 1]);
@@ -206,8 +251,9 @@ export class ArtWorld implements WorldRenderer {
       const kind = u.tower === TOWER_KING ? 'king' : u.x < 9000 ? 'princessLeft' : 'princessRight';
       art.drawTowerRuin(r, kind, u.team as Team);
     }
-    this.fx.draw(r, 'Ground');
-    this.fx.draw(r, 'GroundAbility');
+    // effect layers in the client's order (0xe22490 / 0x856f28): Base (3) under the shadow composite
+    // (4), then Ground (8), GroundAbility (9), Object (10, sorted with the actors), Above (11)
+    this.fx.draw(r, 'Base');
     // stop area-effect visuals whose engine object has expired
     if (this.aeoFx.size) {
       for (const [id, h] of this.aeoFx) if (!b.areaEffects.some((q) => q.id === id)) { h.stop(); this.aeoFx.delete(id); }
@@ -235,9 +281,22 @@ export class ArtWorld implements WorldRenderer {
       art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), st.action, st.angle, st.ms,
         { sprite: this.sprites.get(u.id) ?? undefined, clipFrame: this.clipFrames.get(u.id) });
     }
+    // projectile shadows go into the same silhouette (0x855304 -> 0x856a40)
+    for (const p of b.projectiles) {
+      const pv = this.projViews.get(p.id);
+      if (pv?.v) art.drawProjectileShadow(r, pv.name, p.team as Team, pv.x, pv.y, pv.v);
+    }
+    // drag preview ghosts are real actor views: their shadows join the silhouette buffer (A)
+    const ghosts = this.ui.ghostUnits().filter((g) => m.characters[g.def.name]);
+    for (const g of ghosts) art.drawUnitShadow(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0);
     this.fx.draw(r, 'Shadow');
     art.endShadowPass(r);
-    this.fx.draw(r, 'Base');
+    // battle layer child 7 (after the shadow composite, before Ground effects): the illegal-area
+    // overlay (0x86a610), then the drag preview's ground parts (container layer A)
+    this.ui.drawArea(r);
+    this.ui.drawPreviewGround(r);
+    this.fx.draw(r, 'Ground');
+    this.fx.draw(r, 'GroundAbility');
 
     const items: DrawItem[] = [];
     const ypx = (x: number, y: number, z = 0) => art.gameToPx(x, y, z)[1];
@@ -293,31 +352,31 @@ export class ArtWorld implements WorldRenderer {
         clipFrame: this.clipFrames.get(u.id) };
       items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
     }
-    // projectiles
+    // projectiles: Object layer, sorted by the ground-projected y like the actors (setPos3D 0x851b84;
+    // the +48 for z > 0 applies to characters only); HideWhenDelayed hides the sprite (not its shadow)
+    // while the start delay runs (0x855078)
     for (const p of b.projectiles) {
-      const x = f.px(p);
-      const y = f.py(p);
-      const z = this.projectileZ(p, x, y);
-      const vx = p.tx - p.x;
-      const vy = p.ty - p.y;
-      const py = ypx(x, y) + 1500;
+      const pv = this.projViews.get(p.id);
+      const v = pv?.v;
+      if (!pv || !v) continue;
+      const pa = m.projectiles[pv.name];
+      if (pa?.hideWhenDelayed && p.delay > 0) continue;
       const team = p.team as Team;
-      const name = p.def.name;
-      if (!m.projectiles[name]) continue;
-      items.push({ y: py, draw: () => art.drawProjectile(r, name, team, x, y, z, vx, vy, 0, sim - p.born * 50) });
+      const fps = pa?.fps || 30;
+      const clipFrame = pv.clip ? pv.clip.frame : 0;
+      const child = Math.floor((pv.ageMs * fps) / 1000);
+      const x = pv.x, y = pv.y;
+      items.push({ y: ypx(x, y), draw: () => art.drawProjectileView(r, pv.name, team, x, y, v, clipFrame, child) });
     }
     for (const it of this.fx.collect('Object')) items.push({ y: it.sortY, draw: () => it.draw(r) });
+    // drag preview ghost units, sorted with the actors
+    for (const g of ghosts) {
+      const py = ypx(g.x, g.y) + (g.def.flyingHeight > 0 ? 48 : 0);
+      items.push({ y: py, draw: () => { art.drawUnit(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0, { alpha: g.alpha }); } });
+    }
     items.sort((a, c) => a.y - c.y);
     for (const it of items) it.draw();
     this.fx.draw(r, 'Above');
-
-    // deploy clocks over deploying troops and buildings (ui troopDeployTimer)
-    for (const u of b.units) {
-      if (u.state !== ST_DEPLOYING || u.tower !== TOWER_NONE || u.tunneling || u.deployTotal <= 0 || u.maxHp <= 0) continue;
-      const [sx, sy] = art.gameToPx(f.ux(u), f.uy(u), u.def.flyingHeight);
-      const frac = Math.min(1, ((u.deployTotal - u.deployTicks) + f.alpha) / u.deployTotal);
-      art.drawDeployTimer(r, u.team as Team, sx, sy - 45, frac);
-    }
 
     // health bars (original HUD art)
     for (const u of b.units) {
@@ -337,6 +396,8 @@ export class ArtWorld implements WorldRenderer {
       const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u));
       art.drawHealthBar(r, (ca?.healthBar as string | undefined) ?? 'Medium', team, sx, sy, u.hp / u.maxHp, u.def.level);
     }
+    // HUD layer (battle screen +0x300): HUD elements, deploy timers (0x8d9748) and the drag name text
+    this.ui.drawStage(r, dpr);
     r.end();
   }
 
@@ -462,16 +523,119 @@ export class ArtWorld implements WorldRenderer {
     return null;
   }
 
-  /** Visual arc height of a projectile (A: parabola scaled by the data's Gravity). */
-  private projectileZ(p: Projectile, x: number, y: number): number {
-    const pa = this.art.manifest.projectiles[p.def.name];
-    const g = (pa?.gravity as number | undefined) ?? 0;
-    const total = Math.hypot(p.tx - p.startX, p.ty - p.startY) || 1;
-    const done = Math.min(total, Math.hypot(x - p.startX, y - p.startY));
-    const q = done / total;
-    const z0 = p.spell ? 3500 : 900;
-    const base = z0 * (1 - q) + 300 * q;
-    return base + (total * g) / 1500 * 4 * q * (1 - q);
+  /**
+   * The client's projectile views (sc/projectile_view.ts): made when a projectile appears (TrailEffect
+   * attached, following the drawn sprite), updated every frame from the engine's logic position and
+   * height (Projectile z, or the ported arc 0xf927ec when the engine has none), dropped when the
+   * projectile is gone (its trail then stops; a rolling projectile plays its DeathEffect).
+   */
+  private updateProjectiles(f: Frame): void {
+    const b = f.battle;
+    const m = this.art.manifest;
+    for (const pv of this.projViews.values()) pv.seen = false;
+    this.frame = f;
+    const dt = this.lastProjSim < 0 ? 0 : Math.max(0, f.simMs - this.lastProjSim);
+    this.lastProjSim = f.simMs;
+    for (const p of b.projectiles) {
+      const pa = m.projectiles[p.def.name];
+      if (!pa || !pa.sc || !pa.export) continue;
+      let pv = this.projViews.get(p.id);
+      const ez = (p as unknown as { z?: number }).z;
+      if (!pv) {
+        const startZ = typeof (p as unknown as { startZ?: number }).startZ === 'number'
+          ? (p as unknown as { startZ: number }).startZ : this.estimateStartZ(p, b);
+        const z0 = typeof ez === 'number' ? ez : startZ;
+        const frames = Math.max(1, pa.frames ?? 1);
+        pv = {
+          name: p.def.name, state: newProjectileViewState(), z: z0, prevZ: z0, tick: b.tick,
+          startX: p.startX, startY: p.startY, startZ,
+          clip: null, ageMs: 0, v: null, x: p.x, y: p.y, trail: 0, seen: true,
+        };
+        if (isRolling(pa)) pv.clip = new ClipPlayer(frames, pa.fps || 30);
+        this.projViews.set(p.id, pv);
+        const trail = pa.trailEffect;
+        if (trail && this.fx.has(trail)) {
+          const view = pv;
+          const fdx = p.tx - p.startX, fdy = p.ty - p.startY;
+          const flight = fdx || fdy ? nativeAngle(fdx, fdy) : 0;
+          view.trail = this.fx.play(trail, p.x, p.y, {
+            team: p.team as Team, z: z0,
+            follow: () => (this.projViews.get(p.id) === view && view.v ? [view.x, view.y, view.v.height / 0.002] : null),
+            parentAngle: () => flight,
+          });
+        }
+      } else {
+        pv.ageMs += dt;
+        if (pv.clip) pv.clip.advance(dt / 1000);
+      }
+      pv.seen = true;
+      // logic height of this tick and the last one (the actor's +0x8c / +0x90)
+      if (pv.tick !== b.tick) {
+        pv.prevZ = pv.tick === b.tick - 1 ? pv.z : this.logicZ(p, pv, true);
+        pv.z = typeof ez === 'number' ? ez : this.logicZ(p, pv, false);
+        pv.tick = b.tick;
+      }
+      // the angle aims at the homing target's current position, else the aim point (0xf8fc44 / 0xf8fc88)
+      const t = p.target;
+      const live = t && pa.homing && t.state !== ST_DEAD;
+      const tx = live ? t.x : p.tx, ty = live ? t.y : p.ty;
+      pv.x = f.px(p);
+      pv.y = f.py(p);
+      pv.v = projectileView(pa, Math.max(1, pa.frames ?? 1), pv.state, {
+        x: p.x, y: p.y, tx, ty, z: pv.z, prevZ: pv.prevZ, alpha: f.alpha,
+        distFromStart: Math.hypot(pv.x - pv.startX, pv.y - pv.startY),
+        flip: this.art.flip, own: p.team === 0, name: pv.name,
+      });
+    }
+    for (const [id, pv] of this.projViews) {
+      if (pv.seen) continue;
+      this.projViews.delete(id);
+      // a rolling projectile ends with its DeathEffect where it stopped (A: the death call site is not traced)
+      const pa = m.projectiles[pv.name];
+      const de = pa?.deathEffect;
+      if (de && this.fx.has(de)) {
+        const ang = nativeAngle(pv.x - pv.startX, pv.y - pv.startY);
+        this.fx.play(de, pv.x, pv.y, { team: 0, angle: pv.x !== pv.startX || pv.y !== pv.startY ? ang : 0 });
+      }
+    }
+  }
+  private lastProjSim = -1;
+
+  /** Logic height by the arc 0xf927ec from the engine's start/aim (fallback when Projectile has no z). */
+  private logicZ(p: Projectile, pv: ProjView, prev: boolean): number {
+    const pa = this.art.manifest.projectiles[pv.name];
+    let x = p.x, y = p.y;
+    if (prev) {
+      const q = this.frame?.prevPos.get(p.id);
+      if (q !== undefined) { x = Math.floor(q / 65536); y = q % 65536; }
+    }
+    const t = p.target;
+    const homing = !!pa?.homing && !!t;
+    const aimZ = homing && t ? t.def.flyingHeight : 0;
+    return arcHeight(p.startX, p.startY, pv.startZ, p.tx, p.ty, aimZ, x, y, (pa?.speed as number | undefined) ?? p.def.speed,
+      (pa?.gravity as number | undefined) ?? 0);
+  }
+  private frame: Frame | null = null;
+
+  /**
+   * Start height when the engine gives none: shooter z + ProjectileStartZ (0xf8e4c8); spells from the
+   * King tower 3 × its CollisionRadius, SpellAsDeploy 5 × (0xf9f47c); spawned projectiles 0.
+   */
+  private estimateStartZ(p: Projectile, b: Frame['battle']): number {
+    const m = this.art.manifest;
+    if (Object.values(m.projectiles).some((q) => q.spawnProjectile === p.def.name)) return 0;
+    if (p.spell) {
+      const king = b.players[p.team]?.king;
+      const r = king?.radius || m.towers.king.collisionRadius || 1400;
+      return r * 3;
+    }
+    const u = b.units.find((q) => q.id === p.sourceId);
+    if (!u) return 0;
+    let z0 = 0;
+    if (u.tower === TOWER_KING) z0 = m.towers.king.projectileStartZ ?? 0;
+    else if (u.tower === TOWER_PRINCESS) z0 = m.towers.princess.projectileStartZ ?? 0;
+    else z0 = (m.characters[u.def.name]?.projectileStartZ as number | undefined) ?? 0;
+    return u.def.flyingHeight + z0;
   }
 }
 
