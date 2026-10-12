@@ -135,40 +135,28 @@ export class BattleArt {
 
   // -- arena -----------------------------------------------------------------------------------
 
-  drawBackground(r: ScRenderer): void {
+  /**
+   * The arena clip. Its nested clips (river, flags, ...) loop on their own from the battle's start
+   * (24 fps clips, one shared clock).
+   */
+  drawBackground(r: ScRenderer, timeMs = 0): void {
     const a = this.manifest.arena;
-    r.draw(this.lib(a.sc), a.export, 0, this.flip ? [-1, 0, 0, -1, 0, 768] : [1, 0, 0, 1, 0, 0]);
+    const lib = this.lib(a.sc);
+    r.draw(lib, a.export, 0, this.flip ? [-1, 0, 0, -1, 0, 768] : [1, 0, 0, 1, 0, 0], undefined,
+      { childFrame: Math.floor((timeMs * (lib.fps(a.export) || 24)) / 1000) });
+  }
+
+  /** A decoration at its position; nested clips (the water wheel) loop on the deco's clock. */
+  drawDeco(r: ScRenderer, o: Manifest['arena']['objects'][number], timeMs: number, m?: Mat): void {
+    const [px, py] = this.decoPx(o);
+    const t = Math.floor((timeMs * (o.fps || 30)) / 1000);
+    r.draw(this.lib(o.sc), o.export, o.frames && o.frames > 1 ? t : 0, m ?? [1, 0, 0, 1, px, py], undefined, { childFrame: t });
   }
 
   /** Decorations of one or more layers ('Base', 'Ground', 'Object'), in data order. */
   drawArenaObjects(r: ScRenderer, timeMs: number, layers: string[] = ['Base', 'Ground', 'Object']): void {
     for (const o of this.manifest.arena.objects) {
-      if (!layers.includes(o.layer)) continue;
-      const [px, py] = this.decoPx(o);
-      const frame = o.frames && o.frames > 1 ? Math.floor((timeMs * (o.fps || 30)) / 1000) : 0;
-      r.draw(this.lib(o.sc), o.export, frame, [1, 0, 0, 1, px, py]);
-    }
-  }
-
-  /** Drifting cloud shadows (location Cloud* fields; positions are visual-only randomness). */
-  drawClouds(r: ScRenderer, timeMs: number, seed = 1): void {
-    const c = this.manifest.arena.clouds;
-    if (!c) return;
-    const lib = this.lib(c.sc);
-    let s = seed * 9301 + 49297;
-    const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
-    const [fx, fy, fw, fh] = this.fieldRect(6);
-    const n = c.count ?? 4;
-    for (let i = 0; i < n; i++) {
-      const scale = ((c.minscale ?? 100) + rnd() * ((c.maxscale ?? 100) - (c.minscale ?? 100))) / 100;
-      const speed = (c.minspeed ?? 30) + rnd() * ((c.maxspeed ?? 30) - (c.minspeed ?? 30)); // px / s (assumed)
-      const alpha = ((c.minalpha ?? 10) + rnd() * ((c.maxalpha ?? 10) - (c.minalpha ?? 10))) / 100;
-      const flip = c.randomflip && rnd() < 0.5 ? -1 : 1;
-      const x = fx + ((rnd() * fw + (timeMs / 1000) * speed) % fw);
-      const y = fy + rnd() * fh;
-      const frames = lib.frameCount(c.export);
-      r.draw(lib, c.export, Math.floor((timeMs * lib.fps(c.export)) / 1000) % frames,
-        [scale * flip, 0, 0, scale, x, y], [1, 1, 1, alpha, 0, 0, 0]);
+      if (layers.includes(o.layer)) this.drawDeco(r, o, timeMs);
     }
   }
 
@@ -216,8 +204,7 @@ export class BattleArt {
     for (const o of this.manifest.arena.objects) {
       if (!layers.includes(o.layer) || !o.shadowScaleX) continue;
       const [px, py] = this.decoPx(o);
-      const frame = o.frames && o.frames > 1 ? Math.floor((timeMs * (o.fps || 30)) / 1000) : 0;
-      r.draw(this.lib(o.sc), o.export, frame,
+      this.drawDeco(r, o, timeMs,
         this.shadowMatrix(o.shadowScaleX, o.shadowScaleY ?? 0, o.shadowSkew ?? 0, o.shadowX ?? 0, o.shadowY ?? 0, px, py));
     }
   }

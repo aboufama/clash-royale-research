@@ -253,7 +253,7 @@ const t0 = performance.now();
 function drawArenaScene(t: number): void {
   labels = [];
   const items: Drawable[] = [];
-  art.drawBackground(r);
+  art.drawBackground(r, t);
   art.drawArenaObjects(r, t, ['Base']);
   fx.draw(r, 'Ground');
   fx.draw(r, 'GroundAbility');

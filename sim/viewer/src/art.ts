@@ -20,6 +20,7 @@ import {
 } from './sc/index.ts';
 import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
 import { BattleUi } from './battle_ui.ts';
+import { Clouds } from './sc/clouds.ts';
 import type { ProjectileViewFrame, ProjectileViewState } from './sc/projectile_view.ts';
 
 type Team = 0 | 1;
@@ -109,6 +110,9 @@ export class ArtWorld implements WorldRenderer {
   /** Client projectile views by engine projectile id. */
   private projViews = new Map<number, ProjView>();
   private lastFxSim = -1;
+  /** location cloud shadows (battle layer 11), built for each battle */
+  private clouds: Clouds | null = null;
+  private cloudsFor: unknown = null;
   /** In-battle UI: HUD, illegal-area overlay, drag preview, deploy timers (battle_ui.ts). */
   readonly ui: BattleUi;
   /** SC px -> CSS px scale and offset (screen = s * px + v). */
@@ -237,7 +241,9 @@ export class ArtWorld implements WorldRenderer {
     const fxDt = this.lastFxSim < 0 ? 0 : Math.min(250, Math.max(0, sim - this.lastFxSim));
     this.lastFxSim = sim;
     this.fx.update(fxDt);
-    // screen shake of the battle layer (0x856f28), in SC px
+    // battle layer update (0x856f28): cloud shadows, then the screen shake (SC px)
+    if (this.cloudsFor !== b) { this.cloudsFor = b; this.clouds = new Clouds(art, this.ui.layout.stageW); }
+    this.clouds?.update(fxDt / 1000, this.ui.layout.stageW);
     const [shx, shy] = this.fx.shakeOffset(fxDt / 1000);
     this.updateAnims(f, sim);
     this.ui.update(fxDt / 1000, f);
@@ -245,7 +251,7 @@ export class ArtWorld implements WorldRenderer {
 
     r.begin([0.05, 0.08, 0.05, 1]);
     r.setView(this.s * dpr, 0, 0, this.s * dpr, (this.vx + this.s * shx) * dpr, (this.vy + this.s * shy) * dpr);
-    art.drawBackground(r);
+    art.drawBackground(r, sim);
     art.drawArenaObjects(r, sim, ['Base']);
     // destroyed towers leave the game's rubble on the ground layer
     for (const u of b.units) {
@@ -326,8 +332,8 @@ export class ArtWorld implements WorldRenderer {
     // arena decorations on the object layer
     for (const o of m.arena.objects) {
       if (o.layer !== 'Object') continue;
-      const [px, py] = art.decoPx(o);
-      items.push({ y: py, draw: () => r.draw(art.lib(o.sc), o.export, 0, [1, 0, 0, 1, px, py]) });
+      const py = art.decoPx(o)[1];
+      items.push({ y: py, draw: () => art.drawDeco(r, o, sim) });
     }
     // units (0-HP actors such as death bombs and the Rage bottle are drawn too)
     for (const u of b.units) {
@@ -378,6 +384,8 @@ export class ArtWorld implements WorldRenderer {
     }
     items.sort((a, c) => a.y - c.y);
     for (const it of items) it.draw();
+    // layer 11: the clouds were added first, then the Above effects in creation order
+    this.clouds?.draw(r);
     this.fx.draw(r, 'Above');
 
     // health bars (original HUD art)
