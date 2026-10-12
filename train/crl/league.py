@@ -51,6 +51,24 @@ class League:
             self.pool.remove(drop)
         return s
 
+    def pick(self) -> list[Snapshot]:
+        """Choose up to n_active snapshots by PFSP weights (no models loaded)."""
+        if not self.pool:
+            return []
+        weights = [(1.0 - s.winrate() + 0.05) ** self.pfsp_power for s in self.pool]
+        cand = list(range(len(self.pool)))
+        picks: list[Snapshot] = []
+        for _ in range(min(self.n_active, len(self.pool))):
+            tot = sum(weights[i] for i in cand)
+            r = self.rng.random() * tot
+            for j, i in enumerate(cand):
+                r -= weights[i]
+                if r <= 0:
+                    picks.append(self.pool[i])
+                    cand.pop(j)
+                    break
+        return picks
+
     def resample(self, template: torch.nn.Module, device: torch.device) -> None:
         """Pick the active opponents for the next rollout by PFSP weights."""
         self.active = []

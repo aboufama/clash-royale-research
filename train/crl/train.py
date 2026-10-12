@@ -38,12 +38,14 @@ def parse(argv=None):
     a("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a("--workers", type=int, default=max(1, available_cpus() - 3), help="simulation workers (default: leave 3 CPUs to the trainer)")
     a("--groups", type=int, default=2, help="worker groups stepped alternately (overlaps simulation and inference)")
+    a("--collectors", type=int, default=1, help="collector processes sharing the workers (crl/dist.py when > 1)")
+    a("--learner-device", default="", help="default: cuda:1 when there are 2+ GPUs, else --device")
     a("--envs", type=int, default=24, help="battles per worker")
     # env
     a("--decision-ticks", type=int, default=5, help="decision grid in 50 ms ticks")
     a("--gamma", type=float, default=0.9997, help="discount per tick (0.9997: ~167 s horizon)")
     a("--lam", type=float, default=0.95, help="GAE lambda per decision")
-    a("--bot-prob", type=float, default=0.05, help="share of episodes against the scripted bot")
+    a("--bot-prob", type=float, default=0.1, help="share of episodes against the scripted bot (benchmark only, never trained on)")
     a("--bot-level", type=int, default=3)
     a("--random-prob", type=float, default=0.0)
     a("--no-deck-swap", action="store_true", help="learner keeps deck 0 / team order fixed")
@@ -93,6 +95,8 @@ def parse(argv=None):
         args.bot_prob = 0.25
     if not args.buffer:
         args.buffer = 2 * args.rollout + 4 * args.workers * args.envs
+    if not args.learner_device:
+        args.learner_device = "cuda:1" if args.device.startswith("cuda") and torch.cuda.device_count() > 1 else args.device
     return args
 
 
@@ -277,6 +281,9 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, out_q) 
 
 def main(argv=None):
     args = parse(argv)
+    if args.collectors > 1:
+        from .dist import main as dist_main
+        return dist_main(args)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     random.seed(args.seed)
@@ -345,8 +352,9 @@ def main(argv=None):
 
     def assign(opp_code: int, team: int) -> list:
         if opp_code != 0:
+            # the scripted bot is a benchmark only: the learner plays it ("E") but nothing is trained on it
             nets = [None, None]
-            nets[team] = "L"
+            nets[team] = "E"
             nets[1 - team] = OPP_NAMES[opp_code]
             return nets
         if not league.active or rng.random() < args.self_play_prob:
@@ -367,10 +375,10 @@ def main(argv=None):
             outcome, term, shape, ticks, ep_ticks = float(row[3]), float(row[4]), float(row[5]), float(row[6]), float(row[7])
             crowns, opp_crowns = (float(row[8]), float(row[9])) if len(row) > 9 else (0.0, 0.0)
             nets = ep_nets.get((gid, ep))
-            if nets is None or nets[team] != "L":
+            if nets is None or nets[team] not in ("L", "E"):
                 continue
             li = stream_last.get((gid, team))
-            if li is not None:
+            if li is not None and nets[team] == "L":
                 buf.finish(li, term + c * shape, ticks, True, 0.0)
                 stream_last[(gid, team)] = None
             opp = nets[1 - team]
@@ -400,7 +408,7 @@ def main(argv=None):
         timing["p_bookkeep_s"] += tp1 - tp0
         obs_t = torch.from_numpy(frame.obs).to(device)
         masks_t = torch.from_numpy(frame.masks).to(device)
-        learn = np.array([v == "L" for v in nets_r], dtype=bool)
+        learn = np.array([v in ("L", "E") for v in nets_r], dtype=bool)
         with torch.no_grad(), autocast():
             if learn.any():
                 li_rows = np.nonzero(learn)[0]
@@ -413,6 +421,8 @@ def main(argv=None):
                 tp2 = time.time()
                 timing["p_infer_s"] += tp2 - tp1
                 slot[li_rows], tile[li_rows] = s_np, t_np
+                keep = np.array([nets_r[r] == "L" for r in li_rows], dtype=bool)  # benchmark games are not stored
+                li_rows, s_np, t_np, lp_np, v_np = li_rows[keep], s_np[keep], t_np[keep], lp_np[keep], v_np[keep]
                 # the chosen card's tile mask, gathered on the host (zeros for a wait)
                 start = 5 + np.clip(s_np - 1, 0, 3) * n_tiles
                 tm = frame.masks[li_rows[:, None], start[:, None] + np.arange(n_tiles)[None, :]] * (s_np > 0)[:, None]
