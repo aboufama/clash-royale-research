@@ -28,9 +28,14 @@
 //   - update 0x8ca764 (from the battle screen update 0xbe1d3c, whose battle clock never waits for it,
 //     0xcc4338): time +0xe0 += dt; vs hold loop; once any player has played a card (a King tower's
 //     queued-card count +0x318 >= 1, 0xd3cb70) the clip's frame time is halved (0x124351c) and its
-//     playback mode set to 2 (all due frames, children interpolated); the press-and-hold of the
-//     touch handlers (vt+0x110 0x8cace4 / vt+0x120 0x8cad48: hold at holdFrame, scale to 0.95) is not
-//     wired (no touch input on the overlay); sounds are not played;
+//     playback mode set to 2 (all due frames, children interpolated); then the hold scale: the intro's
+//     scale (base +0x178 = 1) moves at half the base per second toward 0.95 of it while held, back to it
+//     when not (vt+0x48 / vt+0x30); the sounds are sc/sound.ts's ScreenSounds;
+//   - touch (the intro is a stage-wide object on layer +0x168: its dimmer covers the stage): a touch down
+//     (vt+0x110 0x8cace4) while the clip is at or before holdFrame (+0xec) and not held plays it to
+//     holdFrame (0x12422a4) and holds it (+0xf0); the touch's end (vt+0x120 0x8cad48, the same touch,
+//     vt+0x100) releases it and plays it to its last frame (the +0x13b skip path of the tutorial manager is
+//     never set here);
 //   - the battle screen removes it once its clip has stopped (state 2) and it is not held (+0xf0);
 //   - while it exists and its frame is below actionFrame (0x8caeb8): the HUD is hidden (screen +0x468
 //     block of 0xbe1d3c: HUD +8 = !(playing && frame < actionFrame), latched once shown) and battle
@@ -132,8 +137,11 @@ export class BattleIntro {
   readonly holdFrame: number; // +0xec
   /** +0xe0: time since creation (s) */
   time = 0;
-  /** +0xf0: held by a touch (never set here: no touch input on the overlay) */
+  /** +0xf0: held by a touch (0x8cace4) */
   held = false;
+  /** the intro's scale (vt+0x48 / vt+0x30), base +0x178 = 1 */
+  scale = 1;
+  private readonly baseScale = 1;
   /** +0x13c: the frame time was halved after the first card play */
   spedUp = false;
   private readonly baseFt: number; // +0x17c (the clip's frame time at creation)
@@ -221,6 +229,21 @@ export class BattleIntro {
     }
   }
 
+  /** Touch down on the intro (vt+0x110 0x8cace4): hold at holdFrame. */
+  touchDown(): void {
+    const h = this.holdFrame;
+    if (h < 0 || this.held || this.root.frame > h) return;
+    this.root.playTo(h);
+    this.held = true;
+  }
+
+  /** The holding touch ended (vt+0x120 0x8cad48): play on to the last frame. */
+  touchUp(): void {
+    if (!this.held) return;
+    this.held = false;
+    this.root.playTo(this.root.frames - 1);
+  }
+
   /** 0x8caeb8: the clip is still before actionFrame (HUD hidden, input blocked). */
   get beforeAction(): boolean { return this.root.frame < this.actionFrame; }
 
@@ -242,6 +265,19 @@ export class BattleIntro {
       this.spedUp = true;
       this.root.setFrameTime(f32(this.baseFt * 0.5));
       this.root.mode = 2;
+    }
+    // the hold scale (end of 0x8ca764): rate base * 0.5000001 per s, target 0.95 * base while held
+    const base = this.baseScale, rate = f32(base * f32(0.5000001));
+    let s = this.scale;
+    if (this.held) {
+      const target = f32(base * f32(0.95));
+      if (s <= target) return;
+      s = f32(s - f32(dt * rate));
+      this.scale = s < target ? target : s;
+    } else {
+      if (base <= s) return;
+      s = f32(s + f32(dt * rate));
+      this.scale = base < s ? base : s;
     }
   }
 
@@ -290,7 +326,8 @@ export class BattleIntro {
   draw(r: ScRenderer, st: IntroStage, ctx: DrawCtx): void {
     const x = st.stageW * 0.5, y = st.centreY;
     this.layout(st, x, y);
-    const m: Mat = [1, 0, 0, 1, x, y];
+    const k = this.scale;
+    const m: Mat = [k, 0, 0, k, x, y];
     this.root.draw(r, m, WHITE as Col, ctx);
   }
 }

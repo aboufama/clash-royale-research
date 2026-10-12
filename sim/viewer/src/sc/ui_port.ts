@@ -25,6 +25,7 @@
 //   radialFillStrip      RadialFill card mask while a card is unaffordable (ctor 0x89f9b4, draw 0x89fd24)
 //   elixirRequirement    selected card's cost on the elixir bar (0x8dbebc, elixirRequirementBar)
 //   battleClock          the HUD time update's clock (0x8d38c4 on the battle timeline 0xd56070)
+//   postEndTicks         the battle ticks run after the end until the end screen (0x10ca9a0 / 0xd3581c)
 //   topRightFade         HUD_topRight's alpha in the HUD update 0x8d1e6c (fade out once input is blocked)
 //   HandPanelSlide       HUD_player's slide-in (0x8db8e0 +0x21c / +0x274) and the hand update gate (0x8dc37c)
 //   defaultFloaterPos    the popup manager's default floater point (0x88ca58)
@@ -1040,6 +1041,16 @@ export function battleClock(b: ClockBattle, ticksSinceEnd = 0): { ot: boolean; m
   const end = ot ? b.regulationTicks + b.overtimeTicks : b.regulationTicks;
   const msLeft = Math.max(0, (end - elapsed) * 50);
   return { ot, msLeft, secs: Math.floor((msLeft + 999) / 1000) };
+}
+
+/**
+ * The battle ticks the battle manager still runs after the end: the end tick sets the ms since the end
+ * (+0x198) to 1 (0xd3e360), each later battle tick adds 50 (0xd33f74), and 0x10ca9a0 stops ticking once
+ * 0xd3581c finds it at EndScreenDelay; the timeline, and the HUD clock with it (0x8d38c4), stops there
+ * (80 ticks for 4000 ms), while the result screen shows.
+ */
+export function postEndTicks(endScreenDelay: number): number {
+  return Math.max(0, Math.ceil((endScreenDelay - 1) / 50));
 }
 
 /**

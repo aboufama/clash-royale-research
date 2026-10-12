@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Battle, ST_DEAD } from '../../core/src/index.ts';
 import { loadGameData } from '../../core/src/node.ts';
-import { battleClock, defaultFloaterPos, HandPanelSlide, topRightFade } from '../src/sc/ui_port.ts';
+import { battleClock, defaultFloaterPos, HandPanelSlide, postEndTicks, topRightFade } from '../src/sc/ui_port.ts';
 
 const data = loadGameData();
 const DECK = ['Knight', 'Archer', 'Giant', 'Musketeer', 'Fireball', 'Arrows', 'MiniPekka', 'Valkyrie'];
@@ -82,4 +82,19 @@ test('0x8db8e0 slide: t moves 4 / s; y = u^2 (3 - 2u) dist; alpha while t > 0; 0
 test('0x88ca58 default floater point: stage size times (0.5, 0.3), floored', () => {
   assert.deepEqual(defaultFloaterPos(400.7, 712.3), [200, 213]);
   assert.deepEqual(defaultFloaterPos(375, 812), [187, 243]);
+});
+
+test('0x10ca9a0 / 0xd3581c: the battle ticks after the end stop at EndScreenDelay, and the clock with them', () => {
+  assert.equal(postEndTicks(4000), 80);
+  assert.equal(postEndTicks(1), 0);
+  assert.equal(postEndTicks(51), 1);
+  const b = battle();
+  b.tick = 2000;
+  b.players[1].king.state = ST_DEAD;
+  (b as unknown as { checkEnd(): void }).checkEnd();
+  b.tick++;
+  // the viewer's clock runs on under the result screen; the HUD reads at most postEndTicks past the end
+  const frozen = battleClock(b, postEndTicks(4000)).secs;
+  assert.equal(battleClock(b, Math.min(postEndTicks(4000), 200)).secs, frozen);
+  assert.equal(frozen, Math.ceil(((3600 - 2001 - 80) * 50) / 1000));
 });

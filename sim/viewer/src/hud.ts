@@ -5,7 +5,8 @@
 //   HUD_topLeft     (0, 0)                0x8cf3b8: opponent name / clan
 //   HUD_topRight    (stageW, 0)           0x8cf3b8 / 0x8d38c4: "Time left:" m:ss, overtime clip, elixir badge
 //   HUD_rightMiddle (stageW, river y)     0x8cd4ec / 0x8d1e6c: crowns, faded in while a crown flies
-//   HUD_taunt       (stageW / 2, stageH)  0x8cd4ec: emote button (not functional here)
+//   HUD_taunt       (stageW / 2, stageH)  0x8cd4ec: emote button, menu and bubbles (sc/emotes.ts, drawn by
+//                   battle_ui.ts in the game layer +0x178)
 //   crown flights   HUD children          0x8d0dd8 / 0x8d2de0 (sc/crown_fly.ts), effects.sc star_appear*
 // Both `darken` backdrops (HUD_topLeft, HUD_player) show only at graphics level 2 (setting +0x198 of
 // 0x770758, 0x8cf3b8 / 0x8da088); the viewer assumes that level, as for the location clouds (A).
@@ -20,7 +21,7 @@ import { CrownFly, CrownPanelFade, crownTowerGone } from './sc/crown_fly.ts';
 import { HandSounds, sound } from './sc/sound.ts';
 import {
   barTipX, battleClock, type CardStart, cardEntry, cardRaise, cardSlot, dropWaitStep, elixirDropXs, ElixirBar, HandCard,
-  HandPanelSlide, HandWiggle, nextCardTimer, PanelFlash, refundBar, regenBadgeText, rotScale, spellInstanceId,
+  HandPanelSlide, HandWiggle, nextCardTimer, PanelFlash, postEndTicks, refundBar, regenBadgeText, rotScale, spellInstanceId,
   type StageLayout, stageLayout, topRightFade, UiBar,
 } from './sc/ui_port.ts';
 
@@ -181,6 +182,11 @@ export class Hud {
   private drops: { x: number; clip: ClipPlayer }[] = [];
   /** hand panels hidden (the result screen, 0xbe0100 -> 0x8d5ff8) */
   handHidden = false;
+  /**
+   * The hand panel's cards and `slots` hidden while the emote menu is open (0x8d1228: panel +0xe8 = 0 -> the
+   * card update 0x8e1408 sets each card's visibility to its own flag & +0xe8; `slots` hidden).
+   */
+  cardsHidden = false;
   /** HUD_player's additive flash of an elixir gain (0x8dce48 / 0x8db8e0) */
   readonly flash = new PanelFlash();
   /** counter texts: crowns minus the flights of that side in the air (0x8d2de0), [player, enemy] */
@@ -408,7 +414,7 @@ export class Hud {
   /** Hand slot under a stage point, or -1. */
   cardAt(x: number, y: number): number {
     const b = this.cardBounds;
-    if (!b) return -1;
+    if (!b || this.cardsHidden) return -1;
     for (let i = 0; i < 4; i++) {
       const p = this.slotPos(i);
       // a dragged or waiting card is at the pointer (0x8e1fb8 moves the card itself), not in its slot
@@ -668,7 +674,10 @@ export class Hud {
     this.updateCrowns(dt, b);
     // HUD_topRight's fade (0x8d1e6c), then the time update 0x8d38c4 on the timeline's section and clock
     this.topAlpha = topRightFade(this.topAlpha, dt, this.blocked);
-    const sinceEnd = b.result ? Math.floor((this.simMs - (b.result.tick + 1) * 50) / 50 + 1e-6) : 0;
+    // the battle manager stops ticking once the end screen is due (0x10ca9a0 / 0xd3581c), so the timeline,
+    // and the clock with it, stops after the post-end ticks even though the viewer's clock runs on
+    const sinceEnd = b.result ? Math.min(postEndTicks(b.endScreenDelay),
+      Math.floor((this.simMs - (b.result.tick + 1) * 50) / 50 + 1e-6)) : 0;
     const clock = battleClock(b, sinceEnd);
     this.clock = { ot: clock.ot, secs: clock.secs };
     const ot = clock.ot;
@@ -756,13 +765,10 @@ export class Hud {
     // bottom: HUD_player and the hand; the result screen hides the hand panels (0xbe0100 ->
     // 0x8d5ff8(hud, 0 / 1, 0): HUD +0x90 / +0x98 invisible)
     if (!this.handHidden && this.slide.visible) this.drawHandPanel(r, b, ui, p);
-    // emote button
-    r.draw(ui, 'HUD_taunt', 0, [1, 0, 0, 1, L.stageW * 0.5, L.stageH], WHITE, {
-      named: { buttons: { frame: 0 }, mute_btn: { hide: true }, muted: { hide: true } },
-    });
+    // the emote button (HUD_taunt) is in the game layer +0x178, drawn by battle_ui.ts (sc/emotes.ts)
     // dragged card following the pointer (0x8e1fb8: scale/alpha shrink toward the arena); a card waiting
     // for elixir keeps its drag state (its visual is hidden over the arena)
-    for (const d of this.handHidden ? [] : [this.held, this.drag]) {
+    for (const d of this.handHidden || this.cardsHidden ? [] : [this.held, this.drag]) {
       if (!d || d.cardScale <= 0) continue;
       const pos = this.slotPos(d.slot);
       const s0 = pos?.s ?? (this.area ? cardSlot(this.area, d.slot, this.cardH).s : 1);
@@ -773,8 +779,21 @@ export class Hud {
       const f = d.cardScale;
       const lx = d.gx / s0, ly = d.gy / s0;
       this.art.drawCard(r, d.card, [a * f, bb * f, c * f, dd * f, d.x + (a * lx + c * ly) * f, d.y + (bb * lx + dd * ly) * f],
-        { alpha: f });
+        this.flashed({ alpha: f }));
     }
+  }
+
+  /**
+   * Card draw options with HUD_player's gain flash (0x8dce48 / 0x8db8e0: an additive white on the panel and
+   * every child, the hand cards and the next card included). BattleArt.drawCard reads `color` (a colour
+   * transform multiplied into the card's own); the extra field is passed through a variable so this compiles
+   * before battle_art.ts takes it.
+   */
+  private flashed(o: Parameters<BattleArt['drawCard']>[3]): Parameters<BattleArt['drawCard']>[3] {
+    const fa = this.flash.add;
+    if (!(fa > 0)) return o;
+    const withColor = { ...o, color: [1, 1, 1, 1, fa, fa, fa] as Col };
+    return withColor;
   }
 
   /** HUD_player (the hand panel built by 0x8d9d30): panel, elixir bar, next card, hand and spend drops. */
@@ -789,6 +808,8 @@ export class Hud {
       ability_location: { hide: true }, NextSpellTimer: { hide: true },
       panel: { lib: ui, export: 'panel_ingame_blue', frame: 0 },
       bar_refund: { hide: true },
+      // the emote menu hides the card slots (0x8d1228)
+      ...(this.cardsHidden ? { slots: { hide: true } } : {}),
       elixir_warning: { frame: this.warning.frame },
     };
     const bar = this.bar;
@@ -841,7 +862,7 @@ export class Hud {
       const card = nt.card;
       const s = (nr[3] - nr[1]) / 1.34 / this.cardH;
       const cx = (nr[0] + nr[2]) / 2, cy = (nr[1] + nr[3]) / 2;
-      if (card) this.art.drawCard(r, card, matMul(hm, [s, 0, 0, s, cx, cy]), { noCost: true, grayscale: nt.gray });
+      if (card) this.art.drawCard(r, card, matMul(hm, [s, 0, 0, s, cx, cy]), this.flashed({ noCost: true, grayscale: nt.gray }));
     }
     // the next card sits at nextCard1's place in HUD_player's children (0x125299c at its index), so the
     // later NextSpellTimer field draws over it
@@ -853,14 +874,14 @@ export class Hud {
     // (0x8dc37c → 0x8e1408 → 0x89fd04)
     const avail = p.elixir - p.pending;
     const shown = avail < 1 ? 0 : Math.trunc(Math.min(avail, b.maxElixir) / 100);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 4 && !this.cardsHidden; i++) {
       const def = p.deck[this.cards[i].card];
       const m = this.slotMatrix(i);
       if (!def || !m) continue;
       if (this.dragOf(i)) continue; // drawn at the pointer
       const need = def.cost * 100;
       const ok = b.infiniteElixir || shown >= need;
-      this.art.drawCard(r, def.name, m, { dim: !ok, fill: ok ? null : shown / need });
+      this.art.drawCard(r, def.name, m, this.flashed({ dim: !ok, fill: ok ? null : shown / need }));
     }
     // spend drops: HUD_player children added after the hand cards (0x8dcbf4 -> 0x1252994 on elixir_bar
     // +0x38), at the elixir_bar's y

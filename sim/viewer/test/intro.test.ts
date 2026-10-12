@@ -207,3 +207,34 @@ test('intro: the stretch helper covers the stage, never shrinks (0x89a38c)', () 
   assert.equal(sy, 1);
   assert.deepEqual(stretchScale([-10, -200, 10, 200], [45.53, 0, 0, 1.18, 0, 0], 578, 1024, true, false), [1, 1]);
 });
+
+test('intro: a touch holds it at holdFrame and scales it to 0.95; the release plays it to the end (0x8cace4 / 0x8cad48)', () => {
+  const lib = bannersLib();
+  const it = new BattleIntro(lib, ART, { player: 'You', enemy: 'Opponent' });
+  for (let i = 0; i < 10; i++) { it.update(DT, false); it.advance(DT); }
+  it.touchDown();
+  assert.equal(it.held, true);
+  assert.equal(it.root.state, 1); // playing to holdFrame
+  assert.equal(it.root.end, 158);
+  for (let i = 0; i < 300; i++) { it.update(DT, false); it.advance(DT); }
+  assert.equal(it.root.frame, 158);
+  assert.equal(it.root.state, 2);
+  assert.equal(it.beforeAction, true); // HUD hidden, input blocked while held
+  assert.equal(it.done, false); // stopped but held: not deleted
+  assert.ok(Math.abs(it.scale - 0.95) < 1e-6);
+  it.touchUp();
+  assert.equal(it.held, false);
+  assert.equal(it.root.end, 289);
+  // back to scale 1 at half the base per second (0.1 s)
+  for (let i = 0; i < 5; i++) it.update(DT, false);
+  assert.ok(it.scale > 0.95 && it.scale < 1);
+  for (let i = 0; i < 2; i++) it.update(DT, false);
+  assert.equal(it.scale, 1);
+  for (let i = 0; i < 200; i++) { it.update(DT, false); it.advance(DT); }
+  assert.equal(it.done, true);
+  // a touch after holdFrame does not hold
+  const it2 = new BattleIntro(lib, ART, { player: 'You', enemy: 'Opponent' });
+  for (let i = 0; i < 170; i++) { it2.update(DT, false); it2.advance(DT); }
+  it2.touchDown();
+  assert.equal(it2.held, false);
+});

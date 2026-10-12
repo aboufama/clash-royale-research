@@ -167,6 +167,25 @@ INTRO_EXPORTS = ("battle_intro_banners", "battle_banner", "banner_bg_default_gre
 # End-of-battle result screen (0xbe0100 -> 0x8bc564; 0x8bcab8 picks pvp_battle_end_new for a 1v1 battle)
 RESULT_SC = "sc/ui_battle_end.sc"
 RESULT_EXPORT = "pvp_battle_end_new"
+# The result screen's confetti (0x8bf730 -> 0x8c08b0: win_battle_confetti_blue under the screen and _top above
+# it, 0x1a5e858 / 0x1a5e868; their EnemyVersion red pair for a loss) and the GameButtons' click sound (client
+# tables +0x9c0, 0x1a5ed78; 0x894c54 / 0x894dfc). sim/viewer/src/sc/result.ts, sc/emotes.ts.
+RESULT_EFFECTS = ("win_battle_confetti_blue", "win_battle_confetti_blue_top")
+BUTTON_CLICK_SOUND = "soundbanks/ui_menu_general/ui_menu_general_buttonclick_2"
+# Emotes (sim/viewer/src/sc/emotes.ts): HUD_taunt's menu 0x8e9284 (taunt_selector_new, emote_menu_* items,
+# the button template button_timeline of 0x1273538), the bubbles 0x8e8f0c / 0x8e89d0 (sticker / speech bubbles)
+# from sc/ui.sc; the default-owned emotes of csv_logic/emotes.csv (their pack's emoteN / iconN exports and SfxFile
+# .ogg, played through event:/Main/Trigger/SFX_trigger/Play_emote by 0x8892cc) and the menu's text taunts
+# (csv_logic/taunts.csv rows with TauntMenu and IsTextEmote, 0x8ea21c).
+EMOTE_UI_EXPORTS = (
+    "taunt_selector_new", "emote_menu_sticker_btn", "emote_menu_empty_slot", "emote_downloading", "button_timeline",
+    "sticker_bubble_player_master", "sticker_bubble_player2_master", "sticker_bubble_opponent_master",
+    "sticker_bubble_opponent2_master", "speech_bubble_player_master", "speech_bubble_player2_master",
+    "speech_bubble_opponent_master", "speech_bubble_opponent2_master",
+)
+EMOTE_TEXTS = ("TID_TAUNT_LIMIT_FULL", "TID_NO_TAUNT_DUE_TO_MUTE", "TID_EMOTE_MISSING",
+               # the battle screen's touch end 0xbe1120: a tap on the arena with no card selected (main.ts)
+               "TID_NO_SPELL_SELECTED_TAP")
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
              "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
@@ -1170,6 +1189,9 @@ class Baker:
         if res:
             loc = load_json("locations").get(self.args.location) or {}
             out["result"] = {"sc": res, "export": RESULT_EXPORT, "endScreenDelay": int(loc.get("EndScreenDelay") or 0)}
+        emotes = self.emote_art()
+        if emotes:
+            out["emotes"] = emotes
         # radius indicator texture of the spell drag (0xcf0464 loads image/range.png: a 2x32 white ramp)
         if apk.exists("image/range.png"):
             OUT.mkdir(parents=True, exist_ok=True)
@@ -1229,6 +1251,50 @@ class Baker:
             if acts:
                 out["healthBarParts"][h.group(1)]["clientActions"] = re.findall(r'"([^"]*)"', acts.group(1))
         return out
+
+    # -- emotes (sim/viewer/src/sc/emotes.ts) -----------------------------------------------------
+    def emote_art(self) -> dict | None:
+        """HUD_taunt's menu, bubbles and the default-owned emotes / menu text taunts, with their sfx copied."""
+        ui = "sc/ui.sc"
+        lib = None
+        for e in EMOTE_UI_EXPORTS:
+            lib = self.want(ui, e) or lib
+        if lib is None:
+            return None
+        rows = lambda rel: list(csv.DictReader(io.StringIO((RAW / rel).read_text(encoding="utf-8"))))[1:]  # noqa: E731
+        emotes = []
+        # a fresh account owns the DefaultOwned rows (no player profile in the sandbox: approximation)
+        for r in rows("csv_logic/emotes.csv"):
+            if r.get("DefaultOwned") != "True" or r.get("Available") != "True" or not r.get("ScFile"):
+                continue
+            lo = int(r.get("IndexLo") or 0)
+            clip, icon = f"emote{lo + 1}", f"icon{lo + 1}"  # 0x8897a4 / 0x88938c: "emote%d" / "icon%d" of IndexLo + 1
+            pack = self.want(r["ScFile"], clip)
+            if not pack or not self.want(r["ScFile"], icon):
+                continue
+            d = {"name": r["Name"], "hi": int(r.get("IndexHi") or 0), "lo": lo, "sc": pack, "clip": clip, "icon": icon,
+                 "crystal": r.get("UseCrystalBackground") == "True", "frames": self.clip_info(r["ScFile"], clip)["frames"]}
+            sfx = r.get("SfxFile") or ""
+            if sfx and apk.exists(sfx):
+                (OUT / "emotes").mkdir(parents=True, exist_ok=True)
+                (OUT / "emotes" / Path(sfx).name).write_bytes(apk.read(sfx))
+                d["sfx"] = f"emotes/{Path(sfx).name}"
+            emotes.append(d)
+        taunts = []
+        for i, r in enumerate(rows("csv_logic/taunts.csv")):
+            if r.get("TauntMenu", "").upper() == "TRUE" and r.get("IsTextEmote", "").upper() == "TRUE" and r.get("BtnExportName"):
+                taunts.append({"index": i, "name": r["Name"], "tid": r.get("TID") or "", "btn": r["BtnExportName"],
+                               "sound": r.get("Sound") or None})
+        want_texts = set(EMOTE_TEXTS) | {t["tid"] for t in taunts}
+        texts = {}
+        for r in rows("csv_client/texts.csv"):
+            if r.get("Name") in want_texts:
+                texts[r["Name"]] = r.get("EN", "")
+        self.effect_sounds.add(BUTTON_CLICK_SOUND)  # baked by tools/audio with the effects' sounds
+        g = lambda n, d: client_global(n, d)  # noqa: E731
+        return {"ui": lib, "emotes": emotes, "taunts": taunts, "texts": texts, "clickSound": BUTTON_CLICK_SOUND,
+                "globals": {"showTime": g("SHOW_TAUNT_TIME_SEC", 4), "cooldown10": g("TAUNT_COOLDOWN_10TH_OF_SECONDS", 20),
+                            "limit": g("TAUNT_LIMIT", 100), "soundCooldown": g("TAUNT_SOUND_COOLDOWN", 3000)}}
 
     # -- main ------------------------------------------------------------------------------------
     def run(self):
@@ -1290,6 +1356,8 @@ class Baker:
         extra_fx = list(GLOBAL_EFFECTS) + [s for s in (a.effects or "").split(",") if s.strip()]
         for e in extra_fx:
             self.effect(e.strip())
+        for e in RESULT_EFFECTS:  # the result screen's confetti (0x8c08b0); effect() adds their EnemyVersion pair
+            self.effect(e)
 
         # -- write libraries -------------------------------------------------------------------
         sc_dir = OUT / "sc"

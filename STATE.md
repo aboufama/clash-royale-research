@@ -2,7 +2,7 @@
 
 The single source of truth for where the project stands. Read it after
 [GOAL.md](GOAL.md) and [AGENTS.md](AGENTS.md), and keep it current.
-Last updated 2026-10-12 (periodic spawners and the world after the end ported; 70 cards with original art).
+Last updated 2026-10-12 (hud4: emotes, the result's confetti and OK button, the intro's touch hold; periodic spawners and the world after the end ported; 70 cards with original art).
 
 ## The owner and what they want
 
@@ -50,10 +50,10 @@ Last updated 2026-10-12 (periodic spawners and the world after the end ported; 7
 | Art | ✅ `tools/art/` decodes the SC2 sprite format (`.sc` v5: FlatBuffers + zstd) and the `.sctx` ASTC textures, and renders original animation frames to sheets plus JSON (anchor, hit frame). Verified on the Knight's run and attack animations. See [tools/art/README.md](tools/art/README.md) |
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
 | Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map, periodic spawners (0xf800bc / 0xf8aac8) and the world after the end (opt-in `postEnd`: 0x10ca9a0 until EndScreenDelay). 111 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
-| Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. Area-damage indicator rings (World_areaDamage 0xf97be8 and area-effect pulses → battle screen listener 0xbe76e8 / 0xbe7980, ring class 0xcf0464, fade 0xbe1d3c; `sc/area_rings.ts`), footstep MoveEffects on the run clips' action_frame labels (0x840d44, `sc/unit_fx.ts`, called from art.ts) and the river-jump LandingEffect (0xf7f2c8 → view vt+0x80) are ported from engine events `areaRing` / `pushRing` / `landing` (decompiles in `work/native/decomp_rings/`). The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup). Text is the client's own text path (sc/text.ts, sc/freetype.ts: the two game fonts, FreeType 2.9 unhinted glyphs with the post-processed outline channel, HarfBuzz kerning, the TextField layout and two-pass drawing of 0x126ab4c; the battle layer should set `ScRenderer.textStageScale` to the HUD's scale) |
-| Sound | ✅ The client's FMOD sounds in the viewer (`sim/viewer/src/sc/sound.ts`, WebAudio, Battle panel toggle): `tools/audio/` reads the FMOD Studio banks and rebuilds the used FSB5 Vorbis samples as Ogg in pure Python during the bake (`sim/viewer/assets/audio/`, ignored); effect sound components, cast sounds, HUD / hand / timer / crown sounds, the battle screen's clock sounds and music (0xbdf1b0), overtime, end horn and the result screen's music, as traced in docs/FIDELITY.md (Sound row; A: modulator ranges, playlist modes, stealing; –: buses, snapshots, emotes). BattleMusic layers under 60sec_loop / 30sec_loop as the code and banks say: owner to judge by ear |
+| Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. Area-damage indicator rings (World_areaDamage 0xf97be8 and area-effect pulses → battle screen listener 0xbe76e8 / 0xbe7980, ring class 0xcf0464, fade 0xbe1d3c; `sc/area_rings.ts`), footstep MoveEffects on the run clips' action_frame labels (0x840d44, `sc/unit_fx.ts`, called from art.ts) and the river-jump LandingEffect (0xf7f2c8 → view vt+0x80) are ported from engine events `areaRing` / `pushRing` / `landing` (decompiles in `work/native/decomp_rings/`). The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup). Text is the client's own text path (sc/text.ts, sc/freetype.ts: the two game fonts, FreeType 2.9 unhinted glyphs with the post-processed outline channel, HarfBuzz kerning, the TextField layout and two-pass drawing of 0x126ab4c; art.ts sets `ScRenderer.textStageScale` to the HUD's stage scale for the battle layer and clears it for the HUD). The emote button, its menu and the emote bubbles with their sounds (`sc/emotes.ts`), the result screen's confetti (`sc/confetti.ts`) and the game buttons' press feedback (`sc/ui_button.ts`) are the client's own (docs/FIDELITY.md Emotes and Result rows) |
+| Sound | ✅ The client's FMOD sounds in the viewer (`sim/viewer/src/sc/sound.ts`, WebAudio, Battle panel toggle): `tools/audio/` reads the FMOD Studio banks and rebuilds the used FSB5 Vorbis samples as Ogg in pure Python during the bake (`sim/viewer/assets/audio/`, ignored); effect sound components, cast sounds, HUD / hand / timer / crown sounds, the battle screen's clock sounds and music (0xbdf1b0), overtime, end horn and the result screen's music, as traced in docs/FIDELITY.md (Sound row; A: modulator ranges, playlist modes, stealing; –: buses, snapshots; the emote sounds play their .ogg directly, `sc/emotes.ts`). BattleMusic layers under 60sec_loop / 30sec_loop as the code and banks say: owner to judge by ear |
 | Demo (GitHub Pages) | ✅ Live at https://aboufama.github.io/clash-royale-research/ . `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on every push to `main` (Pages source: GitHub Actions). The repository was made public by the owner (2026-10-11) to serve Pages; the Checks workflow flags `game-files/` in a public repo by design |
-| AI opponent | ✅ `sim/core/src/bot.ts`: deterministic scripted bot for either side and any supported deck (`new Bot(team, { seed, level })`, `bot.act(battle)` each tick; in the viewer the panel's Blue AI / Red AI buttons pick off / easy / medium / hard); card roles from the data and a coarse fight estimate drive defence, pushes, spells and elixir management. Not a native port ([docs/DECISIONS.md](docs/DECISIONS.md)). About 87% wins against `randomPolicy` with mixed random decks, 100% against a passive side, ~2 µs per tick; `node sim/bench/bot.ts` evaluates it. Viewer toggle not wired yet |
+| AI opponent | ✅ `sim/core/src/bot.ts`: deterministic scripted bot for either side and any supported deck (`new Bot(team, { seed, level })`, `bot.act(battle)` each tick; in the viewer the panel's Blue AI / Red AI buttons pick off / easy / medium / hard); card roles from the data and a coarse fight estimate drive defence, pushes, spells and elixir management. Not a native port ([docs/DECISIONS.md](docs/DECISIONS.md)). About 87% wins against `randomPolicy` with mixed random decks, 100% against a passive side, ~2 µs per tick; `node sim/bench/bot.ts` evaluates it. The AI never emotes; the panel's "Red emote" sends the red side's emotes for testing |
 | Training bridge | ❌ Not started |
 
 ### Key facts so far
@@ -126,9 +126,7 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 1. **Remaining native ports** (A rows in docs/FIDELITY.md): the default lane
    goal without a target (0xd43a4c: a mode subsystem at ctx+0x358 whose vt+0x48
    is not yet identified), King activation conditions (TOML scripting), the
-   buff add/refresh rules (Buff_add 0xfc0e08 is decompiled in
-   `work/native/decomp_eng/`) with the attack stun field (attack +0x74), damage
-   over time first-tick timing, the Miner
+   damage-over-time sync of HitTickFromSource (Earthquake, unsupported), the Miner
    state machine, area-effect candidate grid order, the world-list interleaving
    of characters, projectiles and area effects in the actor-update phase.
    Done 2026-10-11 (third pass, PORT_NOTES §9, `projectiles.test.ts`,
@@ -173,12 +171,24 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the own
-   back-row line of 0xbe1500 / 0x8e1fb8
-   (logic Globals +0x1c8 rows, not written by the Globals loaders), the gain
-   flash on the hand cards (BattleArt.drawCard takes no colour), the killer view's vt+0x130 on a
-   kill reward, `BattleUi.isHuman` (the viewer's AI sides should not show the invalid-position
-   floater; main.ts does not set it yet). Done 2026-10-12 (golem): the
+5. **HUD left:** the gain flash on the hand cards needs BattleArt.drawCard to apply the `color`
+   option hud.ts now passes (battle_art.ts: `opts.color` multiplied into the card's colour); the
+   emote system's approximations (no player profile: the DefaultOwned King emotes; Play_emote's own
+   volume; the ScrollArea mask; the 9-slice grid algorithm) and spectator / 2v2 / battle-end chat taunts
+   (docs/FIDELITY.md Emotes row). Done 2026-10-12 (hud4, decompiles in `work/native/decomp_hud4/`):
+   emotes (HUD_taunt 0x8cd4ec, the menu 0x8e9284 / 0x8ea3a4 / 0x8ead78 / 0x8eab24, the bubbles
+   0x8e8f0c / 0x8e89d0 / 0x8e920c / 0x8e8c38, the HUD's 0x8d1228 / 0x8d601c / 0x8d6820, Play_emote
+   0x8892cc; `sc/emotes.ts`), the game buttons' button_timeline press feedback and click sound
+   (0x1273538 / 0x127386c / 0x894dfc; `sc/ui_button.ts`: the result's OK, the emote and mute buttons),
+   the result screen's confetti (0x8c08b0 -> 0x855d04 / 0x82dfe8; `sc/confetti.ts`), the intro's touch
+   hold (0x8cace4 / 0x8cad48 and the hold scale of 0x8ca764), the end screen dropping the released
+   plays' leftovers (0xbe0100 -> 0x8dd538), the back-row line settled (logic Globals +0x1c8 is 0:
+   zeroed by the constructor 0xe367f4 -> 0xe36aac, written by no loader, so 0xbe1500 / 0x8e1fb8 use the
+   own arena edge, as the viewer did), the HUD clock frozen once the battle manager stops at
+   EndScreenDelay (0x10ca9a0 / 0xd3581c), the tap floater TID_NO_SPELL_SELECTED_TAP of the battle
+   screen's touch end 0xbe1120, and the drag-spell sound found absent (DragEffect, client tables
+   +0xee0, has no reader and no sound). `BattleUi.isHuman` is set by main.ts from the AI toggles.
+   Done 2026-10-12 (golem): the
    death-elixir floats (engine event `elixir` -> `BattleUi.gainFloat`), the Log leftover's end
    (engine events `cast.pid` / `projEnd` -> battle screen vt+0xd8 0xbe4340), the commit-run
    TID_INVALID_SPELL_POSITION floater (vt+0x230 0xbe8910 at the popup manager's default point
@@ -207,16 +217,15 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    (`Battle.tiebreakMs` / `drawMs`, 0x10ca9a0, `end.test.ts`); decompiles in
    `work/native/decomp_end/`.
 6. **Viewer fidelity left:** the arena clip field +0x84 used as the 180°
-   turn's ty (768 assumed), how the client picks direction frames under the
-   flip, particle emitter semantics (EmitterReplaceType modifiers, TrailSWF),
-   and the items of the 2026-10-12 audit not yet ported (emotes, per-card
+   turn's ty (768 assumed), particle emitter semantics (EmitterReplaceType modifiers, TrailSWF),
+   and the items of the 2026-10-12 audit not yet ported (per-card
    effects of non-default cards). Done 2026-10-12: the battle intro banner
    (0xbdfa8c → 0x8c81b8, `sc/intro.ts`; HUD hidden and input blocked until its
    actionFrame, the battle clock does not wait) and the end-of-battle result
    screen after EndScreenDelay (0xd3581c → 0xbe0100 → 0x8bc564 / 0x8c2b80,
    `sc/result.ts`), both on the client's MovieClip runtime (`sc/movieclip.ts`,
-   per-instance playheads); decompiles in `work/native/decomp_intro/`. Left:
-   the result's confetti (the hand panel's slide-in / slide-out is done, item 5).
+   per-instance playheads); decompiles in `work/native/decomp_intro/`. The result's confetti,
+   its OK button's press feedback and the intro's touch hold are done too (hud4, item 5).
    Done 2026-10-12 (units3, `sc/unit_view.ts`, decompiles in
    `work/native/decomp_units3/`): health bars per frame as 0x83c268 (enemy
    NoDamage badge always, own bars only once damaged, LifeTime buildings always,

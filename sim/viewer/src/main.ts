@@ -112,6 +112,12 @@ class App {
   private bots: [Bot | null, Bot | null] = [null, null];
   /** AI level per team: 0 off, 1..3 easy..hard */
   aiLevel: [number, number] = [0, 0];
+  /** a touch held on a game button of the HUD layer +0x178 / the result screen (not a battle touch) */
+  private uiHeld: 'ok' | 'emote' | null = null;
+  /** sandbox: the next emote the red side sends (its deck in order, then the text taunts) */
+  private redEmote = 0;
+  /** stage point of a touch that began on the arena with no card selected (0xbe1120's tap) */
+  private tapStart: [number, number] | null = null;
 
   constructor() {
     this.overlay = new Overlay($('overlay'));
@@ -257,13 +263,21 @@ class App {
       if (!ui) return;
       e.preventDefault();
       const [bx, by] = this.boardXY(e);
-      // result screen OK (sc/result.ts): leave the battle; the client returns home, here a new battle starts
-      if (ui.screens.okAt(bx, by, ui.layout)) { this.newBattle(); return; }
+      const L = ui.layout;
+      // result screen OK (sc/result.ts): a game button, held (Down) until the touch ends on it
+      if (ui.screens.okPress(bx, by, L)) { this.uiHeld = 'ok'; board.setPointerCapture(e.pointerId); return; }
+      // HUD_taunt's emote button, mute button and menu items (sc/emotes.ts, game layer +0x178, on top)
+      const [sx, sy] = ui.hud.toStage(bx, by);
+      if (ui.emotes?.pointerDown(sx, sy, L.stageW, L.stageH)) { this.uiHeld = 'emote'; board.setPointerCapture(e.pointerId); return; }
+      // the intro banner takes the touch (hold at holdFrame, 0x8cace4)
+      ui.screens.introTouchDown();
       // battle input is blocked by the intro before its actionFrame and once the battle is over (0xbe4400)
       if (ui.screens.inputBlocked) return;
-      const [sx, sy] = ui.hud.toStage(bx, by);
       const slot = ui.hud.cardAt(sx, sy);
       const team = ui.hud.team;
+      // a touch on the arena (above the hand panel; which touches the battle screen gets there is A) with no
+      // card selected: a tap that may end in 0xbe1120's floater
+      this.tapStart = slot < 0 && ui.hud.selected < 0 && sy < ui.hud.handTop ? [sx, sy] : null;
       if (slot >= 0) {
         const p = this.battle.players[team];
         const home = ui.hud.slotPos(slot);
@@ -279,14 +293,46 @@ class App {
       }
     });
     board.addEventListener('pointermove', (e) => {
+      const ui = this.ui;
+      if (ui && this.uiHeld) {
+        const [bx, by] = this.boardXY(e);
+        const [sx, sy] = ui.hud.toStage(bx, by);
+        if (this.uiHeld === 'ok') ui.screens.okMove(bx, by, ui.layout);
+        else ui.emotes?.pointerMove(sx, sy, ui.layout.stageW, ui.layout.stageH);
+        return;
+      }
       if (!this.drag || this.drag.dom) return;
       const [bx, by] = this.boardXY(e);
       this.dragMove(bx, by);
     });
     const end = (e: PointerEvent) => {
+      const ui = this.ui;
+      if (ui && this.uiHeld) {
+        const held = this.uiHeld;
+        this.uiHeld = null;
+        const [bx, by] = this.boardXY(e);
+        const [sx, sy] = ui.hud.toStage(bx, by);
+        if (held === 'ok') {
+          // OK: the click sound, then leave the battle; the client returns home, here a new battle starts
+          if (ui.screens.okRelease(bx, by, ui.layout)) { ui.click(); this.newBattle(); }
+        } else {
+          const t = ui.emotes?.pointerUp(sx, sy, ui.layout.stageW, ui.layout.stageH);
+          if (t) ui.sendTaunt(t);
+        }
+        return;
+      }
+      // a touch ending on the battle screen: the intro lets go (0x8cad48); 0xbe1120: without a card drag, a
+      // selected card or the emote menu open, a tap on the arena shows TID_NO_SPELL_SELECTED_TAP; then the
+      // emote menu closes (0x8d120c)
+      ui?.screens.introTouchUp();
+      const tap = this.tapStart;
+      this.tapStart = null;
+      if (ui && tap && !this.drag && ui.hud.selected < 0 && !ui.emotes?.menuOpen && !ui.screens.inputBlocked && !this.battle.result) {
+        ui.noCardSelected(ui.hud.toStage(...this.boardXY(e))[1]);
+      }
+      ui?.emotes?.closeMenu();
       const d = this.drag;
       if (!d || d.dom) return;
-      const ui = this.ui;
       this.drag = null;
       if (!ui) return;
       if (!d.moved) {
@@ -305,7 +351,9 @@ class App {
   /**
    * Touch end of a dragged hand card (0x8e2c04). With MAX_SPELL_PENDING_TIME > 0, a card that is not
    * affordable (+0x31a) but will be within that time (0x8e2d50), dropped outside the own back rows
-   * (0xbe1500, here: its visual has finished shrinking, the same line, A for the row count), stays in
+   * (0xbe1500: logic Globals +0x1c8 rows, which is 0 - zeroed by the constructor 0xe367f4 -> 0xe36aac and
+   * written by neither loader - so "in the back rows" is beyond the own arena edge, the line where the card
+   * visual finishes shrinking in 0x8e1fb8), stays in
    * drag mode with its preview and waits (+0x324): any other waiting card is released first (0x8d112c ->
    * 0x8e2b6c). Otherwise it is released now (0x8e29f4 -> 0xbe1634, then 0x8e1004).
    */
@@ -377,7 +425,8 @@ class App {
     const slot = ui.hud.slotPos(d.slot);
     const [, sy] = ui.hud.toStage(d.px, d.py);
     if (!slot) return 0;
-    // boundary: the own edge of the arena (A: the client's Globals +0x1c8 row was not recovered)
+    // boundary: logic row Globals +0x1c8 (0) from the own side, i.e. the own edge of the arena (0x8e1fb8:
+    // project(0, rows · 500) for the flipped view, (0, (mapH − rows) · 500) with mapH ctx +0x18c = 64 otherwise)
     const [, edge] = ui.toStage(...this.edgePx(d.team));
     const span = Math.max(1, slot.y - edge);
     const dist = slot.y - sy;
@@ -630,6 +679,18 @@ class App {
         this.aiLevel[t] = (this.aiLevel[t] + 1) % 4;
         this.bots[t] = this.aiLevel[t] > 0 ? new Bot(t, { seed: this.seed * 2 + t + 1, level: this.aiLevel[t] }) : null;
         label();
+      };
+    }
+    // the AI never emotes (not a client feature); this sends the red side's emotes in turn for testing
+    // (the opponent's taunt event, 0x8d601c type 3 -> 0x8d6820)
+    const re = document.getElementById('emoteRed') as HTMLButtonElement | null;
+    if (re) {
+      re.onclick = () => {
+        const ui = this.ui;
+        const e = ui?.emotes;
+        if (!ui || !e) return;
+        const n = e.art.emotes.length + e.art.taunts.length;
+        if (n > 0) ui.opponentTaunt(this.redEmote++ % n);
       };
     }
     const pb = $<HTMLButtonElement>('palBlue');

@@ -308,3 +308,20 @@ change it.
 - **Would change if:** the engine's spawner members stop deploying (0xf8aac8
   gives a member with hitpoints state 4 only with SpawnCharacterWithDeploy):
   their kept own filter (A) would then go too.
+
+## 2026-10-12 — Emotes: the default emote deck, direct .ogg playback, 9-slice in the MovieClip runtime
+
+- **Decision:** the viewer's emote menu shows what 0x8e9284 builds for an account whose emote deck holds
+  only emotes.csv's DefaultOwned rows (the four King emotes: four empty slots, then the four emotes, plus
+  the six text taunts of taunts.csv); an emote's sound plays its SfxFile .ogg (copied by the bake to
+  `assets/emotes/`) straight on the sound system's AudioContext instead of through the FMOD event
+  `event:/Main/Trigger/SFX_trigger/Play_emote`; scaling-grid clips drawn through `sc/movieclip.ts` keep
+  their margins at world scale 1 (the usual SC 9-slice). The opponent never emotes on its own; the sandbox
+  panel's "Red emote" sends the red side's emotes and text taunts in turn.
+- **Why:** the sandbox has no player profile (a fresh account owns exactly the DefaultOwned emotes); the
+  Play_emote event is a programmer sound that the client feeds the .ogg, and its own level was not decoded
+  (A in docs/FIDELITY.md); without 9-slice the menu's text buttons and the speech bubbles would stretch
+  their rounded corners. The scripted AI is not a client feature, so it does not emote.
+- **Would change if:** player profiles (owned emotes, a chosen deck) come into the sandbox, the Play_emote
+  event's volume / bus is decoded (tools/audio), or the client's scaling-grid render path is traced and
+  differs.
