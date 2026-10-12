@@ -49,7 +49,7 @@ Last updated 2026-10-12 (periodic spawners and the world after the end ported; 7
 | Gameplay data | ✅ `tools/data/`, standard-library Python only. It decodes 648 logic files (0 errors) into 66 JSON tables plus `cards.json` with mechanic flags. Field meanings, units and level scaling are in [docs/DATA_FIELDS.md](docs/DATA_FIELDS.md) |
 | Art | ✅ `tools/art/` decodes the SC2 sprite format (`.sc` v5: FlatBuffers + zstd) and the `.sctx` ASTC textures, and renders original animation frames to sheets plus JSON (anchor, hit frame). Verified on the Knight's run and attack animations. See [tools/art/README.md](tools/art/README.md) |
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
-| Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map, periodic spawners (0xf800bc / 0xf8aac8) and the world after the end (opt-in `postEnd`: 0x10ca9a0 until EndScreenDelay). 111 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
+| Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map, periodic spawners (0xf800bc / 0xf8aac8), the world after the end (opt-in `postEnd`: 0x10ca9a0 until EndScreenDelay), target-removal notices with the finish wait, Kamikaze as a queued kill, MultipleTargets / AllTargetsHit, the Inferno attack sequence, the Miner's tunnel path (state 6), the world list's actor order, area-effect grid order and child objects, and level scaling (0xe7e418). 126 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
 | Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. Area-damage indicator rings (World_areaDamage 0xf97be8 and area-effect pulses → battle screen listener 0xbe76e8 / 0xbe7980, ring class 0xcf0464, fade 0xbe1d3c; `sc/area_rings.ts`), footstep MoveEffects on the run clips' action_frame labels (0x840d44, `sc/unit_fx.ts`, called from art.ts) and the river-jump LandingEffect (0xf7f2c8 → view vt+0x80) are ported from engine events `areaRing` / `pushRing` / `landing` (decompiles in `work/native/decomp_rings/`). The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup). Text is the client's own text path (sc/text.ts, sc/freetype.ts: the two game fonts, FreeType 2.9 unhinted glyphs with the post-processed outline channel, HarfBuzz kerning, the TextField layout and two-pass drawing of 0x126ab4c; the battle layer should set `ScRenderer.textStageScale` to the HUD's scale) |
 | Sound | ✅ The client's FMOD sounds in the viewer (`sim/viewer/src/sc/sound.ts`, WebAudio, Battle panel toggle): `tools/audio/` reads the FMOD Studio banks and rebuilds the used FSB5 Vorbis samples as Ogg in pure Python during the bake (`sim/viewer/assets/audio/`, ignored); effect sound components, cast sounds, HUD / hand / timer / crown sounds, the battle screen's clock sounds and music (0xbdf1b0), overtime, end horn and the result screen's music, as traced in docs/FIDELITY.md (Sound row; A: modulator ranges, playlist modes, stealing; –: buses, snapshots, emotes). BattleMusic layers under 60sec_loop / 30sec_loop as the code and banks say: owner to judge by ear |
 | Demo (GitHub Pages) | ✅ Live at https://aboufama.github.io/clash-royale-research/ . `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on every push to `main` (Pages source: GitHub Actions). The repository was made public by the owner (2026-10-11) to serve Pages; the Checks workflow flags `game-files/` in a public repo by design |
@@ -65,7 +65,7 @@ These come from the brief and the data notes.
 - **Elixir:** stored ×10000. It regenerates exactly 178 units per tick at 1× elixir. Players start with 6, and the max is 10.
 - **Deploying:** a deploy commits 20 ticks after it is played. The unit becomes active after its data `DeployTime` (usually 1000 ms).
 - **Hand cycle:** the played card stays in its slot (hidden by the client) until its play commits; then the slot empties and the hand timer refills it from the queue, at most one fill per NextSpellCooldownMS (1000 ms at first), so the next card appears about 1 s after the release (0xf9f23c, 0xfa5b4c).
-- **Movement:** a unit moves its data `Speed` value in game units per tick. Pathing is A* on the 500-unit grid, with step costs 10/14 × cell cost.
+- **Movement:** a unit moves its data `Speed` value in game units per tick (stop-and-go units such as the Giant walk faster while moving: the loader raises 45 to 52). Pathing is A* on the 500-unit grid, with step costs 10/14 × cell cost.
 - **Attacks:** units spawn preloaded, so the first hit lands after `HitSpeed − LoadTime`. Damage is applied at the end of the same tick.
 - **King tower:** activates 3300 ms after it is first damaged or a Princess tower falls.
 - **Level scaling:** `stat(L) = floor(base × M[L−1−rel]/100)`, with M = 100, 110, 121, … At tournament level 11 the multiplier is 256 (Knight: 1766 HP, 202 damage).
@@ -128,9 +128,23 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    is not yet identified), King activation conditions (TOML scripting), the
    buff add/refresh rules (Buff_add 0xfc0e08 is decompiled in
    `work/native/decomp_eng/`) with the attack stun field (attack +0x74), damage
-   over time first-tick timing, the Miner
-   state machine, area-effect candidate grid order, the world-list interleaving
-   of characters, projectiles and area effects in the actor-update phase.
+   over time first-tick timing, the area-effect filter 0xe31fc8 (does it skip a
+   tunnelling Miner?), SpawnPathfindMorph (Goblin Drill), AttackSequenceList
+   characters.
+   Done 2026-10-12 (eng4, `mechanics3.test.ts`, decompiles in `work/native/decomp_eng4/`,
+   DECISIONS "Engine port 4"): the target-removal notice (0xf8c9d8 → 0xfc7640: the
+   attacker drops the dead target and waits ATTACK_FINISH_TIME_MS before searching;
+   OverrideAttackFinishTime units search at once), Kamikaze as a queued kill (0xf83018:
+   normal death, Battle Ram's Barbarians), MultipleTargets picks (0xfc458c) and AllTargetsHit,
+   the Inferno attack sequence (mode 3: stage by the attack timer, reset on every target
+   change, the Dragon 500 closer while walking; `Unit.seqIndex`, `hit.seq`), the projectile
+   start collision at creation with ProjectileStartExtraRadius (0xf934bc), the Miner's state 6
+   (A* to the deploy point via a bridge at SpawnPathfindSpeed, then deploy), the actor-update
+   order of the world list (area effects, projectiles, characters), area-effect candidates in
+   grid order (0xf9a594), SpawnAreaEffectObject on the parent's first update, the double King
+   kill through the tiebreak gate, ctx +0x2c4, card and crown-tower scaling via 0xe7e418, and the
+   loader's walking speed for stop-and-go units. Recorded events: `kingActivate`,
+   `hit.cancelled`, `hit.seq`. Every state hash changes (unit layout) and replays diverge.
    Done 2026-10-11 (third pass, PORT_NOTES §9, `projectiles.test.ts`,
    `towers.test.ts`): piercing and rolling projectiles (0xf8f2d0 / 0xf8ff74 box
    query, out-and-back axe, Log/Barbarian Barrel cast from the target point),
@@ -283,6 +297,9 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 - Training stack: the owner says it doesn't matter yet; optimise for speed
   (millions of runs).
 - Which cards or decks should come first after M1?
+- Smell test (2026-10-12, eng4): a Log or Bowler ball hits a tunnelling Miner
+  (the decompile has no exemption), and the Miner tunnels via a bridge, not in a
+  straight line.
 
 ## Known gaps
 
@@ -290,7 +307,7 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
   the code but not yet checked against a native trace.
 - The battle RNG uses the native algorithm with a local seed.
 - Double and triple elixir regen rates are inferred, not observed.
-- Some card stats may round rather than floor (see `docs/DATA_FIELDS.md`).
+- Card stats truncate (0xe7e418: m · base / 100). The engine reads Common's multiplier table for every rarity; the client's shorter Rare / Epic / Legendary / Champion tables iterate v + v/10 past their end, which differs from Common's entries only from card level 21 (Rare) up, beyond the highest level (16).
 - Live game updates after install aren't included in `game-files/`.
 - The overtime tiebreak is ported from the battle manager (0x10ca9a0: field
   cleared, 3.25 s pause, all towers drain until the lowest falls; equal towers
