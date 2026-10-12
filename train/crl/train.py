@@ -40,6 +40,7 @@ def parse(argv=None):
     a("--groups", type=int, default=2, help="worker groups stepped alternately (overlaps simulation and inference)")
     a("--collectors", type=int, default=1, help="collector processes sharing the workers (crl/dist.py when > 1)")
     a("--learner-device", default="", help="default: cuda:1 when there are 2+ GPUs, else --device")
+    a("--collector-devices", default="", help="comma-separated devices the collectors take in turn (default: --device)")
     a("--envs", type=int, default=24, help="battles per worker")
     # env
     a("--decision-ticks", type=int, default=5, help="decision grid in 50 ms ticks")

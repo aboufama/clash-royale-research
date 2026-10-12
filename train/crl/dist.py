@@ -111,7 +111,8 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, coord_q
 # ---------------------------------------------------------------------------------------- collector
 
 def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int, roll_q, weight_q, ctrl_q, stats_q) -> None:
-    device = torch.device(args.device)
+    devs = [d for d in (args.collector_devices or args.device).split(",") if d]
+    device = torch.device(devs[cid % len(devs)])
     torch.set_num_threads(1)
     rng = random.Random(args.seed * 7919 + cid)
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
