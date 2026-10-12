@@ -2,7 +2,7 @@
 
 The single source of truth for where the project stands. Read it after
 [GOAL.md](GOAL.md) and [AGENTS.md](AGENTS.md), and keep it current.
-Last updated 2026-10-11 (native movement, spells and formations ported; 70 cards with original art).
+Last updated 2026-10-12 (periodic spawners and the world after the end ported; 70 cards with original art).
 
 ## The owner and what they want
 
@@ -49,7 +49,7 @@ Last updated 2026-10-11 (native movement, spells and formations ported; 70 cards
 | Gameplay data | ✅ `tools/data/`, standard-library Python only. It decodes 648 logic files (0 errors) into 66 JSON tables plus `cards.json` with mechanic flags. Field meanings, units and level scaling are in [docs/DATA_FIELDS.md](docs/DATA_FIELDS.md) |
 | Art | ✅ `tools/art/` decodes the SC2 sprite format (`.sc` v5: FlatBuffers + zstd) and the `.sctx` ASTC textures, and renders original animation frames to sheets plus JSON (anchor, hit frame). Verified on the Knight's run and attack animations. See [tools/art/README.md](tools/art/README.md) |
 | Mechanics facts | ✅ [docs/MECHANICS_BRIEF.md](docs/MECHANICS_BRIEF.md): tick rate, units, elixir, pathfinding, attack timing, King activation and end rules, measured from native runs |
-| Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map. 67 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
+| Engine | ✅ `sim/core`: deterministic 20 Hz integer engine; 70 playable cards (`supportedCards`). Ported from the decompiled `libg` (P in [docs/FIDELITY.md](docs/FIDELITY.md)): world tick order, attack clock, targeting and retargeting, default tower by lane, collision push, A* and cell costs, dynamic building occlusion, goal-cell selection, path requests, arena collision, avoidance sidestep, stop-and-go walking, knockback, river jump, charge, area-effect pulses, building decay, spell cast from the King tower (Arrows scatter on the native RNG), summon formations and deploy delays, pending-damage targeting, projectile hits and chain hops, piercing and rolling projectiles (Log, Barbarian Barrel, Bowler, Executioner, Magic Archer), projectile spawn/setup and height, impact spawns (Goblin Barrel), tower and building default targets, stuns and damage over time, jumping-unit rules, the damage-key window and the deploy check with its zone map, periodic spawners (0xf800bc / 0xf8aac8) and the world after the end (opt-in `postEnd`: 0x10ca9a0 until EndScreenDelay). 111 core tests, including the 400-tick native trace (539/539 positions and all HP exact) and the 12 native A* cases. ~3,500× real time per core |
 | Viewer | ✅ `sim/viewer`: the build's own SC2 movie clips in WebGL for every supported unit, building, projectile, area effect and buff; tower ruins, deploy clocks, original card art in the hands and palette; drag-and-drop for both sides, sandbox palette, pause/step/speed. The battle projection is the client's own (0x857ffc: 30 × 24 px per tile, 12 px per 1000 height, blue sees the 180°-turned view with logic x right-to-left) and shadows follow the client's shadow pass (flipped skewed silhouettes, one composite with the location colour). River jumpers rise over the river on the actor z the client builds from the jump's height records, with the shadow left on the ground and the jump clip timed to the landing (0xfd0320, 0x84d738, 0x84440c). The HUD is the client's own exports and layout (hand cards with the RadialFill elixir mask, elixir bar, clock, crowns, the played card's "-cost" float text); the arena's nested clips animate and the location cloud shadows drift (0x857a50); the effect system (particles with tails measured on the clip's current rotated height, screen shake) is ported. Area-damage indicator rings (World_areaDamage 0xf97be8 and area-effect pulses → battle screen listener 0xbe76e8 / 0xbe7980, ring class 0xcf0464, fade 0xbe1d3c; `sc/area_rings.ts`), footstep MoveEffects on the run clips' action_frame labels (0x840d44, `sc/unit_fx.ts`, called from art.ts) and the river-jump LandingEffect (0xf7f2c8 → view vt+0x80) are ported from engine events `areaRing` / `pushRing` / `landing` (decompiles in `work/native/decomp_rings/`). The sandbox side panel wears sc/ui_common.sc buttons and popups (`?clean` hides it). Unit libraries stream in on demand (core + both decks at startup). Text is the client's own text path (sc/text.ts, sc/freetype.ts: the two game fonts, FreeType 2.9 unhinted glyphs with the post-processed outline channel, HarfBuzz kerning, the TextField layout and two-pass drawing of 0x126ab4c; the battle layer should set `ScRenderer.textStageScale` to the HUD's scale) |
 | Sound | ✅ The client's FMOD sounds in the viewer (`sim/viewer/src/sc/sound.ts`, WebAudio, Battle panel toggle): `tools/audio/` reads the FMOD Studio banks and rebuilds the used FSB5 Vorbis samples as Ogg in pure Python during the bake (`sim/viewer/assets/audio/`, ignored); effect sound components, cast sounds, HUD / hand / timer / crown sounds, the battle screen's clock sounds and music (0xbdf1b0), overtime, end horn and the result screen's music, as traced in docs/FIDELITY.md (Sound row; A: modulator ranges, playlist modes, stealing; –: buses, snapshots, emotes). BattleMusic layers under 60sec_loop / 30sec_loop as the code and banks say: owner to judge by ear |
 | Demo (GitHub Pages) | ✅ Live at https://aboufama.github.io/clash-royale-research/ . `.github/workflows/pages.yml` bakes the art, tests and builds the viewer and deploys on every push to `main` (Pages source: GitHub Actions). The repository was made public by the owner (2026-10-11) to serve Pages; the Checks workflow flags `game-files/` in a public repo by design |
@@ -128,7 +128,7 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    is not yet identified), King activation conditions (TOML scripting), the
    buff add/refresh rules (Buff_add 0xfc0e08 is decompiled in
    `work/native/decomp_eng/`) with the attack stun field (attack +0x74), damage
-   over time first-tick timing, spawner placement (0xf8aac8, as death spawns), the Miner
+   over time first-tick timing, the Miner
    state machine, area-effect candidate grid order, the world-list interleaving
    of characters, projectiles and area effects in the actor-update phase.
    Done 2026-10-11 (third pass, PORT_NOTES §9, `projectiles.test.ts`,
@@ -152,6 +152,19 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    immunity; ManaOnDeathForOpponent as the kill reward 0xfca5ec (loader ×10, to the damage's owner,
    none for the tiebreak's kill) and ManaOnDeath in the death 0xf83990, both with the engine event
    `elixir`. State hashes of matches with death spawners change; others are unchanged.
+   Done 2026-10-12 (eng3, `spawner.test.ts`, `post_end.test.ts`, decompiles in
+   `work/native/decomp_eng3/`): periodic spawners from 0xf800bc's timer (SpawnStartTime, loader
+   default 0, so Tombstone / Barbarian Hut spawn on the deploy-end tick; half the spawn-speed
+   percentage per tick; SpawnInterval / SpawnPauseTime) and the request run by the shared 0xf8aac8
+   port (`spawnSetup`, also used by death spawns): members with hitpoints active at once (the engine
+   used to make Witch / Night Witch / Tombstone / hut members deploy 1 s), ring placement without
+   mirror, one member 1500 in front of a hut / Tombstone. State hashes of matches with periodic
+   spawners change; others are unchanged. The world after the end (`BattleConfig.postEnd`, on in the
+   viewer, off by default): 80 more ticks until EndScreenDelay (0x10ca9a0 / 0xd3581c), plays rejected
+   (0xd77504), attack clocks held at 0 (0xfc90b0), only flag-8 damage (0xfcb29c), the fallen King's
+   side cleared by the wave of 0xd352f8 / 0xd35de4; results never change. Also: plays committing once
+   time is up are rejected and only flag-8 damage applies during the tiebreak (0xd77504 / 0xfcaeec;
+   hashes of tiebreak matches change, results do not).
 2. **Differential checks:** ask the owner to run the Mac harness on a few
    scripted matches (two knights crossing, Arrows on Skeleton Army, Giant vs
    Cannon, Hog Rider jump) and record per-tick positions/HP; add them as tests.
@@ -253,10 +266,8 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    none for Goblin Barrel). Filter components share the buff filter's code
    (`sc/area_view.ts`); world-listener effects play once. New recorded engine
    events `damage`, `shieldLost` and fields `spawn.src` / `pid`, `hit.src` / `fx`,
-   `impact.src` / `z` (no simulation change). Finding for the engine: 0xf8aac8
-   puts a spawner's member with hitpoints in state 4 only with
-   SpawnCharacterWithDeploy (request +0x68), but the engine deploys Witch /
-   Tombstone / hut members for their DeployTime (not verified against a trace).
+   `impact.src` / `z` (no simulation change). Its finding for the engine (0xf8aac8 deploys a
+   spawner's member with hitpoints only with SpawnCharacterWithDeploy) is ported (eng3, item 1).
    Left: Tesla's AttackStartEffect (single-clip
    buildings), Electro Dragon's LoadAttackEffects (sound only), the Inferno view's
    +0x4cc sync to the attack clip (A), the sprite recoils (vt+0xf8).

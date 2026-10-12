@@ -91,7 +91,7 @@ class App {
   speed = 1;
   private statusAt = 0;
   acc = 0;
-  /** visual ms run since the battle ended (the engine is not stepped any more) */
+  /** visual ms run since the engine stopped (the post-end world reached the end screen, Battle.stopped) */
   afterEnd = 0;
   last = 0;
   seed = 1;
@@ -159,7 +159,8 @@ class App {
   }
 
   newBattle(): void {
-    this.battle = new Battle(data, { seed: this.seed, decks: this.decks, recordEvents: true });
+    // postEnd: the world runs on after the result until EndScreenDelay, as the battle manager runs it (0x10ca9a0)
+    this.battle = new Battle(data, { seed: this.seed, decks: this.decks, recordEvents: true, postEnd: true });
     this.battle.infiniteElixir = this.infinite;
     this.frame.battle = this.battle;
     this.frame.cam = this.cam;
@@ -193,19 +194,21 @@ class App {
   loop(t: number): void {
     const dt = this.last ? Math.min(250, t - this.last) : 0;
     this.last = t;
-    if (!this.paused && !this.battle.ended) {
+    if (!this.paused && !this.battle.stopped) {
+      // after the result the engine steps its post-end world (no end checks, plays rejected, no attacks,
+      // the fallen King's side cleared) until the end screen is due (0xd3581c), as the battle manager does
       this.acc += dt * this.speed;
       let n = 0;
       while (this.acc >= TICK_MS && n < 200) {
         this.stepOnce();
         this.acc -= TICK_MS;
         n++;
-        if (this.battle.ended) break;
+        if (this.battle.stopped) break;
       }
     } else if (!this.paused) {
-      // After the result the engine stays on its last tick, but the client keeps running the battle
-      // layer every frame (battle screen update 0xbe1d3c -> 0x856f28: views, effects, clouds, shake; the
-      // end screen follows the location's EndScreenDelay): the visual clock runs on past the last tick.
+      // Then the logic stays on its last tick, but the client keeps running the battle layer every frame
+      // (battle screen update 0xbe1d3c -> 0x856f28: views, effects, clouds, shake; the result screen): the
+      // visual clock runs on past the last tick.
       this.afterEnd += dt * this.speed;
     }
     this.frame.alpha = this.paused ? 1 : Math.min(1, this.acc / TICK_MS);
@@ -220,8 +223,8 @@ class App {
   }
 
   stepOnce(): void {
-    // an ended battle does not step: its last tick's events must not be handed to the views again
-    if (this.battle.ended) return;
+    // a stopped battle does not step: its last tick's events must not be handed to the views again
+    if (this.battle.stopped) return;
     this.frame.snapshot(this.battle);
     // AI sides decide on the state before the tick, blue then red; their plays take the hand path
     for (const bot of this.bots) {

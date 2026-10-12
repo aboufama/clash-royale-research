@@ -358,6 +358,8 @@ interface ScreensArt {
 interface ScreensBattle {
   readonly result: { winner: number; tick: number } | null;
   readonly players: readonly { crowns: number }[];
+  /** crowns at the end (Battle.endCrowns: the post-end world can still fell a tower) */
+  readonly endCrowns?: readonly number[] | null;
 }
 
 /** Stage placement as sc/ui_port.ts stageLayout gives it. */
@@ -424,7 +426,9 @@ export class BattleScreens {
       const lib = art.libs.get(hud.result.sc);
       if (lib && lib.has(hud.result.export) && endScreenDue(ticks, hud.result.endScreenDelay)) {
         this.intro = null;
-        const own = b.players[team]?.crowns ?? 0, opp = b.players[1 - team]?.crowns ?? 0;
+        // the crowns the end stored with the result (0xd3e360), not ones the post-end world added
+        const crowns = b.endCrowns ?? b.players.map((p) => p.crowns);
+        const own = crowns[team] ?? 0, opp = crowns[1 - team] ?? 0;
         this.result = new ResultScreen(lib, hud.result, {
           kind: resultKind(b.result.winner, team), ownCrowns: own, oppCrowns: opp,
           ownName: texts.TID_YOU ?? '', oppName: opponentName, noClan: texts.TID_NO_CLAN ?? '',

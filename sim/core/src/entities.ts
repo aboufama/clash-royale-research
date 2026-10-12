@@ -112,11 +112,13 @@ export class Unit {
   /** Ticks active (unused by the native decay) and the lifetime-decay accumulator in hundredths of HP (health +0x34). */
   lifeTicks: number;
   decayed: number;
-  /** Spawner: ms until the next group, members left in the current group, ms to the next member. */
+  /**
+   * Periodic spawner (0xf800bc): the spawn timer (actor +0x144, SpawnStartTime at Character_initComponents
+   * 0xf7ed38), the members spawned in the current group (+0x148) and the SpawnCharacter / 2 / 3 rotation (+0x150).
+   */
   spawnTimer: number;
-  spawnLeft: number;
-  spawnSub: number;
-  spawnIndex: number;
+  spawnGroup: number;
+  spawnRot: number;
   /** Pending damage of homing projectiles in flight toward this actor (actor +0x114, 0xf8553c). */
   pending: number;
   /** Pending-damage duration ms (actor +0x118): max of the registered flight times rounded up to
@@ -261,11 +263,9 @@ export class Unit {
     this.buffs = [];
     this.lifeTicks = 0;
     this.decayed = 0;
-    const sp = def.spawn;
-    this.spawnTimer = sp ? (sp.startTime >= 0 ? sp.startTime : sp.pauseTime) : 0;
-    this.spawnLeft = 0;
-    this.spawnSub = 0;
-    this.spawnIndex = 0;
+    this.spawnTimer = def.spawn ? def.spawn.startTime : 0;
+    this.spawnGroup = 0;
+    this.spawnRot = 0;
     this.pending = 0;
     this.pendingDur = 0;
     this.waitTicks = 0;

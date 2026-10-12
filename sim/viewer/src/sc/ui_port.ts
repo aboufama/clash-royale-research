@@ -1030,12 +1030,13 @@ export interface ClockBattle {
  * The clock of the HUD time update 0x8d38c4: the timeline's section (0xd56738: overtime only once
  * 0xd33f74 let it advance there with equal crowns) and its seconds left, ceil(max(0, len − elapsed) /
  * 1000) (0xd566d8). The battle tick 0xd33f74, and with it the timeline (0xd56070), keeps running after
- * the end until EndScreenDelay (the battle manager stops it at 0xd3581c), so `ticksSinceEnd` more ticks
- * count after the engine's last step; a section that ran out stays at 0.
+ * the end until EndScreenDelay (the battle manager stops it at 0xd3581c), so after the end the clock counts
+ * `ticksSinceEnd` ticks past the end tick (whether or not the engine steps its post-end world,
+ * BattleConfig.postEnd); a section that ran out stays at 0.
  */
 export function battleClock(b: ClockBattle, ticksSinceEnd = 0): { ot: boolean; msLeft: number; secs: number } {
   const ot = b.overtime;
-  const elapsed = b.tick + (b.result ? Math.max(0, ticksSinceEnd) : 0);
+  const elapsed = b.result ? b.result.tick + 1 + Math.max(0, ticksSinceEnd) : b.tick;
   const end = ot ? b.regulationTicks + b.overtimeTicks : b.regulationTicks;
   const msLeft = Math.max(0, (end - elapsed) * 50);
   return { ot, msLeft, secs: Math.floor((msLeft + 999) / 1000) };

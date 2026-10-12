@@ -48,6 +48,17 @@ export interface BattleConfig {
   noDraws?: boolean;
   bestOfGame?: boolean;
   /**
+   * Keep ticking the world after the result until the end screen, as the battle manager does (0x10ca9a0:
+   * after the end 0xd3e360 the battle tick 0xd33f74 runs on until ms since the end, ctx +0x198, reach the
+   * location's EndScreenDelay, 0xd3581c). The result never changes; there are no more end checks, every
+   * play is rejected (0xd77504), attack clocks stay at 0 (0xfc90b0), only queued kills and other flag-8
+   * damage apply (0xfcb29c), and the fallen King's side is cleared by the expanding wave of 0xd352f8.
+   * Default false: step() stops at the result (headless, training, replays).
+   */
+  postEnd?: boolean;
+  /** The location's EndScreenDelay in ms (0xe48ce4; locations.csv has 4000 for every location). */
+  endScreenDelay?: number;
+  /**
    * Synthetic fixture mode (differential tests against native fixtures): no towers, every
    * point walkable, positions clamped to [0,width-1] x [0,height-1], no end checks.
    */
@@ -116,6 +127,9 @@ export class Battle {
   /** GameModeData NoDraws / BestOfGame (see BattleConfig). */
   readonly noDraws: boolean;
   readonly bestOfGame: boolean;
+  /** BattleConfig.postEnd / endScreenDelay. */
+  readonly postEnd: boolean;
+  readonly endScreenDelay: number;
 
   tick = 0;
   /**
@@ -141,10 +155,19 @@ export class Battle {
   players: [Player, Player];
   commands: Command[] = [];
   result: BattleResult | null = null;
+  /**
+   * ms since the end, ctx +0x198: 1 at the end (0xd3e360), +50 after each post-end battle tick (0xd33f74);
+   * 0 before the end. With postEnd the world stops once it reaches endScreenDelay (0xd3581c).
+   */
+  endMs = 0;
+  /** Crowns at the end (0xd3e360 stores them with the result; post-end tower kills do not change them). */
+  endCrowns: [number, number] | null = null;
   events: BattleEvent[] = [];
   /** Infinite elixir for the sandbox (does not affect replays: part of state). */
   infiniteElixir = false;
 
+  /** King-death wave clock, ctx +0x2c0 (0xd35de4): +50 per wave call. */
+  private waveMs = 0;
   private nextId = 5000000;
   private nextProjId = 4000000;
   private nextAeoId = 3000000;
@@ -164,6 +187,8 @@ export class Battle {
    * other damage is the target's opponent's, who gets the kill reward of 0xfca5ec.
    */
   private dmgNoOwner: boolean[] = [];
+  /** Damage event flag 8 (+0x20): applied during the tiebreak and after the end (0xfcaeec, 0xfcb29c). */
+  private dmgForce: boolean[] = [];
   /** Recorded only: the entry's view effect kind and its source data name (BattleEvent 'damage'). */
   private dmgFx: number[] = [];
   private dmgFxSrc: string[] = [];
@@ -204,6 +229,8 @@ export class Battle {
     this.symmetricSnap = G.LOGIC_SYMMETRICAL_DEPLOY_SNAP === true;
     this.noDraws = cfg.noDraws ?? true;
     this.bestOfGame = cfg.bestOfGame ?? false;
+    this.postEnd = cfg.postEnd ?? false;
+    this.endScreenDelay = cfg.endScreenDelay ?? 4000;
 
     const mk = (team: number): Player => {
       const deckNames = cfg.decks[team];
@@ -279,6 +306,14 @@ export class Battle {
 
   get ended(): boolean {
     return this.result !== null;
+  }
+
+  /**
+   * Nothing more happens on step(): the battle ended and either postEnd is off or the post-end world
+   * reached the end screen (0xd3581c: endMs >= endScreenDelay).
+   */
+  get stopped(): boolean {
+    return this.result !== null && (!this.postEnd || this.endMs >= this.endScreenDelay);
   }
 
   /** Elixir regeneration per tick for the current phase: floor(10000*50 / msPerElixir). */
@@ -543,7 +578,10 @@ export class Battle {
 
   /** Advance one tick. Phase order follows the native world tick 0xf8cd90 (PORT_NOTES §1.3). */
   step(): void {
-    if (this.result) return;
+    if (this.result) {
+      if (!this.stopped) this.postEndTick();
+      return;
+    }
     if (this.recordEvents) this.events.length = 0;
     if (this.timeUp) {
       // battle manager tick 0x10ca9a0 with the time up (0xd360a8): the tiebreak branch while its gate
@@ -557,8 +595,66 @@ export class Battle {
       && this.players[0].crowns === this.players[1].crowns) this.overtime = true;
     this.commitCommands();
     this.worldTick();
+    this.kingWave();
     this.checkEnd();
     this.tick++;
+  }
+
+  /**
+   * One battle-manager tick after the end (0x10ca9a0 with the battle over) [STAT]: time is up (0xd360a8:
+   * +0x198 >= 1) but the tiebreak gate fails (0xd4220c), so the end check 0x10cb17c runs and changes
+   * nothing (0xd3e360 returns once over); 0xd3581c is false until the end screen, so the command manager
+   * runs (every play fails: 0xd77504 returns 4, or 3 once the end screen is due) and then the battle tick
+   * 0xd33f74: the world (attack clocks held at 0 by 0xfc90b0, damage without flag 8 dropped by
+   * 0xfcb29c), the King-death wave (0xd352f8) and +0x198 += 50.
+   */
+  private postEndTick(): void {
+    if (this.recordEvents) this.events.length = 0;
+    this.commitCommands();
+    this.worldTick();
+    this.kingWave();
+    this.endMs += 50;
+    this.tick++;
+  }
+
+  /**
+   * 0xd352f8, in every battle tick after the world [STAT]: for each fallen leader (side 0's King, then
+   * side 1's) 0xd35de4(ctx, EndScreenDelay / 2, King x, y, its team, 0): the wave clock ctx +0x2c0 gains 50,
+   * the radius is mapH·500·min(clock, duration) / duration (0 -> 32000 over 2000 ms), and every live actor
+   * of that team with a health component within it (0x1294f34: box, then dx² + dy² <= r²) gets a queued
+   * kill (0xfca24c: damage = its HP, no owner, flag 8), in world-list order. Before the end no King is
+   * dead; at the end tick its kills are queued for the next (post-end) flush, so it runs only with
+   * postEnd. Not ported: the "both Princess towers at full HP" flag ctx +0x2c4 of its first call and the
+   * touchdown modes' variant (0xd35630).
+   */
+  private kingWave(): void {
+    if (!this.postEnd || this.fixture) return;
+    for (const p of this.players) {
+      const k = p.king;
+      if (k.alive) continue;
+      this.waveMs += 50;
+      const H = this.boundH;
+      const dur = Math.trunc(this.endScreenDelay / 2);
+      const r = dur > 0 ? Math.trunc((H * Math.min(this.waveMs, dur)) / dur) : H;
+      for (const u of this.units) {
+        if (u.state === ST_DEAD || u.maxHp <= 0 || u.team !== k.team) continue;
+        const dx = u.x - k.x;
+        const dy = u.y - k.y;
+        if (dx > r || dx < -r || dy > r || dy < -r || dx * dx + dy * dy > r * r) continue;
+        this.queueKill(u, u.hp);
+      }
+    }
+  }
+
+  /**
+   * A queued damage of the battle manager's kind (0xfca24c queued kill, 0xfca4d8 with its flag argument):
+   * no owner (no kill reward) and flag 8, which Damage_apply 0xfcaeec and Health_applyHit 0xfcb29c let
+   * through during the tiebreak and after the end.
+   */
+  private queueKill(t: Unit, amount: number): void {
+    this.queueDamage(t, amount, -1, 0);
+    this.dmgNoOwner[this.dmgN - 1] = true;
+    this.dmgForce[this.dmgN - 1] = true;
   }
 
   /**
@@ -586,7 +682,7 @@ export class Battle {
     this.removeDead();
   }
 
-  /** Advance n ticks (stops at the end of the match). */
+  /** Advance n ticks (stops at the end of the match, or with postEnd once the post-end world stopped). */
   /**
    * World pre-tick 0xf967a4 [STAT]: the spatial grid is rebuilt from the world list (here: each
    * actor's tick-start position is recorded; queries scan the list and reproduce the grid's
@@ -631,7 +727,7 @@ export class Battle {
   private occSigLen = -1;
 
   run(n: number): void {
-    for (let i = 0; i < n && !this.result; i++) this.step();
+    for (let i = 0; i < n && !this.stopped; i++) this.step();
   }
 
   // ---------------------------------------------------------------- commands, elixir
@@ -656,6 +752,9 @@ export class Battle {
   private executeCommand(c: Command): void {
     const p = this.players[c.team];
     const card = c.card;
+    // 0xd77504: the end screen due (0xd3581c) -> 3, time up or the battle over (0xd360a8: also during the
+    // tiebreak) -> 4: no debit, no cast, the card stays in the hand
+    if (this.timeUp || this.result !== null) { p.pending -= c.cost; return; }
     const pos = this.deployPlace(c.team, card, c.x, c.y);
     if (pos === null) {
       p.pending -= c.cost;
@@ -926,91 +1025,98 @@ export class Battle {
     return u;
   }
 
-  /** Point on a circle around (x, y); team 1 mirrored. Falls back to the centre if not standable. */
-  private ringPos(team: number, x: number, y: number, r: number, deg: number, air: boolean): [number, number] {
-    const s = team === 0 ? 1 : -1;
-    let px = clamp(x + s * idiv(cos1e6(deg) * r, 1000000), 0, this.boundW - 1);
-    let py = clamp(y + s * idiv(sin1e6(deg) * r, 1000000), 0, this.boundH - 1);
-    if (!air && !this.fixture && !this.arena.walkableAt(px, py)) { px = x; py = y; }
-    return [px, py];
-  }
-
   /**
    * Death spawn: the spawn request 0xf83990 builds (source = the dying actor at its x, y, z; count =
-   * DeathSpawnCount; radius = DeathSpawnRadius; deploy time = DeathSpawnDeployTime, loader default 0),
-   * executed by 0xf8aac8 [STAT]. Member i (0..n-1) takes the step (n-1-i)·360/n:
-   * - radius > 0: angle = step (+ the source facing's angle 0x1294e04 + its SpawnAngleShift when that is
-   *   non-zero), position = source + (sin1024(a+90)·r, sin1024(a)·r) / 1024 truncated, no team mirror;
-   * - radius 0, one member: the source position when 0x11d950c accepts it (else x + 1), and a 0-HP
-   *   member moves back half its Range along the source facing (y only);
-   * - radius 0, several: the first of (0, R) rotated 0/90/180/270 (0x1295174) that 0x11d950c accepts,
-   *   R = source + member CollisionRadius, x mirrored right of the centre, y negated for team 1 (else
-   *   x + 1); every member gets the same point.
-   * 0xd35ab4 clamps the point. A member with hitpoints is active at once (state 1 from its movement
-   * component) unless the request has a deploy time >= 1 (0xf85324: deploying that long, facing copied
-   * from the source); a 0-HP member (bombs) deploys for the request time, else its DeployTime. With
-   * DeathSpawnPushback and a radius the member slides out from the death point (0xfcff3c). Every member
-   * gets the LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK targeting immunity (0xf7e058). DeathSpawnMinRadius,
-   * SpawnConstPriority, DeathSpawnCharacter2 and the clone rules have no supported user.
+   * DeathSpawnCount, "single" (+0x60) when it is 1; radius = DeathSpawnRadius; deploy time =
+   * DeathSpawnDeployTime, loader default 0; the LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK flag +0x64), run by
+   * spawnSetup (0xf8aac8). DeathSpawnMinRadius, SpawnConstPriority, DeathSpawnCharacter2 and the clone
+   * rules have no supported user.
    */
   private deathSpawn(t: Unit): void {
     const ds = t.def.deathSpawn!;
-    const d = ds.unit;
-    const n = ds.count;
-    const r = ds.radius;
-    if (n < 1) return;
     const req = ds.deployTime >= 1 ? ds.deployTime : 0; // the data's -1 (absent) is the loader's 0
+    this.spawnSetup(t, ds.unit, ds.count, ds.radius, req, ds.count === 1, false, true);
+  }
+
+  /**
+   * Spawn request executor 0xf8aac8 [STAT] for the request fields supported spawners set (request
+   * builder 0xf8a060 / reset 0xf86fb0: count +0x1c (default 1), radius +0x20, deploy time +0x24, single
+   * +0x60, immune +0x64, SpawnCharacterWithDeploy +0x68, source +8 at its position +0x10). Member i
+   * (0..n-1) takes the step (n-1-i)·360/n:
+   * - radius > 0: angle = step (+ the source facing's angle 0x1294e04 + its SpawnAngleShift when that is
+   *   non-zero), position = source + (sin1024(a+90)·r, sin1024(a)·r) / 1024 truncated, no team mirror
+   *   and no point check;
+   * - radius 0, single: the source position when 0x11d950c accepts it (else x + 1), and a 0-HP member
+   *   moves back half its Range along the source facing (y only);
+   * - radius 0, not single: the first of (0, R) rotated 0/90/180/270 (0x1295174) that 0x11d950c accepts,
+   *   R = source + member CollisionRadius, x mirrored right of the centre, y negated for team 1 (else
+   *   x + 1); every member gets the same point.
+   * 0xd35ab4 clamps the point (lane from the position, no hint). A member with hitpoints is active at
+   * once (state 1 from its movement component, Character_initComponents 0xf7ed38); it deploys
+   * (Actor_setState 4: its DeployTime) only with SpawnCharacterWithDeploy, and a 0-HP member (bombs)
+   * deploys when it has a deploy time (the request's, else its DeployTime) and no SpawnPathfindSpeed. A
+   * request deploy time >= 1 then sets the deploy timer to it (0xf85324: state 4) and copies the source
+   * facing. With the source's DeathSpawnPushback (request +0x69 unset) and a radius the member slides out
+   * from the source point (0xfcff3c). "immune" gives the LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK targeting
+   * immunity (0xf7e058). Not used by supported spawners: GroupMaxSize, DeathSpawnMinRadius, the lane-mirror
+   * and priority flag +0x62, morphs (+0x61), SpawnAttach, the tunnelling start of a SpawnPathfindSpeed
+   * member.
+   */
+  private spawnSetup(src: Unit, d: UnitDef, n: number, r: number, req: number, single: boolean, withDeploy: boolean,
+    immune: boolean): void {
+    if (n < 1) return;
     const hasHp = d.hitpoints > 0; // !0xde07cc
     const dt = req >= 1 ? req : d.deployTime;
-    const deployMs = hasHp ? req : (dt > 0 && d.spawnPathfindSpeed === 0 ? dt : 0);
-    const shift = t.def.spawnAngleShift;
-    const base = shift !== 0 ? angleOf(t.dirX, t.dirY) + shift : 0;
-    const push = r !== 0 && this.defs.data.units[t.def.name]?.DeathSpawnPushback === true;
-    const immune = this.defs.data.globals.LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK === true;
+    const bomb = !hasHp && dt > 0 && d.spawnPathfindSpeed === 0; // 0xf8aac8 bVar28
+    const deployMs = req >= 1 ? req : (withDeploy && d.spawnPathfindSpeed === 0) || bomb ? d.deployTime : 0;
+    const shift = src.def.spawnAngleShift;
+    const base = shift !== 0 ? angleOf(src.dirX, src.dirY) + shift : 0;
+    const push = r !== 0 && this.defs.data.units[src.def.name]?.DeathSpawnPushback === true;
+    const immuneOn = immune && this.defs.data.globals.LOGIC_DEATH_SPAWN_IMMUNE_FIRST_TICK === true;
     for (let i = 0; i < n; i++) {
       const step = Math.trunc(((n - 1 - i) * 360) / n);
       let x: number;
       let y: number;
       if (r !== 0) {
         const a = base + step;
-        x = t.x + Math.trunc((sin1024(a + 90) * r) / 1024);
-        y = t.y + Math.trunc((sin1024(a) * r) / 1024);
-      } else if (n === 1) {
-        if (this.canSpawnAt(t.x, t.y, d)) {
-          x = t.x;
-          y = t.y;
-          if (!hasHp) y -= Math.trunc((Math.trunc(d.range / 2) * t.dirY) / 256);
+        x = src.x + Math.trunc((sin1024(a + 90) * r) / 1024);
+        y = src.y + Math.trunc((sin1024(a) * r) / 1024);
+      } else if (single) {
+        if (this.canSpawnAt(src.x, src.y, d)) {
+          x = src.x;
+          y = src.y;
+          if (!hasHp) y -= Math.trunc((Math.trunc(d.range / 2) * src.dirY) / 256);
         } else {
-          x = t.x + 1;
-          y = t.y;
+          x = src.x + 1;
+          y = src.y;
         }
       } else {
-        x = t.x + 1;
-        y = t.y;
-        const R = t.radius + d.collisionRadius;
+        x = src.x + 1;
+        y = src.y;
+        const R = src.radius + d.collisionRadius;
         for (let k = 0; k < 4; k++) {
           let [lx, ly] = rotate1024(0, R, k * 90);
-          if ((this.arena.w * CELL) >> 1 < t.x) lx = -lx;
-          const px = t.x + lx;
-          const py = t.y + (t.team === 1 ? -ly : ly);
+          if ((this.arena.w * CELL) >> 1 < src.x) lx = -lx;
+          const px = src.x + lx;
+          const py = src.y + (src.team === 1 ? -ly : ly);
           if (this.canSpawnAt(px, py, d)) { x = px; y = py; break; }
         }
       }
-      const u = this.createUnit(t.team, t.card, d, x, y, Math.round(deployMs / TICK_MS), -1, t.id);
+      const u = this.createUnit(src.team, src.card, d, x, y, Math.round(deployMs / TICK_MS), -1, src.id);
       if (deployMs <= 0) u.state = ST_ACTIVE;
       if (push && this.mobile(u)) {
-        // 0xfcff3c: back to the death point, then (m+0x1f8) dist / 250 steps of 250 toward the spawn point
+        // 0xfcff3c: back to the source point, then (m+0x1f8) dist / 250 steps of 250 toward the spawn point
         u.kbX = u.x;
         u.kbY = u.y;
-        u.x = t.x;
-        u.y = t.y;
-        const ex = u.kbX - t.x;
-        const ey = u.kbY - t.y;
+        u.x = src.x;
+        u.y = src.y;
+        const ex = u.kbX - src.x;
+        const ey = u.kbY - src.y;
         u.slideN = idiv(isqrt(ex * ex + ey * ey), 250);
         u.kbStep = 250;
       }
-      if (req !== 0) { u.dirX = t.dirX; u.dirY = t.dirY; }
-      if (immune) { u.spawnImmune = true; u.spawnImmuneMs = 0; }
+      if (req !== 0) { u.dirX = src.dirX; u.dirY = src.dirY; }
+      if (immuneOn) { u.spawnImmune = true; u.spawnImmuneMs = 0; }
     }
   }
 
@@ -1036,56 +1142,34 @@ export class Battle {
   }
 
   /**
-   * Spawners (Witch, Night Witch, Tombstone, huts): a group of SpawnNumber every SpawnPauseTime,
-   * the first after SpawnStartTime (else SpawnPauseTime), members SpawnInterval apart; timers run
-   * at the SpawnSpeedMultiplier rate (D). Placement: on a circle of SpawnRadius starting in front
-   * (+SpawnAngleShift), or in front of a building (A).
+   * Periodic spawner, character update 0xf800bc [STAT] (after the deploy countdown, so also on the tick
+   * the deploy ends): with a SpawnCharacter and SpawnInterval + SpawnPauseTime >= 1 the timer (actor
+   * +0x144, SpawnStartTime at Character_initComponents 0xf7ed38, loader default 0) drops by half the
+   * spawn-speed percentage (0xfc23f0: 50 per tick, 0 frozen). Below 1 it builds a spawn request
+   * (0xf8a060: the SpawnCharacter at the spawner's position, SpawnCharacterWithDeploy at +0x68) of
+   * SpawnNumber members on SpawnRadius when SpawnInterval is 0, else of one member on no radius, adds
+   * them to the group count (+0x148) and runs it (0xf8aac8, spawnSetup); the next wait is SpawnInterval
+   * while the group is short of SpawnNumber, else SpawnPauseTime (group count reset), added to the timer
+   * and clamped to >= 1. Not ported (no supported user): SpawnCharacter2 / 3 rotation (+0x150),
+   * SpawnLimit / DestroyAtLimit (+0x14c), SpawnProjectile spawners, the NO_SUMMON tag, the spawn at the
+   * end of the deploy of a SpawnCharacter without SpawnNumber / SpawnInterval (Actor_setState 0xf7f2c8).
    */
   private updateSpawner(u: Unit): void {
     const sp = u.def.spawn!;
-    const dt = this.spawnDelta(u);
-    if (dt <= 0) return;
-    u.spawnTimer -= dt;
-    if (u.spawnTimer <= 0) {
-      u.spawnTimer += sp.pauseTime > 0 ? sp.pauseTime : 1000;
-      u.spawnLeft = sp.number;
-      u.spawnSub = 0;
-      u.spawnIndex = 0;
+    if (sp.interval + sp.pauseTime < 1) return;
+    u.spawnTimer -= this.spawnPct(u) >> 1;
+    if (u.spawnTimer >= 1) return;
+    const n = sp.interval === 0 ? sp.number : 1;
+    u.spawnGroup += n;
+    this.spawnSetup(u, sp.unit, n, sp.interval === 0 ? sp.radius : 0, 0, false, sp.withDeploy, false);
+    let next: number;
+    if (u.spawnGroup < sp.number) {
+      next = sp.interval;
+    } else {
+      u.spawnGroup = 0;
+      next = sp.pauseTime;
     }
-    if (u.spawnLeft > 0) {
-      u.spawnSub -= dt;
-      while (u.spawnLeft > 0 && u.spawnSub <= 0) {
-        this.spawnMember(u, sp, u.spawnIndex++);
-        u.spawnLeft--;
-        if (sp.interval > 0) u.spawnSub += sp.interval;
-      }
-    }
-  }
-
-  private spawnMember(u: Unit, sp: NonNullable<UnitDef['spawn']>, index: number): void {
-    let x = u.x;
-    let y = u.y;
-    const air = sp.unit.flyingHeight > 0;
-    if (sp.radius > 0) {
-      [x, y] = this.ringPos(u.team, u.x, u.y, sp.radius, 90 + sp.angleShift + Math.floor((index * 360) / Math.max(1, sp.number)), air);
-    } else if (u.isBuilding) {
-      const off = u.radius + sp.unit.collisionRadius;
-      const side = sp.number > 1 ? ((index % 3) - 1) * sp.unit.collisionRadius : 0;
-      [x, y] = [clamp(u.x + side, 0, this.boundW - 1), clamp(u.y + (u.team === 0 ? off : -off), 0, this.boundH - 1)];
-      if (!air && !this.fixture && !this.arena.walkableAt(x, y)) { x = u.x; y = u.y; }
-    }
-    this.createUnit(u.team, u.card, sp.unit, x, y, Math.round(sp.unit.deployTime / TICK_MS), -1, u.id);
-  }
-
-  private spawnDelta(u: Unit): number {
-    if (u.buffs.length === 0) return TICK_MS;
-    let haste = 100;
-    let slow = 0;
-    for (const b of u.buffs) {
-      const m = b.def.spawnSpeedMul;
-      if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
-    }
-    return idiv(idiv(TICK_MS * haste, 100) * clamp(100 + slow, 0, 100), 100);
+    u.spawnTimer = Math.max(u.spawnTimer + next, 1);
   }
 
   private regenElixir(): void {
@@ -1525,6 +1609,8 @@ export class Battle {
 
   /** AttackComp_advanceClock 0xfc90b0 [STAT]. */
   private advanceClock(u: Unit): void {
+    // once the battle is over (0xd4220c) the clock and the loaded flag are zeroed every update: no hit
+    if (this.result !== null) { u.atkTimer = 0; u.loaded = false; return; }
     const dt = this.clockDelta(u);
     if (dt <= 0) { u.loaded = false; return; }
     const HS = u.def.hitSpeed;
@@ -1959,8 +2045,11 @@ export class Battle {
         u.state = ST_ACTIVE;
         // Actors without hitpoints (Rage bottle) expire on landing, triggering their death effect.
         if (u.maxHp <= 0) this.kill(u);
-        // 0xf800bc goes on the tick the deploy ends: collector and hide timer run once already
-        else this.collectAndHide(u);
+        else {
+          // 0xf800bc goes on the tick the deploy ends: collector, spawner and hide timer run once already
+          if (u.def.spawn) this.updateSpawner(u);
+          this.collectAndHide(u);
+        }
       }
       return;
     }
@@ -3358,8 +3447,9 @@ export class Battle {
    * CollisionRadius when n > 1, no width, flipped for team 0, the impact point's lane, the
    * character's SpawnAngleShift), created by 0xd35ab4 (clamped into the arena, lane from its
    * position with the impact x as hint); SpawnConstPriority gives member i the target priority
-   * (20·i)²; SpawnCharacterDeployTime starts the deploy (0xf85324); a ground character is moved to
-   * dry land (0xd392c8).
+   * (20·i)²; SpawnCharacterDeployTime >= 1 starts the deploy (0xf85324), otherwise the member is active
+   * at once (no Actor_setState 4; no supported projectile lacks it); a ground character is moved to dry
+   * land (0xd392c8).
    */
   private spawnFromProjectile(p: Projectile): void {
     const def = p.def;
@@ -3369,12 +3459,13 @@ export class Battle {
     const iy = p.ty;
     const lane = this.laneOf(ix, iy);
     const r = n !== 1 ? u.collisionRadius : 0;
-    const ticks = Math.round((def.spawnDeployTime > 0 ? def.spawnDeployTime : u.deployTime) / TICK_MS);
+    const ticks = def.spawnDeployTime > 0 ? Math.round(def.spawnDeployTime / TICK_MS) : 0;
     for (let i = 0; i < n; i++) {
       const [ox, oy] = formationOffset(i, n, r, 0, p.team === 0, lane, u.spawnAngleShift, 0, this.laneSeqDeploy);
       const m = this.createUnit(p.team, p.spell || u.name, u, ix + ox, iy + oy, ticks, ix);
       if (this.recordEvents) this.events[this.events.length - 1].pid = p.id; // its 'spawn' (viewer: vt+0x140)
       if (def.spawnConstPriority) m.prio = (20 * i) * (20 * i);
+      if (ticks === 0) m.state = ST_ACTIVE;
       if (u.flyingHeight === 0 && !this.fixture) {
         // after 0xd35ab4 (whose lane stays): z == 0 -> nearest dry position (0xd392c8)
         const d = this.nearestDry(m.x, m.y, -1);
@@ -3553,6 +3644,8 @@ export class Battle {
         amount = this.reduceDamage(t, amount);
         if (amount < 2) amount = 1;
       }
+      // Damage_apply 0xfcaeec: while the tiebreak clock (manager +0x1f4) runs only flag-8 damage applies
+      if (this.tiebreakMs >= 1 && !this.dmgForce[i]) continue;
       const key = this.dmgKey[i];
       if (key !== 0) {
         const ks = t.dmgKeys;
@@ -3562,6 +3655,8 @@ export class Battle {
         ks.push(key);
         t.dmgKeyTimes.push(now);
       }
+      // Health_applyHit 0xfcb29c: once the battle is over (0xd4220c) only flag-8 damage applies
+      if (this.result !== null && !this.dmgForce[i]) continue;
       if (t.tower === TOWER_KING && t.kingState === KING_INACTIVE) this.activateKing(t);
       t.lastHurtTick = this.tick;
       // Shield absorbs first; excess damage on the breaking hit is lost [STAT 0xfcb29c].
@@ -3586,7 +3681,9 @@ export class Battle {
       if (buff !== null && this.dmgBuffTime[i] > 0) this.applyBuff(t, buff, this.dmgBuffTime[i], this.dmgSrc[i]);
     }
     // release references
-    for (let i = 0; i < this.dmgN; i++) { this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; this.dmgNoOwner[i] = false; }
+    for (let i = 0; i < this.dmgN; i++) {
+      this.dmgTarget[i] = null as unknown as Unit; this.dmgBuff[i] = null; this.dmgNoOwner[i] = false; this.dmgForce[i] = false;
+    }
     this.dmgN = 0;
   }
 
@@ -3672,6 +3769,7 @@ export class Battle {
     if (!p0.king.alive || !p1.king.alive) {
       const w = !p0.king.alive && !p1.king.alive ? -1 : !p0.king.alive ? 1 : 0;
       this.result = { winner: w, reason: 'king', tick: this.tick };
+      this.markEnded();
       return;
     }
     const t = this.tick + 1; // ticks elapsed after this one
@@ -3689,6 +3787,13 @@ export class Battle {
     const a = this.players[0].crowns;
     const b = this.players[1].crowns;
     this.result = { winner: a === b ? -1 : a > b ? 0 : 1, reason, tick: this.tick };
+    this.markEnded();
+  }
+
+  /** 0xd3e360 after the winner: +0x198 = 1 (the post-end clock) and the crowns kept for the result. */
+  private markEnded(): void {
+    this.endMs = 1;
+    this.endCrowns = [this.players[0].crowns, this.players[1].crowns];
   }
 
   /**
@@ -3758,8 +3863,7 @@ export class Battle {
       if (u.tower !== TOWER_NONE) continue;
       if (u.state !== ST_DEAD) {
         this.resetAttack(u);
-        this.queueDamage(u, u.hp, -1, 0);
-        this.dmgNoOwner[this.dmgN - 1] = true; // 0xfca24c(health, 0, -1): no owner
+        this.queueKill(u, u.hp); // 0xfca24c(health, 0, -1): no owner, flag 8
       }
       n++;
     }
@@ -3805,8 +3909,9 @@ export class Battle {
     }
     for (let i = from; i < to; i++) {
       const p = this.players[i];
-      for (const t of p.princess) if (t.alive) this.queueDamage(t, amount, -1, 0);
-      this.queueDamage(p.king, amount, -1, 0);
+      // 0xfca4d8(health, amount, 0, 0, 0, owner -1, 0, 0, 1, 1, 0): no owner, flag 8
+      for (const t of p.princess) if (t.alive) this.queueKill(t, amount);
+      this.queueKill(p.king, amount);
     }
   }
 
@@ -3828,7 +3933,7 @@ export class Battle {
       h.add(u.id); h.add(u.x); h.add(u.y); h.add(u.hp); h.add(u.shield); h.add(u.state);
       h.add(u.deployTicks); h.add(u.atkTimer); h.add(u.atkDelay); h.add(u.target ? u.target.id : -1);
       h.add(u.locked ? 1 : 0); h.add(u.kingState); h.add(u.kingTicks); h.add(u.kbActive ? u.kbStep : -1000);
-      h.add(u.spawnTimer); h.add(u.spawnLeft); h.add(u.spawnSub); h.add(u.charge); h.add(u.load); h.add(u.retargetCd);
+      h.add(u.spawnTimer); h.add(u.spawnGroup); h.add(u.spawnRot); h.add(u.charge); h.add(u.load); h.add(u.retargetCd);
       h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
       h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaT); h.add(u.hideT); h.add(u.tunneling ? 1 : 0);
       h.add(u.pending); h.add(u.pendingDur); h.add(u.waitTicks); h.add(u.dmgKeys.length);
@@ -3842,6 +3947,8 @@ export class Battle {
     }
     for (const c of this.commands) { h.add(c.team); h.add(c.x); h.add(c.y); h.add(c.submitTick); }
     for (const s of this.rng.state()) h.add(s);
+    // post-end clocks, once the post-end world has ticked (at the end tick they follow from the state above)
+    if (this.endMs > 1) { h.add(this.endMs); h.add(this.waveMs); }
     return h.hex();
   }
 }

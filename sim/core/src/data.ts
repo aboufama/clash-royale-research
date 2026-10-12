@@ -250,8 +250,13 @@ export interface UnitDef {
   lifeTime: number;
   deathAreaEffect: AreaEffectDef | null;
   deathSpawn: { unit: UnitDef; count: number; radius: number; deployTime: number } | null;
-  /** Periodic spawner (Witch, Tombstone, huts). Times in ms. */
-  spawn: { unit: UnitDef; number: number; pauseTime: number; interval: number; startTime: number; radius: number; angleShift: number } | null;
+  /**
+   * Periodic spawner (Witch, Tombstone, huts), CharacterData loader 0xde29a4.. (absent ints are 0): SpawnNumber
+   * (+0x478), SpawnPauseTime (+0x47c), SpawnInterval (+0x474), SpawnStartTime (+0x470, the first timer),
+   * SpawnRadius (+0x2c0), SpawnAngleShift (+0x38c), SpawnCharacterWithDeploy (+0x250). Times in ms.
+   */
+  spawn: { unit: UnitDef; number: number; pauseTime: number; interval: number; startTime: number; radius: number; angleShift: number;
+    withDeploy: boolean } | null;
   /** SpawnRadius / SpawnAngleShift (also read by the summon formation). */
   spawnRadius: number;
   spawnAngleShift: number;
@@ -374,7 +379,7 @@ const UNIT_FIELDS_OK = new Set([
   'ClonedVersion', 'IgnoreBuff', 'IgnoreResurrect', 'IgnoreClone', 'CustomSpawnFilter', 'LifeTime',
   'DeathAreaEffect', 'DeathSpawnCharacter', 'DeathSpawnCount', 'DeathSpawnRadius', 'DeathSpawnDeployTime',
   'DeathSpawnPushback', 'SpawnCharacter', 'SpawnNumber', 'SpawnPauseTime', 'SpawnInterval', 'SpawnStartTime',
-  'ShieldHitpoints', 'JumpEnabled', 'Hovering', 'FlyDirectPaths', 'JumpHeight', 'JumpSpeed', 'ChargeRange', 'ChargeSpeedMultiplier', 'DamageSpecial',
+  'SpawnCharacterWithDeploy', 'ShieldHitpoints', 'JumpEnabled', 'Hovering', 'FlyDirectPaths', 'JumpHeight', 'JumpSpeed', 'ChargeRange', 'ChargeSpeedMultiplier', 'DamageSpecial',
   'AttackShakeTime', 'ManaOnDeathForOpponent', 'ManaCollectAmount', 'ManaGenerateTimeMs', 'ManaOnDeath',
   'VariableDamage2', 'VariableDamage3', 'VariableDamageTime1', 'VariableDamageTime2', 'VisualHitSpeed', 'MultipleTargets',
   'AllTargetsHit', 'BuffOnDamage', 'BuffOnDamageTime', 'HidesWhenNotAttacking', 'HideTimeMs', 'UpTimeMs', 'SpawnPathfindSpeed',
@@ -627,12 +632,13 @@ export class Defs {
       unsupported.push(...unit.unsupported.map((x) => `${spc}.${x}`));
       spawn = {
         unit,
-        number: num(r, 'SpawnNumber', 1),
+        number: num(r, 'SpawnNumber'),
         pauseTime: num(r, 'SpawnPauseTime'),
         interval: num(r, 'SpawnInterval'),
-        startTime: num(r, 'SpawnStartTime', -1),
+        startTime: num(r, 'SpawnStartTime'),
         radius: num(r, 'SpawnRadius'),
         angleShift: num(r, 'SpawnAngleShift'),
+        withDeploy: bool(r, 'SpawnCharacterWithDeploy'),
       };
     }
     const def: UnitDef = {

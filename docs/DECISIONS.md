@@ -3,6 +3,35 @@
 Newest first. Each entry gives the decision, why it was made, and what would
 change it.
 
+## 2026-10-12 — The world after the end: an opt-in post-end phase of `step()`
+
+- **Decision:** `BattleConfig.postEnd` (default false) lets `Battle.step()` keep
+  ticking after the result, as the client's battle manager does (0x10ca9a0:
+  the battle tick 0xd33f74 runs on until ms since the end, ctx +0x198, reach the
+  location's EndScreenDelay at 0xd3581c; 4000 ms = 80 ticks, `endScreenDelay`).
+  `Battle.result` (winner, reason, tick) is set once and never changes;
+  `Battle.ended` stays "there is a result" and the new `Battle.stopped` says
+  "nothing more will happen". The post-end tick runs the command manager (every
+  play fails, 0xd77504), the world tick with the attack clocks held at 0
+  (0xfc90b0) and non-flag-8 damage dropped (0xfcb29c), the King-death wave
+  (0xd352f8) and +0x198 += 50; there is no end check. `endCrowns` keeps the
+  crowns of the end for the result screen. The viewer creates its battles with
+  `postEnd: true` and steps until `stopped`, then runs its visual clock.
+- **Why opt-in:** training, self-play, benchmarks, bots and the native traces
+  want the episode to stop at the result; their states and hashes must not
+  depend on this. With `postEnd` off nothing changes (the King wave, the only
+  post-end work that starts on the end tick, is gated by the flag, and the
+  post-end clocks are hashed only after a post-end tick ran). A separate
+  method was rejected: the viewer's loop, its event hand-off and the replay of
+  a battle are all built on `step()`.
+- **Also from the same functions:** once time is up the tiebreak also rejects
+  plays (0xd77504 returns 4 on 0xd360a8) and drops non-flag-8 damage while its
+  clock runs (0xfcaeec). These change state hashes of matches that reach the
+  tiebreak (no result changed in 120 seeded matches).
+- **Would change it:** a training setup that wants the post-end frames
+  (e.g. for a value target), or a native trace showing the client stopping
+  earlier.
+
 ## 2026-10-12 — Scripted AI opponent: data-driven heuristics, not a native port
 
 - **Decision:** `sim/core/src/bot.ts` adds `Bot`, a deterministic scripted
