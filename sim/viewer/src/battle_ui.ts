@@ -14,6 +14,7 @@ import type { BattleArt } from './sc/battle_art.ts';
 import type { ScLibrary } from './sc/library.ts';
 import type { ScRenderer } from './sc/renderer.ts';
 import { ClipPlayer } from './sc/anim.ts';
+import { Announcements } from './sc/announce.ts';
 import {
   type AreaActor, CLIENT_GLOBALS, DEPLOY_AREA_PIECES, DeployAreaGrid, deployAreaAlpha, deployAreaShown, DeployTimer,
   indicatorRadius, ringBand, ringStrip, type UiSpell,
@@ -65,10 +66,27 @@ export class BattleUi {
     this.hud = new Hud(art);
   }
 
+  /** Timed announcements of the HUD time update 0x8d38c4 (countdown, 60/30 s, elixir speed, extra time). */
+  private announce: Announcements | null = null;
+
+  private announcer(): Announcements | null {
+    const ui = this.ui;
+    if (!this.announce && ui) {
+      const texts = this.art.manifest.hud.texts ?? {};
+      this.announce = new Announcements(ui, (id, vars = {}) => {
+        let s = texts[id] ?? '';
+        for (const [k, v] of Object.entries(vars)) s = s.replace(`<${k}>`, String(v));
+        return s;
+      });
+    }
+    return this.announce;
+  }
+
   /** New battle: drop timers, pending marks and the overlay state. */
   reset(): void {
     this.timers = [];
     this.floats = [];
+    this.announce = null;
     this.pending = [];
     this.preview = null;
     this.areaAlpha = 0;
@@ -286,6 +304,7 @@ export class BattleUi {
     // cost texts: UI clips on the wall clock, removed once played through
     this.floats = this.floats.filter((fl) => { const was = fl.clip.playing; fl.clip.advance(dt); return was; });
     this.hud.update(dt, b);
+    this.announcer()?.update(dt, b);
     // preview clips
     const pv = this.preview;
     if (!pv || !ui) {
@@ -423,7 +442,7 @@ export class BattleUi {
     const ui = this.ui;
     const b = this.battleRef;
     if (!ui || !b) return;
-    const [, riverY] = this.toStage(...this.art.gameToPx(9000, 16000));
+    const [centreX, riverY] = this.toStage(...this.art.gameToPx(9000, 16000));
     this.hud.draw(r, b, dpr, riverY);
     // deploy timers: logic -> stage, truncated to whole stage px (0x8583bc), scale 1
     for (const tm of this.timers) {
@@ -438,6 +457,8 @@ export class BattleUi {
       r.draw(ui, 'elixir_float_txt', fl.clip.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE,
         { childFrame: fl.clip.frame, text: { txt: fl.text } });
     }
+    // timed announcements, children the HUD adds at the arena centre (_DAT_01a57004/8)
+    this.announce?.draw(r, [Math.trunc(centreX), Math.trunc(riverY)]);
     // drag name text (spell_placement_text): projected drop point, y + SPELL_DRAG_NAME_Y_POS / layer scale
     const pv = this.preview;
     if (pv && pv.alpha > 0.01 && ui.has('spell_placement_text')) {

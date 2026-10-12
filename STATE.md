@@ -149,13 +149,10 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the timed announcements of the HUD time update 0x8d38c4
-   (print_endTimer countdown, print_60secondsLeft(_overtime) /
-   print_30secondsLeft, print_extra_time, print_tiebreaker, the elixir-speed
-   banner 0x8d4fe0), the elixir float texts (the own play's path is not
-   recovered: 0x8df9fc is the spectate HUD; 0x85ada8 → 0xbe5898 is the other
-   caller), the full-elixir hand wiggle (0x907654 / 0x907ab0). Training bridge
-   (M3) and the fidelity pass (M5); see [GOAL.md](GOAL.md).
+5. **HUD left:** the tiebreaker / draw / final-score clips of the HUD time
+   update 0x8d38c4, the full-elixir hand wiggle (0x907654 / 0x907ab0), the
+   unaffordable-drop wait (MAX_SPELL_PENDING_TIME). Training bridge (M3) and
+   the fidelity pass (M5); see [GOAL.md](GOAL.md).
 6. **Viewer fidelity left:** the battle layer's vertical placement under the
    HUD (width framing is ported: 578.5 SC px on tall phones), the arena clip field
    +0x84 used as the 180° turn's ty (768 assumed), how the client picks
