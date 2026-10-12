@@ -194,6 +194,8 @@ export class ScRenderer {
   private textShelves: { y: number; h: number; x: number }[] = [];
   private textScratch: HTMLCanvasElement | OffscreenCanvas | null = null;
   private frameNo = 0;
+  /** TID key -> localised string, for text instances named with a TID (set by the owner) */
+  textTable: Record<string, string> | null = null;
   // shadow pass
   private readonly blurProg: WebGLProgram;
   private readonly quadVao: WebGLVertexArrayObject;
@@ -469,9 +471,11 @@ export class ScRenderer {
       if (cc[3] <= 0.001 && !this.inMaskWrite) continue;
       const b = (clip.blend && clip.blend[ci]) || blend;
       const name = clip.names ? clip.names[ci] : null;
-      if (name !== null && (opts.named || opts.text)) {
+      // a text field instance named with a TID key shows its localised string (texts.csv EN)
+      const tid = name !== null && this.textTable && name.startsWith('TID_') && lib.textFields.has(cid) ? this.textTable[name] : undefined;
+      if (name !== null && (opts.named || opts.text || tid !== undefined)) {
         const ov = opts.named?.[name];
-        const txt = opts.text?.[name] ?? ov?.text;
+        const txt = opts.text?.[name] ?? ov?.text ?? tid;
         if (ov?.hide) continue;
         if (txt !== undefined) {
           const direct = lib.textFields.get(cid);

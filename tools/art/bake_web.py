@@ -134,6 +134,8 @@ HUD_EXPORTS = (
     "HUD_topLeft", "HUD_topRight", "HUD_topRight_overtime", "HUD_topRight_double_elixir",
     "HUD_rightMiddle", "Clock_middle", "icon_crowns", "crown_rotate_anim",
     "print_60secondsLeft_overtime", "print_elixir_speed", "print_endTimer", "pvp_battle_start",
+    # timed announcements of the HUD time update 0x8d38c4 (30 s banner, overtime, tiebreaker, end)
+    "print_30secondsLeft", "print_extra_time", "print_tiebreaker", "duel_battle_draw", "finalScore",
     # deploy UI
     "troopDeployTimer_player", "troopDeployTimer_enemy", "deployArea_base",
     "deployArea_corner_leftBottom", "deployArea_corner_leftTop", "deployArea_corner_rightBottom",
@@ -146,7 +148,8 @@ HUD_EXPORTS = (
 )
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
-             "TID_SPELL_ITEM_LEVEL_SHORT")
+             "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
+             "TID_MATCH_OVER", "TID_TIME_M_S")
 
 
 def r2(v: float) -> float | int:
@@ -1252,6 +1255,21 @@ class Baker:
             libs[src.name] = {"json": f"sc/{src.name}.json", **info}
             total_json += info["json"]
             total_tex += info["textures"]
+        # text instances named (or holding) a TID key are localised by the client: bake the EN strings
+        # of every TID the baked libraries use (countdown digits, banner captions, ...)
+        tids = set()
+        for name in libs:
+            lj = json.loads((sc_dir / f"{name}.json").read_text())
+            for tf in lj.get("tf", {}).values():
+                if tf.get("text", "").startswith("TID_"):
+                    tids.add(tf["text"])
+            for c in lj.get("clips", {}).values():
+                tids.update(n for n in c.get("nm", []) if n and n.startswith("TID_"))
+        tx_csv = RAW / "csv_client" / "texts.csv"
+        if tids and tx_csv.exists():
+            for r in list(csv.DictReader(io.StringIO(tx_csv.read_text(encoding="utf-8"))))[1:]:
+                if r.get("Name") in tids:
+                    hud["texts"].setdefault(r["Name"], r.get("EN", ""))
         fonts = {}
         if a.fonts:
             fdir = OUT / "fonts"

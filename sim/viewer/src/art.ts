@@ -79,6 +79,7 @@ export function createArt(_manifest: unknown): ArtHooks {
       // renders with and without it match, minus a multisample resolve per frame)
       const r = new ScRenderer(canvas, { preserveDrawingBuffer: false, antialias: false });
       r.clearTextCache();
+      r.textTable = art.manifest.hud.texts ?? null;
       // upload the loaded atlases up front, and each later library as it arrives: a card's first
       // appearance would otherwise stall that frame on the upload
       for (const lib of art.libs.loaded()) r.preload(lib);
