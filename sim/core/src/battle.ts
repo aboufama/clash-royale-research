@@ -22,7 +22,7 @@ import {
 } from './entities.ts';
 import { clamp, Hasher, idiv, isqrt, NativeRng, Rng } from './math.ts';
 import { formationOffset } from './formation.ts';
-import { cos1e6, rotate1024, sin1e6 } from './trig.ts';
+import { cos1e6, rotate1024, sin1024, sin1e6 } from './trig.ts';
 
 export interface BattleConfig {
   seed?: number;
@@ -505,6 +505,9 @@ export class Battle {
     for (let i = 0; i < units.length; i++) this.movementUpdate(units[i]); // all movement components
     for (let i = 0; i < units.length; i++) this.healthUpdate(units[i]); // health components
     for (let i = 0; i < units.length; i++) if (units[i].buffs.length) this.updateBuffs(units[i]); // buff components
+    // scripted actions (f89524): JumpHack_Check_Jump_Interval every 50 ms gives a jumping unit the
+    // 50 ms JumpHack_Ignore_Pushback_Buff, which lasts until the next tick's buff phase
+    for (let i = 0; i < units.length; i++) { const u = units[i]; if (u.def.jumpHack) u.pushImmune = u.jumping && u.state !== ST_DEAD; }
     for (let i = 0; i < units.length; i++) this.updateActor(units[i]); // actor updates (vt+0x48)
     this.updateProjectiles();
     this.updateAreaEffects();
@@ -606,15 +609,7 @@ export class Battle {
    * then the area effect object at the target point.
    */
   private castSpell(team: number, card: CardDef, x: number, y: number): void {
-    const pd = card.spellProjectile;
-    if (pd && pd.pierceRange > 0) {
-      // Rolling spells start at the target point (Log, Barbarian Barrel) (A: pierce flight model).
-      this.firePierce(team, pd, x, y, 0, team === 0 ? 1000 : -1000, null);
-    } else if (pd?.spawnProjectile && pd.spawnProjectile.pierceRange > 0) {
-      this.firePierce(team, pd.spawnProjectile, x, y, 0, team === 0 ? 1000 : -1000, null);
-    } else if (pd) {
-      this.castProjectiles(team, card, x, y);
-    }
+    if (card.spellProjectile) this.castProjectiles(team, card, x, y);
     if (card.summon.length) this.summonCard(team, card, x, y);
     if (card.areaEffect) this.spawnAreaEffect(team, card.areaEffect, x, y);
   }
@@ -627,17 +622,25 @@ export class Battle {
    * random direction (battle RNG) and kept within 0.9·R; one wave shares a group (0xf8f498 /
    * 0xf93784): a hit list, so a target is hit once per wave, and the spell circle (target point, R)
    * that every damaged actor must also touch (World_areaDamage second circle). Each starts at the
-   * King tower offset by (dx/4, dy) of its aim offset.
-   * The scatter mode is assumed for MultipleProjectiles > 1 (A: spell vt+0x1c0 not decoded).
+   * King tower offset by (dx/4, dy) of its aim offset, 3 × the tower's CollisionRadius high.
+   * SpellAsDeploy cards (Log, Barbarian Barrel) start at the target point instead, 5 × the radius
+   * (1400 if none) high: with a SpawnProjectile, MinDistance behind the target (toward the
+   * caster's side) and aimed at it, else at the target and aimed MinDistance ahead.
+   * The scatter mode is the spell's vt+0x1c0 (0xd59d50: its name is "Arrows"); other
+   * multi-projectile spells spread their extra projectiles at random radii in [R/4, R) on
+   * 360/n steps.
    */
   private castProjectiles(team: number, card: CardDef, x: number, y: number): void {
     const king = this.players[team].king;
     const kx = king ? king.x : x;
     const ky = king ? king.y : y;
+    const kr = king ? king.radius : 0;
+    // tower in the lower half (y < mapH·250) casts toward +y
+    const fwd = ky < this.arena.h * 250 ? 1 : -1;
     const R = card.spellRadius;
     const n = Math.max(card.multipleProjectiles, 1);
     const waves = Math.max(card.waves, 1);
-    const scatter = n > 1;
+    const scatter = card.name === 'Arrows'; // spell vt+0x1c0 0xd59d50 [STAT]
     const len = Math.trunc((R * 90) / 100);
     const ringStep = n - 1 !== 0 ? Math.trunc(360 / (n - 1)) : 0;
     const step = Math.trunc(360 / n);
@@ -667,12 +670,20 @@ export class Battle {
           const rr = this.nrng.next(R - (R >> 2)) + (R >> 2);
           [ox, oy] = rotate1024(rr, 0, angle);
         }
-        const pr = new Projectile(this.nextProjId++, def, team, kx + (ox >> 2), ky + oy, this.tick);
-        pr.tx = x + ox;
-        pr.ty = y + oy;
+        const ax = x + ox;
+        const ay = y + oy;
+        const pr = new Projectile(this.nextProjId++, def, team, ax, ay, this.tick);
         pr.spell = card.name;
-        pr.delay = delay;
         pr.group = group;
+        if (card.spellAsDeploy) {
+          const r = kr !== 0 ? kr : 1400;
+          const md = def.minDistance;
+          if (def.spawnProjectile !== null) this.setupProjectile(pr, null, ax, ay - fwd * md, r * 5, null, ax, ay);
+          else this.setupProjectile(pr, null, ax, ay, r * 5, null, ax, ay + md * fwd);
+        } else {
+          this.setupProjectile(pr, null, kx + (ox >> 2), ky + oy, kr * 3, null, ax, ay);
+        }
+        pr.delay = delay; // +0x1b4 (Projectile_setup p13)
         this.projectiles.push(pr);
         delay += card.projectileInterval;
         angle += step;
@@ -721,11 +732,9 @@ export class Battle {
         ox = negY ? -sx : sx;
         oy = negY ? -sy : sy;
       }
-      let ux = x + ox;
+      const ux = x + ox;
       let uy = y + oy;
       if (!def.flyingHeight && !this.fixture) uy = clamp(uy, zone[0], zone[1]);
-      ux = clamp(ux, 0, this.boundW - 1);
-      uy = clamp(uy, 0, this.boundH - 1);
       const entry = card.summon.find((e) => e.unit === def) ?? null;
       const deployMs = entry && entry.deployTime >= 0 ? entry.deployTime : def.deployTime;
       if (def.spawnPathfindSpeed > 0 && !this.fixture) {
@@ -750,7 +759,9 @@ export class Battle {
           wait = sp.deployDelay * i;
         }
       }
-      const u = this.createUnit(team, card.name, def, ux, uy, Math.round(wait / TICK_MS) + Math.round(deployMs / TICK_MS));
+      // 0xd35ab4 with the deploy x as lane hint; no lane there: the deploy point's lane (0xd423bc)
+      const u = this.createUnit(team, card.name, def, ux, uy, Math.round(wait / TICK_MS) + Math.round(deployMs / TICK_MS), x);
+      if (u.lane < 1) u.lane = lane;
       u.waitTicks = Math.round(wait / TICK_MS); // state 11 until the delay ends (0xd423bc)
     }
   }
@@ -790,10 +801,21 @@ export class Battle {
     }
   }
 
-  /** Create an actor; it joins the live list at the end of this tick. */
-  private createUnit(team: number, card: string, def: UnitDef, x: number, y: number, deployTicks: number): Unit {
+  /**
+   * Create an actor (0xd35ab4 [STAT]): the position is clamped to [250, width − 250] ×
+   * [250, height − 250]; the lane comes from 0xd38d9c at that position, with the deploy point's x
+   * as hint for summons and projectile spawns (`hint`, -1 = none). It joins the live list at the end
+   * of this tick.
+   */
+  private createUnit(team: number, card: string, def: UnitDef, x: number, y: number, deployTicks: number, hint = -1): Unit {
+    const xm = this.boundW - 250;
+    const ym = this.boundH - 250;
+    if (x < 251) x = 250;
+    if (xm <= x) x = xm;
+    if (y < 251) y = 250;
+    if (ym <= y) y = ym;
     const u = new Unit(this.nextId++, def, card, team, x, y, this.tick + 1);
-    u.lane = this.laneOf(x, y);
+    u.lane = hint === -1 ? this.laneOf(x, y) : this.laneHint(x, y, hint);
     u.deployTicks = deployTicks;
     u.deployTotal = deployTicks;
     this.newUnits.push(u);
@@ -950,6 +972,7 @@ export class Battle {
     if (d.targetOnlyTroops && t.isBuilding) return false;
     if (t.isAir && !d.attacksAir) return false;
     if (!t.isAir && !d.attacksGround && d.attacksAir) return false;
+    if (t.jumping && !d.attacksAir) return false; // a jumping character (state 5) needs AttacksAir (0xf94824)
     if (checkPending && d.projectile !== null && t.pending !== 0 && this.pendingOverkill(t)) return false;
     return true;
   }
@@ -1062,9 +1085,11 @@ export class Battle {
       const p = ps[i];
       const t = p.target;
       if (t !== null && t.state === ST_DEAD) {
-        if (p.def.homing) { p.tx = t.x; p.ty = t.y; }
+        if (p.def.homing) { p.tx = t.x; p.ty = t.y; p.aimZ = t.z; }
         p.target = null;
       }
+      const t2 = p.target2;
+      if (t2 !== null && t2.state === ST_DEAD) { p.target2 = null; p.homingT = 0; } // vt38 0xf92ed8
       if (p.born === tick && !p.pendReg && p.target !== null) this.registerPending(p);
     }
   }
@@ -1076,6 +1101,7 @@ export class Battle {
    * Without a candidate: the default target (lane crown tower) (A for findDefaultTarget).
    */
   private findTarget(u: Unit): void {
+    if (u.jumping) return; // states 3 and 5 keep their target (0xfc4c38)
     const d = u.def;
     const sight = d.sightRange + u.radius;
     const minR = this.getMinRange(u);
@@ -1091,7 +1117,9 @@ export class Battle {
       if (c.radius <= 0 || !this.isValidTarget(u, c, true)) continue;
       const dx = c.x - u.x;
       const dy = c.y - u.y;
-      const d2 = dx * dx + dy * dy;
+      // distance less the candidate's target priority (vt1d8, actor +0x1a0), at least 0
+      let d2 = dx * dx + dy * dy - c.prio;
+      if (d2 < 0) d2 = 0;
       let lim = c.radius + sight;
       if (c.tower !== TOWER_NONE) {
         lim += exT;
@@ -1113,12 +1141,14 @@ export class Battle {
     }
     if (best) { this.setTarget(u, best, false, true); return; }
     // Nothing in sight: keep the current target while the path to it runs "backwards"
-    // (LOGIC_PATHFIND_BACKWARDS_TRY_KEEP_TARGET), else the default target; an invalid choice leaves
-    // the current target unchanged [STAT 0xfc4c38 tail]. Buildings take no default target (A).
+    // (LOGIC_PATHFIND_BACKWARDS_TRY_KEEP_TARGET), else the default target, for buildings and crown
+    // towers too (an enemy crown tower, out of range, so setTarget resets the attack); an invalid
+    // choice leaves the current target unchanged [STAT 0xfc4c38 tail]. The native default is never
+    // null; without towers (fixture arenas) buildings drop their target.
     let cand: Unit | null;
     if (u.target && this.mobile(u) && u.pathBack && this.isValidTarget(u, u.target, true)) cand = u.target;
-    else cand = u.isBuilding || u.tower !== TOWER_NONE ? null : this.defaultTarget(u);
-    if (cand === null) { if (u.isBuilding || u.tower !== TOWER_NONE) this.setTarget(u, null, false, true); return; }
+    else cand = this.defaultTarget(u);
+    if (cand === null) { if (u.isBuilding) this.setTarget(u, null, false, true); return; }
     if (!this.isValidTarget(u, cand, true)) return;
     this.setTarget(u, cand, false, true);
   }
@@ -1206,6 +1236,47 @@ export class Battle {
 
   private laneCache = new Map<number, number>();
 
+  /**
+   * Lane id with a hint x, the hint branch of 0xd38d9c [STAT]: the lane of the nearest road cell to
+   * the point (as laneOf) and, separately, of the nearest road cell to the hint's column on the
+   * point's row distance; when the point lies across the middle column from the hint (hint column
+   * < 18 <= point column ((x + 5)/500) with hint < x, or the mirror) and both choices agree, lanes
+   * 1 and 2 are swapped.
+   */
+  laneHint(x: number, y: number, hint: number): number {
+    const A = this.arena;
+    const W = A.w;
+    const H = A.h;
+    const xc = trunc(x / CELL);
+    const yc = trunc(y / CELL);
+    const hc = trunc(hint / CELL);
+    const xc5 = trunc((x + 5) / CELL);
+    const half = W >> 1;
+    let lane = 0;
+    let best = 0x7fffffff;
+    let laneH = -1;
+    let bestH = 0x7fffffff;
+    let cross = false;
+    for (let cx = 0; cx < W; cx++) {
+      for (let cy = 0; cy < H; cy++) {
+        const v = A.flags[cx + W * cy] & 3;
+        if (v <= 0) continue;
+        const dy2 = (cy - yc) * (cy - yc);
+        const dH = dy2 + (cx - hc) * (cx - hc);
+        const dP = dy2 + (cx - xc) * (cx - xc);
+        if (dH < bestH) { bestH = dH; laneH = v; }
+        const le = dP <= best;
+        if (dP < best) { best = dP; lane = v; }
+        if (!cross && le) {
+          if (hint < x && hc < half && half <= xc5) { cross = true; continue; }
+          cross = x < hint ? (half < hc && xc5 <= half) : false;
+        }
+      }
+    }
+    if (cross && lane === laneH) lane = laneH === 1 ? 2 : laneH === 2 ? 1 : laneH;
+    return lane;
+  }
+
   /** resetAttack(): timer 0, hit/loaded/finish flags cleared [STAT]. */
   private resetAttack(u: Unit): void {
     u.atkTimer = 0;
@@ -1248,6 +1319,7 @@ export class Battle {
 
   /** Movement speed vtb8 0xf82a18 with buffScale 0xfc26d4 and charge multiplier [STAT]. */
   private moveSpeed(u: Unit): number {
+    if (u.axeWait > 0) return 0; // attack +0x64 > 0 (vtb8 0xf82a18)
     let v = u.def.speed;
     if (u.buffs.length) {
       let haste = 100;
@@ -1297,11 +1369,22 @@ export class Battle {
     if (u.state !== ST_ACTIVE || u.tunneling) return;
     if (u.tower === TOWER_KING && u.kingState !== KING_ACTIVE) return;
     const d = u.def;
-    if (d.hitSpeed <= 0) return;
+    if (d.hitSpeed <= 0 || u.atkOff) return; // atkOff: component disabled while frozen (0xf7fee4)
     u.load = Math.max(u.load, 50) - 50;
     u.retargetCd = Math.max(u.retargetCd, 50) - 50;
-    if (u.buffs.length && this.clockDelta(u) === 0) { u.locked = false; return; } // frozen / stunned
     if (u.target) { u.tsx = u.target.x; u.tsy = u.target.y; }
+    // out-and-back projectile in flight (attack +0x58) and its PingpongVisualTime wait (+0x60/+0x64):
+    // nothing else happens until both are over, then the timer restarts at 1 (0xfc7e20)
+    if (u.axeWait > 0) {
+      u.axeMs += 50;
+      if (u.axeMs < u.axeWait) return;
+      u.axeMs = 0;
+      u.axeWait = 0;
+      if (u.axe !== null) return;
+      u.atkTimer = 1;
+    } else if (u.axe !== null) {
+      return;
+    }
     // keep-target test
     let keep = false;
     const tg = u.target;
@@ -1423,53 +1506,150 @@ export class Battle {
     }
   }
 
-  /** Projectile spawns ProjectileStartRadius toward the target, plus ProjectileYOffset [OBS King (9750,3400)]. */
+  /**
+   * Projectile_init 0xf8e4c8 as called by AttackComp_execute 0xfc619c [STAT], for the single
+   * projectile of an ordinary attack (MultipleProjectiles <= 1, no angle offset): aimed at the
+   * target snapshot of this attack update (no projectile in this build sets TargetToEdge); it
+   * starts ProjectileStartRadius from the shooter toward the aim, plus ProjectileYOffset (negated
+   * for team 1), at the shooter's height + ProjectileStartZ, then Projectile_setup. An
+   * out-and-back projectile (PingpongVisualTime) is linked to the shooter's attack (0xfc7914) and
+   * steps by the shooter's buff time scale of 50 ms (0xfc27b8).
+   */
   private fireProjectile(u: Unit, t: Unit, def: ProjectileDef): void {
-    const dx = t.x - u.x;
-    const dy = t.y - u.y;
+    const ax = u.tsx;
+    const ay = u.tsy;
+    const dx = ax - u.x;
+    const dy = ay - u.y;
     const dd = isqrt(dx * dx + dy * dy);
     const sr = u.def.projectileStartRadius;
-    let sx = u.x;
-    let sy = u.y;
-    if (dd > 0) {
-      sx += idiv(dx * sr, dd);
-      sy += idiv(dy * sr, dd);
+    let ox = dx;
+    let oy = dy;
+    if (dd !== 0) {
+      ox = idiv(dx * sr, dd);
+      oy = idiv(dy * sr, dd);
     }
-    sy += u.team === 0 ? u.def.projectileYOffset : -u.def.projectileYOffset;
-    if (def.pierceRange > 0) {
-      const ddx = dd > 0 ? idiv(dx * 1000, dd) : 0;
-      const ddy = dd > 0 ? idiv(dy * 1000, dd) : (u.team === 0 ? 1000 : -1000);
-      const pr = this.firePierce(u.team, def, sx, sy, ddx, ddy, u);
-      if (def.pingpong) pr.rangeLeft = Math.min(def.pierceRange >> 1, Math.max(def.minDistance, dd));
-      return;
-    }
-    // Projectile_setup 0xf8e6fc [STAT]: every projectile keeps its target (homing ones follow it;
-    // single-target ones damage it on arrival); pending damage registers when it joins the world
-    // list at the end of the tick (projectileMaintenance). ChainedHitRadius > 0: first hit counted
-    // and the target put on the ignore list (0xf94780). A SpawnProjectile chain gets a damage key.
-    const pr = new Projectile(this.nextProjId++, def, u.team, sx, sy, this.tick);
+    const yoff = u.team === 0 ? u.def.projectileYOffset : -u.def.projectileYOffset;
+    const pr = new Projectile(this.nextProjId++, def, u.team, u.x + ox, u.y + oy + yoff, this.tick);
     pr.sourceId = u.id;
-    pr.tx = t.x;
-    pr.ty = t.y;
-    pr.target = t;
-    if (def.chainRadius > 0) { pr.chainHits = 1; pr.ignoreIds.push(t.id); }
-    if (def.spawnProjectile !== null) pr.key = ++this.nextKey;
+    pr.shooter = u;
+    this.setupProjectile(pr, u, u.x + ox, u.y + oy + yoff, u.z + u.def.projectileStartZ, t, ax, ay);
+    if (def.pingpongTime > 0) {
+      // 0xfc7914: attack +0x58 = projectile; +0x60 = 0, +0x64 = PingpongVisualTime
+      u.axe = pr;
+      u.axeMs = 0;
+      u.axeWait = def.pingpongTime;
+      pr.pingStep = this.clockDelta(u);
+    }
     this.projectiles.push(pr);
   }
 
-  /** Straight piercing flight (Bowler boulder, Executioner axe, Magic Archer arrow, Log). */
-  private firePierce(team: number, def: ProjectileDef, x: number, y: number, dirX: number, dirY: number, src: Unit | null): Projectile {
-    const pr = new Projectile(this.nextProjId++, def, team, x, y, this.tick);
-    pr.pierce = true;
-    pr.dirX = dirX;
-    pr.dirY = dirY;
-    pr.rangeLeft = def.pierceRange;
-    pr.source = src;
-    pr.sourceId = src ? src.id : -1;
-    pr.tx = x + idiv(dirX * def.pierceRange, 1000);
-    pr.ty = y + idiv(dirY * def.pierceRange, 1000);
-    this.projectiles.push(pr);
-    return pr;
+  /**
+   * Projectile_setup 0xf8e6fc [STAT], the paths supported cards use: position and target; the aim
+   * through setAim 0xf8fb34 (a piercing projectile, or one with a ProjectileRange, is aimed
+   * ProjectileRange from the shooter, or from its start without one, toward the given point and
+   * drops its target); HomingTime re-aim when the target is farther than HomingMinDistance;
+   * MinDistance pushes the aim out; the aim height (a projectile that spawns a piercing one lands at
+   * that one's ProjectileRadiusY, or ProjectileRadius, high; a piercing one stays at its start
+   * height; ConstantHeight overrides both); the damage key of SpawnProjectile chains (only when
+   * neither it nor its spawn pierces); the chain-hit count; SpawnChain. Pending damage registers
+   * when it joins the world list (projectileMaintenance) or at once in a chain hop.
+   */
+  private setupProjectile(p: Projectile, shooter: Unit | null, x: number, y: number, z: number, target: Unit | null,
+    tx: number, ty: number): void {
+    const def = p.def;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    p.target = target;
+    this.setAim(p, shooter ? shooter.x : x, shooter ? shooter.y : y, tx, ty);
+    p.startX = x;
+    p.startY = y;
+    p.startZ = z;
+    if (target !== null && def.homingTime > 0) {
+      const vx = target.x - x;
+      const vy = target.y - y;
+      if (def.homingMinDistance < isqrt(vx * vx + vy * vy)) {
+        p.target2 = target;
+        p.homingT = def.homingTime;
+      }
+    }
+    if (def.minDistance !== 0) {
+      let vx = p.tx - p.startX;
+      let vy = p.ty - p.startY;
+      const l = isqrt(vx * vx + vy * vy);
+      if (l < def.minDistance && l !== 0) {
+        vx = idiv(vx * def.minDistance, l);
+        vy = idiv(vy * def.minDistance, l);
+        p.tx = p.startX + vx;
+        p.ty = p.startY + vy;
+      }
+    }
+    const sp = def.spawnProjectile;
+    if ((sp === null || !sp.pierce) && !def.pierce) {
+      if ((sp !== null || p.fromParent) && p.key === 0) p.key = ++this.nextKey;
+    } else if (!def.pierce) {
+      p.aimZ = sp!.pierceRadiusY !== 0 ? Math.min(sp!.pierceRadiusY, sp!.pierceRadius) : sp!.pierceRadius;
+    } else {
+      p.aimZ = p.startZ;
+    }
+    if (def.constantHeight !== 0) {
+      p.aimZ = def.constantHeight;
+      p.startZ = def.constantHeight;
+      p.z = def.constantHeight;
+    }
+    if (def.chainRadius > 0) {
+      p.chainHits++;
+      if (p.target !== null) p.ignoreIds.push(p.target.id);
+    }
+    if (shooter !== null && p.homingT > 0) {
+      p.startX = shooter.x;
+      p.startY = shooter.y;
+    }
+    p.chainLeft = def.spawnChain;
+  }
+
+  /**
+   * setAim 0xf8fb34 [STAT]: aim at (tx, ty); a piercing projectile or one with a ProjectileRange is
+   * aimed ProjectileRange from (sx, sy) through that point (RandomDistance: no supported user) and
+   * loses its target.
+   */
+  private setAim(p: Projectile, sx: number, sy: number, tx: number, ty: number): void {
+    const def = p.def;
+    p.tx = tx;
+    p.ty = ty;
+    if (def.pierce || def.range > 0) {
+      let vx = tx - sx;
+      let vy = ty - sy;
+      const l = isqrt(vx * vx + vy * vy);
+      if (l !== 0) {
+        vx = idiv(vx * def.range, l);
+        vy = idiv(vy * def.range, l);
+      }
+      p.target = null;
+      p.tx = vx + sx;
+      p.ty = vy + sy;
+    }
+  }
+
+  /**
+   * Flight height 0xf927ec [STAT]: with k = distance flown / Speed and n = full distance / Speed
+   * (at least 1), z = startZ + (aimZ − startZ)·k/n + (k − n)·k·(Gravity·−500/1000).
+   */
+  private arcZ(p: Projectile, x: number, y: number): number {
+    const def = p.def;
+    const t = p.target;
+    const ax = t !== null && def.homing ? t.x : p.tx;
+    const ay = t !== null && def.homing ? t.y : p.ty;
+    let sp = def.speed;
+    if (sp < 2) sp = 1;
+    let dx = ax - p.startX;
+    let dy = ay - p.startY;
+    let n = idiv(isqrt(dx * dx + dy * dy), sp);
+    if (n < 2) n = 1;
+    dx = x - p.startX;
+    dy = y - p.startY;
+    const k = idiv(isqrt(dx * dx + dy * dy), sp);
+    return idiv((p.aimZ - p.startZ) * k, n) + p.startZ + (k - n) * k * idiv(def.gravity * -500, 1000);
   }
 
   /**
@@ -1571,6 +1751,24 @@ export class Battle {
     }
     if (u.def.spawn) this.updateSpawner(u);
     this.collectAndHide(u);
+    this.combatGate(u);
+  }
+
+  /**
+   * End of the character update, 0xf7fee4 [STAT] (frozen path): while the buff time scale of 50 ms
+   * is 0 (a −100 HitSpeedMultiplier: Freeze, Zap and Electro stuns) and no buff carries a
+   * Projectile, the target is dropped (setTarget(null): the attack timer and the swing in progress
+   * are kept, ResetHitTimerWhenNoTarget defaults to false) and the attack component is disabled
+   * (component mask bit 0, COMBAT_DISABLED) until a character update ends unfrozen. The update of
+   * the tick a stun lands still runs, with a zero clock step.
+   */
+  private combatGate(u: Unit): void {
+    if (u.buffs.length !== 0 && this.clockDelta(u) === 0) {
+      this.setTarget(u, null, false, false);
+      u.atkOff = true;
+    } else {
+      u.atkOff = false;
+    }
   }
 
   private collectAndHide(u: Unit): void {
@@ -1697,7 +1895,14 @@ export class Battle {
     u.jumping = true;
   }
 
-  /** Jump state 5 of 0xfcc578 [STAT]: JumpSpeed steps toward the landing cell; ends when < 2 steps remain. */
+  /**
+   * Jump state 5 of the movement update (0xfccd94) [STAT]: JumpSpeed steps toward the landing cell;
+   * the total distance (m+0x204) grows to the current distance when larger once the unit has ever
+   * been knocked back (m+0x1ec != 0); with n = total/JumpSpeed and k = remaining/JumpSpeed the jump
+   * ends when k < 2, else u = clamp(2·min(k, n − k), 0, 32) and the arc height
+   * (u − u²/64)·JumpHeight/16 is recorded (when ≥ 1) for the JumpHack check; the actor's z is not
+   * changed. `jumpZ` exposes that height for the view.
+   */
   private jumpStep(u: Unit): void {
     const speed = u.def.jumpSpeed;
     if (speed === 0) return;
@@ -1708,7 +1913,18 @@ export class Battle {
     u.moving = true;
     const dx = wx - u.x;
     const dy = wy - u.y;
-    if (idiv(isqrt(dx * dx + dy * dy), speed) < 2) u.jumping = false;
+    const d2 = dx * dx + dy * dy;
+    let total = u.jumpTotal;
+    if (u.kbStep !== 0 && total * total < d2) { total = isqrt(d2); u.jumpTotal = total; }
+    const n = idiv(total, speed);
+    const k = idiv(isqrt(d2), speed);
+    const m = n - k <= k ? n - k : k;
+    let a = m * 2;
+    if (a > 31) a = 32;
+    if (k < 2) { u.jumping = false; u.jumpZ = 0; return; }
+    if (a < 0) a = 0;
+    const h = (a - ((a * a) >> 6)) * u.def.jumpHeight;
+    u.jumpZ = h >= 16 ? h >> 4 : 0;
   }
 
   private cellX(c: number): number {
@@ -2235,6 +2451,7 @@ export class Battle {
     if (!this.mobile(t) || t.state === ST_DEAD || t.tunneling || t.waitTicks > 0) return; // vtf8 (state 11) refuses
     if (t.kbActive) return;
     if (t.def.ignorePushback && !ignoreImmune) return;
+    if (t.pushImmune && !ignoreImmune) return; // IgnorePushBack buff (0xfc2c4c)
     let dx = t.x - ox;
     const dy = t.y - oy;
     let len = isqrt(dx * dx + dy * dy);
@@ -2444,10 +2661,10 @@ export class Battle {
   // ---------------------------------------------------------------- buffs & area effects
 
   /**
-   * Apply (or refresh) a buff. Stacking buffs keep one instance per source, others one per
-   * buff. Damage/heal ticks every HitFrequency, the first one HitFrequency after application
-   * (immediately for HitTickFromSource buffs) — chosen so Poison deals 8 ticks and Earthquake 3 (A).
-   * A full stop (-100 hit speed) resets the attack wind-up (A, community knowledge: Zap/Freeze reset).
+   * Buff_add 0xfc0e08 (paths for supported buffs) [STAT]: an existing instance of the same buff
+   * (with EnableStacking: of the same buff and source) is refreshed (0xf86e18: its remaining time
+   * becomes the new time if that is longer), else a new instance is added. PlayerSpecificBuff,
+   * AddAsIndividualBuff and ChainedBuff rules have no supported user.
    */
   applyBuff(u: Unit, def: BuffDef, timeMs: number, sourceId: number): void {
     if (u.state === ST_DEAD) return;
@@ -2460,39 +2677,66 @@ export class Battle {
     }
     const inst = new BuffInst(def, sourceId, ticks, this.tick);
     const raw = this.data.buffs[def.name];
-    inst.hitTimer = raw && raw.HitTickFromSource === true ? 0 : def.hitFrequency;
+    // HitTickFromSource: the native counter follows the source area effect's pulse (0xf86668); here
+    // the first tick comes at once (A: no supported card uses it)
+    inst.hitTimer = raw && raw.HitTickFromSource === true && def.hitFrequency > 0 ? idiv(def.hitFrequency, 50) - 1 : 0;
     u.buffs.push(inst);
-    if (def.hitSpeedMul <= -100) {
-      u.atkTimer = 0;
-      u.locked = false;
-      u.target = null;
-      u.attackedTarget = false;
-      u.charge = 0;
-      u.rampMs = 0;
-    }
   }
 
+  /**
+   * Buff component update 0xfc0748 / buff instance update 0xf86668 [STAT]: buffs are processed from
+   * the last to the first; remaining time −50; damage/heal over time with a counter: with
+   * HitFrequency > 0 it ticks on every (HitFrequency/50)-th update (the first one HitFrequency after
+   * the buff was added), with HitFrequency < 0 once, on its first update, for 1000 ms worth, never
+   * with 0 (the loader default). Per tick: DamagePerSecond (scaled, rounded down to a multiple of
+   * 1000/HitFrequency when HitFrequency ≤ 1000, 0xddaa80) × period/1000, × BuildingDamagePercent/100
+   * on non-tower buildings; crown towers take CrownTowerDamagePerHit when set, else
+   * ceil((CrownTowerDamagePercent+100)·dps/100)·max(HitFrequency,0)/1000 (0xdda984); healing
+   * likewise (not on crown towers). Expired buffs are removed after their update.
+   */
   private updateBuffs(u: Unit): void {
     const bs = u.buffs;
-    let w = 0;
-    for (let i = 0; i < bs.length; i++) {
+    let removed = false;
+    for (let i = bs.length - 1; i >= 0; i--) {
       const b = bs[i];
       const d = b.def;
-      if (d.dps > 0 || d.hps > 0) {
-        b.hitTimer -= TICK_MS;
-        if (b.hitTimer <= 0) {
-          b.hitTimer += d.hitFrequency;
-          if (d.dps > 0) {
-            let amount = Math.floor((d.dps * d.hitFrequency) / 1000);
-            if (d.buildingDamagePercent > 0 && u.isBuilding && u.tower === TOWER_NONE) amount = Math.floor((amount * d.buildingDamagePercent) / 100);
-            this.queueDamage(u, amount, -1, d.crownTowerDamagePercent);
+      const hf = d.hitFrequency;
+      if (hf !== 0) {
+        b.hitTimer++;
+        let period = hf > 0 ? hf : 0;
+        let tick = false;
+        if (b.hitTimer === 1 && hf < 0) { period = 1000; tick = true; }
+        else if (!(b.hitTimer < idiv(period, 50) || hf < 0)) { b.hitTimer = 0; tick = true; }
+        if (tick) {
+          let dps = d.dps;
+          let hps = d.hps;
+          if (hf - 1 >= 0 && hf - 1 < 1000) {
+            const q = idiv(1000, hf & 0xffff);
+            if (q !== 0) { dps = idiv(dps, q) * q; hps = idiv(hps, q) * q; }
           }
-          if (d.hps > 0 && u.tower === TOWER_NONE) u.hp = Math.min(u.maxHp, u.hp + Math.floor((d.hps * d.hitFrequency) / 1000));
+          let dmg: number;
+          let heal: number;
+          if (u.tower === TOWER_NONE) {
+            dmg = idiv(dps * period, 1000);
+            heal = idiv(hps * period, 1000);
+            if (u.isBuilding && d.buildingDamagePercent !== 0) dmg = idiv(d.buildingDamagePercent * dmg, 100);
+          } else {
+            const pct = d.crownTowerDamagePercent < -99 ? -100 : d.crownTowerDamagePercent;
+            dmg = d.crownTowerDamagePerHit > 0 ? d.crownTowerDamagePerHit
+              : idiv(idiv((pct + 100) * dps + 99, 100) * (hf > 0 ? hf : 0), 1000);
+            heal = 0;
+          }
+          if (dmg > 0) this.queueDamage(u, dmg, dmg, 0, 0, null, 0, b.sourceId);
+          if (heal > 0) u.hp = Math.min(u.maxHp, u.hp + heal);
         }
       }
-      if (--b.ticksLeft > 0) bs[w++] = b;
+      if (--b.ticksLeft <= 0) { bs[i] = null as unknown as BuffInst; removed = true; }
     }
-    bs.length = w;
+    if (removed) {
+      let w = 0;
+      for (let i = 0; i < bs.length; i++) if (bs[i] !== null) bs[w++] = bs[i];
+      bs.length = w;
+    }
   }
 
   /** Area effect objects join the world list at the end of the tick; first update next tick. */
@@ -2625,114 +2869,251 @@ export class Battle {
   // ---------------------------------------------------------------- projectiles
 
   /**
-   * Projectiles fly Speed units per tick toward the target (homing follows it); they do not
-   * move on their spawn tick; on reaching the target point they deal damage that same tick
-   * (applied in the flush) [OBS: King shot, arrows].
+   * Projectile updates (vt+0x48 0xf90708). A projectile joins the world list at the end of the tick
+   * it was created in, so its first update is on the next tick.
    */
   private updateProjectiles(): void {
     const ps = this.projectiles;
     let w = 0;
     for (let i = 0; i < ps.length; i++) {
       const p = ps[i];
-      if (p.born !== this.tick) {
-        if (p.delay > 0) p.delay = Math.max(p.delay, 50) - 50; // start delay (0xf90708)
-        else this.moveProjectile(p);
-      }
+      if (p.born !== this.tick && p.alive) this.moveProjectile(p);
       if (p.alive) ps[w++] = p;
     }
     ps.length = w;
   }
 
-  private movePierce(p: Projectile): void {
+  /**
+   * Projectile_update 0xf90708 [STAT], the paths supported cards use (no drag/hook, circle scatter,
+   * deflection or speed override):
+   * - HomingTime: while +0x1bc > 0 the aim is set again from the start through target2 (0xf8fb34);
+   * - start delays (+0x1b0, then +0x1b4) count down 50 per update;
+   * - Homing aims at the target (0xf91378); remaining = isqrt(dist2(aim, pos));
+   * - out-and-back (PingpongVisualTime): t += step; crossing half the time clears the hit list and
+   *   skips the update; otherwise the collision check runs at the current position (piercing) and the
+   *   projectile moves to start + sin(180·t/PVT)·(aim − start) (sin1024, rounded toward zero);
+   *   once t reached PVT it arrives back at its start;
+   * - otherwise, while Speed < remaining, it moves Speed toward the aim (truncating), its height on
+   *   the arc 0xf927ec, and a piercing one checks collisions at the new position (0xf8f2d0);
+   * - arrival: pending damage released, snapped to the aim at max(ConstantHeight, 0) (an
+   *   out-and-back one to its start at height 0, unlinking the shooter's attack 0xfc7914), then
+   *   Projectile_applyHit 0xf9188c.
+   */
+  private moveProjectile(p: Projectile): void {
     const def = p.def;
-    let step = def.speed;
-    if (p.returning && p.source && p.source.state !== ST_DEAD) {
-      // fly back toward the thrower
-      const dx = p.source.x - p.x;
-      const dy = p.source.y - p.y;
-      const d = isqrt(dx * dx + dy * dy);
-      if (d <= step) { p.x = p.source.x; p.y = p.source.y; p.alive = false; return; }
-      p.x += idiv(dx * step, d);
-      p.y += idiv(dy * step, d);
-    } else {
-      if (step > p.rangeLeft) step = p.rangeLeft;
-      p.x += idiv(p.dirX * step, 1000);
-      p.y += idiv(p.dirY * step, 1000);
-      p.rangeLeft -= step;
-    }
-    // hit every eligible enemy the hitbox touches, once per pass
-    const rx = def.pierceRadius;
-    const ry = def.pierceRadiusY;
-    const units = this.units;
-    for (let i = 0; i < units.length; i++) {
-      const t = units[i];
-      if (t.team === p.team || t.state === ST_DEAD || t.maxHp <= 0 || t.hidden || t.tunneling) continue;
-      if (t.isAir ? !def.aoeToAir : !def.aoeToGround) continue;
-      if (p.hitIds.includes(t.id)) continue;
-      const dx = t.x - p.x;
-      const dy = t.y - p.y;
-      let inside: boolean;
-      if (ry > 0) inside = Math.abs(dx) <= rx + t.radius && Math.abs(dy) <= ry + t.radius;
-      else { const r = rx + t.radius; inside = dx * dx + dy * dy <= r * r; }
-      if (!inside) continue;
-      p.hitIds.push(t.id);
-      this.queueDamage(t, p.damage, p.towerDamage, p.crownPct);
-      if (def.targetBuff) this.applyBuff(t, def.targetBuff, def.buffTime, p.id);
-      if (def.pushback > 0) {
-        // directional pushback 0xfcfe18: origin 100 units behind the target along the flight direction
-        const l = isqrt(p.dirX * p.dirX + p.dirY * p.dirY);
-        const bx = l ? idiv(p.dirX * 100, l) : p.dirX;
-        const by = l ? idiv(p.dirY * 100, l) : p.dirY;
-        this.applyPushback(t, t.x - bx, t.y - by, def.pushback, def.pushbackAll);
+    if (p.homingT > 0) {
+      const t2 = p.target2;
+      if (t2 === null) p.homingT = 0;
+      else {
+        this.setAim(p, p.startX, p.startY, t2.x, t2.y);
+        p.homingT -= 50;
       }
     }
-    if (!p.returning && p.rangeLeft <= 0) {
-      if (def.pingpong && p.source) { p.returning = true; p.hitIds.length = 0; return; }
-      p.alive = false;
-      if (def.spawnUnit) this.spawnFromProjectile(p, null);
+    if (p.delay > 0) { p.delay = (p.delay > 50 ? p.delay : 50) - 50; return; }
+    const t = p.target;
+    if (t !== null && def.homing) { p.tx = t.x; p.ty = t.y; p.aimZ = t.z; }
+    let dx = p.tx - p.x;
+    let dy = p.ty - p.y;
+    const rem = isqrt(dx * dx + dy * dy);
+    const sp = def.speed;
+    const pvt = def.pingpongTime;
+    if (pvt > 0) {
+      if (p.pingT < pvt) {
+        const t0 = p.pingT;
+        p.pingT = t0 + p.pingStep;
+        const half = pvt >> 1;
+        if (half <= p.pingT && t0 < half) { p.hitIds.length = 0; return; }
+        const s = sin1024(idiv(p.pingT * 180, pvt));
+        const nx = p.startX + idiv(s * (p.tx - p.startX), 1024);
+        const ny = p.startY + idiv(s * (p.ty - p.startY), 1024);
+        dx = p.x - p.startX;
+        dy = p.y - p.startY;
+        p.travel = isqrt(dx * dx + dy * dy);
+        if (def.pierce) this.projCollide(p, p.x, p.y);
+        p.x = nx;
+        p.y = ny;
+        return;
+      }
+    } else if (sp < rem) {
+      const nx = p.x + idiv(dx * sp, rem);
+      const ny = p.y + idiv(dy * sp, rem);
+      p.z = this.arcZ(p, nx, ny);
+      p.x = nx;
+      p.y = ny;
+      if (def.pierce) this.projCollide(p, nx, ny);
+      return;
     }
-  }
-
-  /** Characters spawned by a projectile (Goblin Barrel on impact, Barbarian Barrel at the end). */
-  private spawnFromProjectile(p: Projectile, offsets: [number, number][] | null): void {
-    const def = p.def;
-    const u = def.spawnUnit!;
-    const ticks = Math.round((def.spawnDeployTime >= 0 ? def.spawnDeployTime : u.deployTime) / TICK_MS);
-    const s = p.team === 0 ? 1 : -1;
-    for (let i = 0; i < def.spawnCount; i++) {
-      const [ox, oy] = offsets?.[i] ?? [0, 0];
-      const x = clamp(p.x + s * ox, 0, this.boundW - 1);
-      const y = clamp(p.y + s * oy, 0, this.boundH - 1);
-      this.createUnit(p.team, p.spell || u.name, u, x, y, ticks);
+    if (def.checkCollisions) { p.reached = true; p.alive = false; return; } // stops without a hit (0xf91790 effect only)
+    this.releasePending(p);
+    p.reached = true;
+    p.alive = false;
+    if (p.pingT < 1) {
+      p.x = p.tx;
+      p.y = p.ty;
+      p.z = def.constantHeight > 0 ? def.constantHeight : 0;
+    } else {
+      p.x = p.startX;
+      p.y = p.startY;
+      p.z = 0;
+      const sh = p.shooter;
+      if (sh !== null && sh.state !== ST_DEAD) sh.axe = null; // 0xfc7914(attack, 0)
     }
+    this.applyHit(p);
   }
 
   /**
-   * Projectile_update 0xf90708, ordinary flight [STAT]: a Homing projectile aims at its target's
-   * position (0xf91378; a dead target keeps its last position, the reference is dropped at the end
-   * of the tick); it moves Speed toward the aim point, truncating, while Speed < the remaining
-   * distance; otherwise it releases its pending damage, snaps to the aim point and applies its hit.
-   * Deflection (0xf913f4) needs an area effect with DeflectProjectilesEnabled (Monk's ability),
-   * which no supported card creates.
+   * Collision step 0xf8f2d0 [STAT] of a piercing projectile at (x, y): the spatial-grid query
+   * 0xf9b008 with ProjectileRadius (cells of that radius on both axes) and ProjectileRadiusY: a
+   * circle (buildings by their square, 0xf95084) without RadiusY, else a box of half-sizes
+   * (R, RY) (0xf95488; buildings 0xf9564c), in grid order; each candidate is tried by 0xf8ff74 until
+   * one asks to stop. (Area effects that deflect projectiles: no supported card has one.)
    */
-  private moveProjectile(p: Projectile): void {
-    if (p.pierce) { this.movePierce(p); return; }
-    const t = p.target;
-    if (t !== null && p.def.homing) { p.tx = t.x; p.ty = t.y; }
-    const dx = p.tx - p.x;
-    const dy = p.ty - p.y;
-    const d = isqrt(dx * dx + dy * dy);
-    const sp = p.def.speed;
-    if (sp < d) {
-      p.x += idiv(dx * sp, d);
-      p.y += idiv(dy * sp, d);
-      return;
+  private projCollide(p: Projectile, x: number, y: number): void {
+    const def = p.def;
+    if (def.pierceRadius < 1) return;
+    const list = this.gridQueryBox(x, y, def.pierceRadius, def.pierceRadiusY);
+    for (let i = 0; i < list.length; i++) if (this.projHit(p, list[i])) break;
+    list.length = 0;
+  }
+
+  /**
+   * Per-candidate hit 0xf8ff74 [STAT]: skipped when OnlyEnemies and on the projectile's team, already
+   * on its hit list, on a layer it does not affect (air without AoeToAir, ground without
+   * AoeToGround, a jumping unit (state 5) without AoeToAir), or without hitpoints; otherwise its id
+   * joins the hit list and the damage (crown-tower value for crown towers) is queued with the
+   * projectile's key; a unit with movement is knocked back from the projectile's position (or
+   * along its flight with DoDirectionalPushback, 0xfcfe18); TargetBuff lands at once (0xf8f890).
+   * With CheckCollisions the flight ends at the first target alive before the hit. Hidden and
+   * deploying actors are not exempt (0xf82e68 is called without its state checks).
+   */
+  private projHit(p: Projectile, a: Unit): boolean {
+    const def = p.def;
+    if (def.onlyEnemies && a.team === p.team) return false;
+    if (p.hitIds.includes(a.id)) return false;
+    if (a.isAir ? !def.aoeToAir : !def.aoeToGround) return false;
+    if (a.jumping && !def.aoeToAir) return false;
+    if (a.maxHp <= 0 || a.state === ST_DEAD) return false;
+    if (a.tunneling) return false; // the engine's Miner tunnel (A: native state 6 is not modelled)
+    p.hitIds.push(a.id);
+    const hp = a.hp;
+    this.queueDamage(a, p.damage, p.towerDamage, p.crownPct, p.key, null, 0, p.id);
+    if (this.mobile(a) && def.pushback >= 1) {
+      if (def.directionalPushback) this.directionalPushback(a, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
+      else this.applyPushback(a, p.x, p.y, def.pushback, def.pushbackAll);
     }
-    this.releasePending(p);
-    p.x = p.tx;
-    p.y = p.ty;
-    p.alive = false;
-    this.applyHit(p);
+    if (def.targetBuff !== null && def.buffTime > 0) this.applyBuff(a, def.targetBuff, def.buffTime, p.id);
+    if (hp > 0 && def.checkCollisions) { p.reached = true; p.alive = false; return true; }
+    return false;
+  }
+
+  /**
+   * Grid_queryCircleXY 0xf9b008 with a Y radius [STAT]: cells (x ± R) × (y ± R) in scan order;
+   * without RY the strict circle test (buildings by their square, 0xf95084); with RY a unit must
+   * touch the box [x − R, x + R] × [y − RY, y + RY] (closest point within its radius, strictly,
+   * 0xf95488) and a building's square must overlap it (0xf9564c). Returns a shared scratch array.
+   */
+  private gridQueryBox(qx: number, qy: number, R: number, RY: number): Unit[] {
+    const out = this.scratch;
+    out.length = 0;
+    const keys = this.scratchKeys;
+    keys.length = 0;
+    const gw = this.grid.w;
+    const gh = this.grid.h;
+    let qx0 = (qx - R) >> 10;
+    let qy0 = (qy - R) >> 10;
+    let qx1 = (qx + R) >> 10;
+    let qy1 = (qy + R) >> 10;
+    if (qx0 < 0) qx0 = 0;
+    if (qy0 < 0) qy0 = 0;
+    if (qx1 >= gw) qx1 = gw - 1;
+    if (qy1 >= gh) qy1 = gh - 1;
+    if (qx1 < qx0 || qy1 < qy0) return out;
+    const units = this.units;
+    for (let i = 0; i < units.length; i++) {
+      const a = units[i];
+      if (a.radius <= 0 || !a.inGrid) continue;
+      const r = a.radius;
+      if (RY === 0) {
+        if (!this.overlaps(a, qx, qy, R)) continue;
+      } else if (a.isBuilding) {
+        // 0xf9564c
+        if (a.x + r < qx - R || !(qy - RY <= a.y + r) || !(a.x - r < qx + R) || !(a.y - r < qy + RY)) continue;
+      } else {
+        // 0xf95488 on the box (qx - R, qy - RY, 2R, 2RY)
+        const bx = qx - R;
+        const by = qy - RY;
+        let cx = a.x;
+        if (bx + 2 * R <= a.x) cx = bx + 2 * R;
+        if (a.x <= bx) cx = bx;
+        const ex = cx - a.x;
+        if (ex > r || ex < -r) continue;
+        let cy = a.y;
+        if (by + 2 * RY <= a.y) cy = by + 2 * RY;
+        if (a.y <= by) cy = by;
+        const ey = cy - a.y;
+        if (ey > r || ey < -r) continue;
+        if (ex * ex + ey * ey >= r * r) continue;
+      }
+      const gr = r + (this.mobile(a) ? 250 : 0);
+      let ax0 = (a.gx - gr) >> 10;
+      let ay0 = (a.gy - gr) >> 10;
+      const ax1 = (a.gx + gr) >> 10;
+      const ay1 = (a.gy + gr) >> 10;
+      if (ax0 < 0) ax0 = 0;
+      if (ay0 < 0) ay0 = 0;
+      if (ax0 > qx1 || ax1 < qx0 || ay0 > qy1 || ay1 < qy0) continue;
+      const cx = ax0 > qx0 ? ax0 : qx0;
+      const cy = ay0 > qy0 ? ay0 : qy0;
+      out.push(a);
+      keys.push(((cx - qx0) * (qy1 - qy0 + 1) + (cy - qy0)) * 65536 + i);
+    }
+    if (out.length > 1) this.sortByKeys(out, keys);
+    return out;
+  }
+
+  /** Stable reorder of `out` by `keys` (grid scan order, then list index). */
+  private sortByKeys(out: Unit[], keys: number[]): void {
+    const idx = this.scratchIdx;
+    idx.length = 0;
+    for (let i = 0; i < out.length; i++) idx.push(i);
+    idx.sort((p, q) => keys[p] - keys[q]);
+    const copy = this.scratch2;
+    copy.length = 0;
+    for (let i = 0; i < idx.length; i++) copy.push(out[idx[i]]);
+    out.length = 0;
+    for (let i = 0; i < copy.length; i++) out.push(copy[i]);
+    copy.length = 0;
+  }
+
+  /**
+   * Characters spawned where a projectile lands, 0xf9188c [STAT]: SpawnCharacterCount members at
+   * the impact point plus Deploy_formationOffset 0xd42ce0 (index i of n, ring of the character's
+   * CollisionRadius when n > 1, no width, flipped for team 0, the impact point's lane, the
+   * character's SpawnAngleShift), created by 0xd35ab4 (clamped into the arena, lane from its
+   * position with the impact x as hint); SpawnConstPriority gives member i the target priority
+   * (20·i)²; SpawnCharacterDeployTime starts the deploy (0xf85324); a ground character is moved to
+   * dry land (0xd392c8).
+   */
+  private spawnFromProjectile(p: Projectile): void {
+    const def = p.def;
+    const u = def.spawnUnit!;
+    const n = def.spawnCount;
+    const ix = p.tx;
+    const iy = p.ty;
+    const lane = this.laneOf(ix, iy);
+    const r = n !== 1 ? u.collisionRadius : 0;
+    const ticks = Math.round((def.spawnDeployTime > 0 ? def.spawnDeployTime : u.deployTime) / TICK_MS);
+    for (let i = 0; i < n; i++) {
+      const [ox, oy] = formationOffset(i, n, r, 0, p.team === 0, lane, u.spawnAngleShift, 0, this.laneSeqDeploy);
+      const m = this.createUnit(p.team, p.spell || u.name, u, ix + ox, iy + oy, ticks, ix);
+      if (def.spawnConstPriority) m.prio = (20 * i) * (20 * i);
+      if (u.flyingHeight === 0 && !this.fixture) {
+        // after 0xd35ab4 (whose lane stays): z == 0 -> nearest dry position (0xd392c8)
+        const d = this.nearestDry(m.x, m.y, -1);
+        m.x = d & 0xffff;
+        m.y = d >> 16;
+      }
+    }
   }
 
   /**
@@ -2740,7 +3121,10 @@ export class Battle {
    * damage wherever it is (0xf8f618, crown-tower value for towers, the projectile's damage key),
    * TargetBuff landing with it, and Pushback away from the aim point (or along the flight with
    * DoDirectionalPushback, 0xfcfe18). With Radius: World_areaDamage at the aim point with
-   * MaximumTargets and the spell wave's group. Then spawned characters, then the chain hop.
+   * MaximumTargets and the spell wave's group (0xf8f03c); a piercing projectile instead checks
+   * collisions once more where it stopped (not an out-and-back one at its end). Then spawned
+   * characters, the SpawnAreaEffectObject, SpawnProjectile copies (while the spawn chain lasts) and
+   * the chain hop.
    */
   private applyHit(p: Projectile): void {
     const def = p.def;
@@ -2754,13 +3138,60 @@ export class Battle {
           else this.applyPushback(t, p.tx, p.ty, def.pushback, def.pushbackAll);
         }
       }
+    } else if (def.pierce) {
+      if (def.pingpongTime <= 0) this.projCollide(p, p.tx, p.ty);
     } else {
       // 0xf8f03c: PushbackAll is not passed to the splash (p21 = 0)
       this.areaDamage(p.team, p.tx, p.ty, def.radius, p.aoeAir, p.aoeGround, p.damage, p.towerDamage, p.crownPct, p.pushback, false,
         def.targetBuff, def.buffTime, p.id, p.group, def.maxTargets, p.key);
     }
-    if (def.spawnUnit) this.spawnFromProjectile(p, p.spell ? this.defs.card(p.spell, this.levels[p.team]).spawnOffsets : null);
+    if (def.pierce) this.projCollide(p, p.x, p.y);
+    if (def.spawnUnit) this.spawnFromProjectile(p);
+    const sp = def.spawnProjectile;
+    if (sp !== null && p.chainLeft >= 1) this.spawnProjectiles(p, sp);
     if (def.chainRadius > 0 && p.chainHits < def.chainCount) this.chainHop(p);
+  }
+
+  /**
+   * SpawnProjectile copies, 0xf9188c [STAT]: max(SpawnCount, 1) copies k = 0..n−1 of the spawned
+   * projectile, each from where this one stopped at its aim height, aimed at the aim point plus
+   * (aim − start) turned by SpawnRadius·(k − n/2)/n degrees (0x1295174) (SpawnAxisX/Y: MinDistance
+   * along x or y instead), set up with no shooter (so a piercing one is aimed ProjectileRange from
+   * its start); they keep this one's damage key unless ChainIsNewProjectile and continue the chain
+   * with one link less. They join the world at the end of the tick.
+   */
+  private spawnProjectiles(p: Projectile, sp: ProjectileDef): void {
+    const def = p.def;
+    const n = sp.spawnProjCount < 2 ? 1 : sp.spawnProjCount;
+    let k = -(n >> 1);
+    for (let left = n; left > 0; left--, k++) {
+      const c = new Projectile(this.nextProjId++, sp, p.team, p.x, p.y, this.tick);
+      if (def.spawnAxisX) p.axisDir = p.tx < 9000 ? 1 : -1;
+      if (!def.chainIsNew) c.key = p.key;
+      c.sourceId = p.sourceId;
+      c.spell = p.spell;
+      c.fromParent = true;
+      const [vx, vy] = rotate1024(p.tx - p.startX, p.ty - p.startY, idiv(sp.spawnProjRadius * k, n));
+      let ax: number;
+      let ay = p.ty;
+      if (!def.spawnAxisX) {
+        if (!def.spawnAxisY) {
+          ay = vy + p.ty;
+          ax = vx + p.tx;
+        } else {
+          const d = p.team === 0 ? -1 : 1;
+          ax = p.tx;
+          p.axisDir = d;
+          ay = p.ty - d * def.minDistance;
+        }
+      } else {
+        ax = p.tx + p.axisDir * def.minDistance;
+      }
+      this.setupProjectile(c, null, p.x, p.y, p.aimZ, null, ax, ay);
+      c.chainLeft = p.chainLeft - 1;
+      c.axisDir = p.axisDir;
+      this.projectiles.push(c);
+    }
   }
 
   /**
@@ -2788,15 +3219,8 @@ export class Battle {
       if (d < def.chainRadius && d < bestD) { best = a; bestD = d; }
     }
     if (best === null) return;
-    const ax = p.tx;
-    const ay = p.ty;
-    p.tx = ax * 2 - p.startX;
-    p.ty = ay * 2 - p.startY;
-    p.startX = p.x;
-    p.startY = p.y;
-    p.target = best;
-    p.chainHits++;
-    p.ignoreIds.push(best.id);
+    this.setupProjectile(p, null, p.x, p.y, p.aimZ, best, p.tx * 2 - p.startX, p.ty * 2 - p.startY);
+    p.reached = false;
     p.alive = true;
     p.delay = 150;
     this.registerPending(p);
@@ -2963,12 +3387,13 @@ export class Battle {
       h.add(u.hitStarted ? 1 : 0); h.add(u.loaded ? 1 : 0); h.add(u.finishMs);
       h.add(u.lifeTicks); h.add(u.decayed); h.add(u.rampMs); h.add(u.manaT); h.add(u.hideT); h.add(u.tunneling ? 1 : 0);
       h.add(u.pending); h.add(u.pendingDur); h.add(u.waitTicks); h.add(u.dmgKeys.length);
+      h.add(u.prio); h.add(u.axeMs); h.add(u.axeWait); h.add(u.axe ? u.axe.id : -1); h.add(u.pushImmune ? 1 : 0);
       for (const b of u.buffs) { h.add(b.sourceId); h.add(b.ticksLeft); h.add(b.hitTimer); }
     }
     for (const a of this.areaEffects) { h.add(a.id); h.add(a.life); }
     for (const p of this.projectiles) {
       h.add(p.id); h.add(p.x); h.add(p.y); h.add(p.tx); h.add(p.ty); h.add(p.target ? p.target.id : -1);
-      h.add(p.rangeLeft); h.add(p.returning ? 1 : 0); h.add(p.hitIds.length); h.add(p.delay); h.add(p.chainHits);
+      h.add(p.z); h.add(p.pingT); h.add(p.homingT); h.add(p.chainLeft); h.add(p.hitIds.length); h.add(p.delay); h.add(p.chainHits);
     }
     for (const c of this.commands) { h.add(c.team); h.add(c.x); h.add(c.y); h.add(c.submitTick); }
     for (const s of this.rng.state()) h.add(s);

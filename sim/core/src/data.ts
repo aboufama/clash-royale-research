@@ -48,12 +48,13 @@ function str(r: Rec, k: string): string | null {
 }
 
 /**
- * Mass as normalised by the native character loader [STAT 0xdde618]: a missing Mass is derived
- * from the collision radius, then clamped to [1, 20].
+ * Mass as normalised by the native character loader [STAT 0xdde618 @0xdded9c]: a missing Mass is
+ * ((r²/250, unsigned)·r)/62500 from the collision radius (r 500 -> 8, 600 -> 13, 1000 -> 64),
+ * then clamped to [1, 20].
  */
 export function normaliseMass(mass: number, radius: number): number {
   let m = mass;
-  if (m === 0) m = Math.trunc((Math.trunc((radius * radius) / 1000) * radius) / 1000000);
+  if (m === 0) m = Math.trunc((Math.trunc(((radius * radius) >>> 0) / 250) * radius) / 62500);
   if (m > 20) m = 20;
   if (m <= 1) m = 1;
   return m;
@@ -97,19 +98,47 @@ export interface ProjectileDef {
   /** Chain lightning: total targets and hop radius (Electro Dragon, Electro Spirit). */
   chainCount: number;
   chainRadius: number;
-  /** Piercing projectile: travel range, hitbox half-sizes (Bowler, Executioner, Magic Archer, Log). */
-  pierceRange: number;
+  /** ProjectileRange (+0x234): flight length from the shooter, set by setAim 0xf8fb34 (0 = fly to the aim point). */
+  range: number;
+  /**
+   * Piercing flight 0xe5a908 [STAT]: ProjectileRadius > 0 and (not Homing with ProjectileRange >= 1,
+   * or CheckCollisions, or Scatter "Circle"). Such a projectile hits everything its
+   * ProjectileRadius / ProjectileRadiusY box touches along the way (0xf8f2d0) instead of a target.
+   */
+  pierce: boolean;
+  /** ProjectileRadius (+0x168) and ProjectileRadiusY (+0x16c): the collision circle or box of the flight. */
   pierceRadius: number;
   pierceRadiusY: number;
+  /** MinDistance (+0x198): the aim is pushed out to at least this far from the start (0xf8e6fc). */
   minDistance: number;
-  /** Returns to the thrower (Executioner axe). */
-  pingpong: boolean;
-  /** Characters spawned on impact or at the end of the roll (Goblin Barrel, Barbarian Barrel). */
+  /** PingpongVisualTime (+0x1c0): out-and-back flight of this many ms (Executioner's axe). */
+  pingpongTime: number;
+  /** Gravity (+0x188) and ConstantHeight (+0x1bc): flight height (0xf927ec), for the view. */
+  gravity: number;
+  constantHeight: number;
+  /** HomingTime (+0x208) / HomingMinDistance (+0x20c): re-aim at the target for this long (Magic Archer). */
+  homingTime: number;
+  homingMinDistance: number;
+  /** CheckCollisions (+0x1a4): a piercing projectile that stops at its first living hit (Hunter). */
+  checkCollisions: boolean;
+  /** ApplyBuffBeforeDamage (+0x231). */
+  applyBuffBeforeDamage: boolean;
+  /** Characters spawned where the projectile lands (Goblin Barrel, Barbarian Barrel): SpawnCharacter (+0xf8),
+   * SpawnCharacterCount (max(v,1) with a character, +0x104), SpawnCharacterDeployTime (+0x100), SpawnConstPriority (+0x1a3). */
   spawnUnit: UnitDef | null;
   spawnCount: number;
   spawnDeployTime: number;
-  /** Follow-up projectile spawned on impact (Log -> rolling log). */
+  spawnConstPriority: boolean;
+  /** Follow-up projectile spawned on impact (Log -> rolling log) (+0x138), SpawnChain (max(v,1), +0x220). */
   spawnProjectile: ProjectileDef | null;
+  spawnChain: number;
+  /** This projectile's SpawnCount (+0x228, copies spawned by its parent) and SpawnRadius (+0x22c, their angle spread). */
+  spawnProjCount: number;
+  spawnProjRadius: number;
+  /** SpawnAxisX / SpawnAxisY (+0x224/+0x225), ChainIsNewProjectile (+0x1b8). */
+  spawnAxisX: boolean;
+  spawnAxisY: boolean;
+  chainIsNew: boolean;
   /** MaximumTargets of the splash (+0x174; < 1 = all) and DoDirectionalPushback (+0x2d8). */
   maxTargets: number;
   directionalPushback: boolean;
@@ -139,7 +168,9 @@ export interface BuffDef {
   hitSpeedMul: number;
   spawnSpeedMul: number;
   dps: number; // scaled damage per second
-  hitFrequency: number; // ms between damage/heal ticks
+  hitFrequency: number; // ms between damage/heal ticks (< 0: one tick; 0: none)
+  /** CrownTowerDamagePerHit (+0xf4, scaled): a crown tower's damage per tick instead of the percentage. */
+  crownTowerDamagePerHit: number;
   hps: number; // scaled heal per second
   crownTowerDamagePercent: number;
   buildingDamagePercent: number; // 0 = none (350 = x3.5 vs buildings)
@@ -206,6 +237,12 @@ export interface UnitDef {
   projectile: ProjectileDef | null;
   projectileStartRadius: number;
   projectileYOffset: number;
+  /** ProjectileStartZ (+0x324): launch height above the shooter (0xf85d80). */
+  projectileStartZ: number;
+  /** OnStartingAction JumpHack_Check_Jump_Interval: no knockback while jumping (JumpHack_Ignore_Pushback_Buff). */
+  jumpHack: boolean;
+  /** JumpHeight (+0x44c): river-jump arc height recorded by 0xfccd94. */
+  jumpHeight: number;
   areaDamageRadius: number;
   selfAsAoeCenter: boolean;
   ignorePushback: boolean;
@@ -343,7 +380,7 @@ const UNIT_FIELDS_OK = new Set([
   'AllTargetsHit', 'BuffOnDamage', 'BuffOnDamageTime', 'HidesWhenNotAttacking', 'HideTimeMs', 'UpTimeMs', 'SpawnPathfindSpeed',
   'MorphKeepTarget', 'KeepTargetWithPendingDamage', 'NoDeploySizeW', 'NoDeploySizeH', 'TileSizeOverride',
 ]);
-/** Starting actions known to be cosmetic or covered by native rules (no gameplay change needed). */
+/** Starting actions the engine implements (JumpHack: pushback immunity while jumping, see UnitDef.jumpHack). */
 const IGNORABLE_ACTIONS = new Set(['JumpHack_Check_Jump_Interval']);
 const PROJECTILE_FIELDS_OK = new Set([
   'Name', 'Rarity', 'Speed', 'Damage', 'Radius', 'Homing', 'AoeToAir', 'AoeToGround', 'OnlyEnemies', 'Gravity',
@@ -363,7 +400,7 @@ const AEO_FIELDS_OK = new Set([
 const BUFF_FIELDS_OK = new Set([
   'Name', 'Rarity', 'SpeedMultiplier', 'HitSpeedMultiplier', 'SpawnSpeedMultiplier', 'DamagePerSecond', 'HitFrequency',
   'HealPerSecond', 'CrownTowerDamagePercent', 'BuildingDamagePercent', 'DamageReduction', 'EnableStacking',
-  'HitTickFromSource', 'NoEffectToCrownTowers', 'TID',
+  'HitTickFromSource', 'NoEffectToCrownTowers', 'TID', 'CrownTowerDamagePerHit',
 ]);
 
 export class Defs {
@@ -418,7 +455,8 @@ export class Defs {
       hitSpeedMul: num(r, 'HitSpeedMultiplier'),
       spawnSpeedMul: num(r, 'SpawnSpeedMultiplier'),
       dps: scaleStat(this.data, num(r, 'DamagePerSecond'), level, rarity),
-      hitFrequency: num(r, 'HitFrequency', 1000),
+      hitFrequency: num(r, 'HitFrequency'), // loader 0xddb0d8 default 0: no damage/heal ticks
+      crownTowerDamagePerHit: scaleStat(this.data, num(r, 'CrownTowerDamagePerHit'), level, rarity),
       hps: scaleStat(this.data, num(r, 'HealPerSecond'), level, rarity),
       crownTowerDamagePercent: num(r, 'CrownTowerDamagePercent'),
       buildingDamagePercent: num(r, 'BuildingDamagePercent'),
@@ -505,23 +543,47 @@ export class Defs {
       buffTime: num(r, 'BuffTime'),
       chainCount: num(r, 'ChainedHitCount'),
       chainRadius: num(r, 'ChainedHitRadius'),
-      pierceRange: num(r, 'ProjectileRange') > 1 ? num(r, 'ProjectileRange') : 0,
+      range: num(r, 'ProjectileRange'),
+      // 0xe5a908 [STAT]; Scatter "Circle" is the loader's mode 1 (0xe5a538)
+      pierce: num(r, 'ProjectileRadius') > 0
+        && ((!bool(r, 'Homing') && num(r, 'ProjectileRange') >= 1) || bool(r, 'CheckCollisions') || r.Scatter === 'Circle'),
       pierceRadius: num(r, 'ProjectileRadius'),
       pierceRadiusY: num(r, 'ProjectileRadiusY'),
       minDistance: num(r, 'MinDistance'),
-      pingpong: r.PingpongVisualTime !== undefined,
+      pingpongTime: num(r, 'PingpongVisualTime'),
+      gravity: num(r, 'Gravity'),
+      constantHeight: num(r, 'ConstantHeight'),
+      homingTime: num(r, 'HomingTime'),
+      homingMinDistance: num(r, 'HomingMinDistance'),
+      checkCollisions: bool(r, 'CheckCollisions'),
+      applyBuffBeforeDamage: bool(r, 'ApplyBuffBeforeDamage'),
       spawnUnit: null,
-      spawnCount: num(r, 'SpawnCharacterCount', 1),
+      spawnCount: 0,
       spawnDeployTime: num(r, 'SpawnCharacterDeployTime', -1),
+      spawnConstPriority: bool(r, 'SpawnConstPriority'),
       spawnProjectile: null,
+      spawnChain: 0,
+      spawnProjCount: num(r, 'SpawnCount'),
+      spawnProjRadius: num(r, 'SpawnRadius'),
+      spawnAxisX: bool(r, 'SpawnAxisX'),
+      spawnAxisY: bool(r, 'SpawnAxisY'),
+      chainIsNew: bool(r, 'ChainIsNewProjectile'),
       maxTargets: num(r, 'MaximumTargets'),
       directionalPushback: bool(r, 'DoDirectionalPushback'),
     };
     this.projCache.set(key, def);
+    // loader 0xe5a538 [STAT]: SpawnCharacterCount is max(v, 1) with a SpawnCharacter, else 0;
+    // SpawnChain is max(v, 1) with a SpawnProjectile
     const sc = str(r, 'SpawnCharacter');
-    if (sc) def.spawnUnit = this.unit(sc, level);
+    if (sc) {
+      def.spawnUnit = this.unit(sc, level);
+      def.spawnCount = Math.max(num(r, 'SpawnCharacterCount'), 1);
+    }
     const sp = str(r, 'SpawnProjectile');
-    if (sp) def.spawnProjectile = this.projectile(sp, level);
+    if (sp) {
+      def.spawnProjectile = this.projectile(sp, level);
+      def.spawnChain = Math.max(num(r, 'SpawnChain'), 1);
+    }
     return def;
   }
 
@@ -604,6 +666,9 @@ export class Defs {
       projectile,
       projectileStartRadius: num(r, 'ProjectileStartRadius'),
       projectileYOffset: num(r, 'ProjectileYOffset'),
+      projectileStartZ: num(r, 'ProjectileStartZ'),
+      jumpHack: r.OnStartingAction === 'JumpHack_Check_Jump_Interval',
+      jumpHeight: num(r, 'JumpHeight'),
       areaDamageRadius: num(r, 'AreaDamageRadius'),
       selfAsAoeCenter: bool(r, 'SelfAsAoeCenter'),
       ignorePushback: bool(r, 'IgnorePushback'),
@@ -679,15 +744,29 @@ export class Defs {
       buffTime: 0,
       chainCount: 0,
       chainRadius: 0,
-      pierceRange: 0,
+      range: 0,
+      pierce: false,
       pierceRadius: 0,
       pierceRadiusY: 0,
       minDistance: 0,
-      pingpong: false,
+      pingpongTime: 0,
+      gravity: num(p, 'Gravity'),
+      constantHeight: num(p, 'ConstantHeight'),
+      homingTime: 0,
+      homingMinDistance: 0,
+      checkCollisions: false,
+      applyBuffBeforeDamage: false,
       spawnUnit: null,
       spawnCount: 0,
       spawnDeployTime: -1,
+      spawnConstPriority: false,
       spawnProjectile: null,
+      spawnChain: 0,
+      spawnProjCount: 0,
+      spawnProjRadius: 0,
+      spawnAxisX: false,
+      spawnAxisY: false,
+      chainIsNew: false,
       maxTargets: 0,
       directionalPushback: false,
     };
@@ -709,8 +788,8 @@ export class Defs {
       sightClipSide: 0,
       speed: 0,
       collisionRadius: num(r, 'CollisionRadius'),
-      // Pushes like mass 20 in the native King-vs-Knight trace (the radius rule would give 2) (A, fitted)
-      mass: 20,
+      // derived from CollisionRadius like any character data (0xdde618): 1400 / 1000 -> 20
+      mass: normaliseMass(num(r, 'Mass'), num(r, 'CollisionRadius')),
       deployTime: 0,
       deployDelay: 0,
       attacksGround: bool(r, 'AttacksGround'),
@@ -721,6 +800,9 @@ export class Defs {
       projectile,
       projectileStartRadius: num(r, 'ProjectileStartRadius'),
       projectileYOffset: num(r, 'ProjectileYOffset'),
+      projectileStartZ: num(r, 'ProjectileStartZ'),
+      jumpHack: false,
+      jumpHeight: 0,
       areaDamageRadius: 0,
       selfAsAoeCenter: false,
       ignorePushback: true,

@@ -22,7 +22,7 @@ export class BuffInst {
   def: BuffDef;
   sourceId: number;
   ticksLeft: number;
-  /** ms until the next damage/heal tick. */
+  /** Damage/heal tick counter (buff instance +0x10, 0xf86668): updates since the last tick. */
   hitTimer: number;
   /** Tick the buff was applied (viewer colour filters). */
   startTick: number;
@@ -160,6 +160,37 @@ export class Unit {
   /** Avoidance sidestep (m+0x1f4): +-200, decays 10 per tick. */
   sidestep: number;
   gridStamp: number;
+  /**
+   * Target priority bonus (actor +0x1a0, vt1d8): subtracted from the squared distance when others
+   * pick a target (0xfc4c38). (20·i)² for the i-th character a SpawnConstPriority projectile spawns.
+   */
+  prio: number;
+  /** Attack component disabled while frozen (0xf7fee4: component mask bit 0 cleared). */
+  atkOff: boolean;
+  /**
+   * Height (native actor z, +0x74 + +0x8c): FlyingHeight for flyers, else 0. The river jump does not
+   * change it (the heights 0xfccd94 records go to the JumpHack check, see `jumpZ`).
+   */
+  z: number;
+  /**
+   * Visual jump height during a river jump (state 5), as 0xfccd94 computes it each tick: with
+   * n = total/JumpSpeed and k = remaining/JumpSpeed, u = clamp(2·min(k, n − k), 0, 32),
+   * (u − u²/64)·JumpHeight/16 (0 when that is below 1). Read-only for the view; 0 otherwise.
+   */
+  jumpZ: number;
+  /**
+   * JumpHack_Ignore_Pushback_Buff (IgnorePushBack, 50 ms): the JumpHack_Check_Jump_Interval action
+   * (every 50 ms, in the scripted-action phase after the buff components) gives it to a unit
+   * that is jumping, so knockback without PushbackAll is refused (0xfcfac4 / 0xfc2c4c).
+   */
+  pushImmune: boolean;
+  /**
+   * Out-and-back projectile in flight (attack +0x58, 0xfc7914) and the PingpongVisualTime wait
+   * (attack +0x60 / +0x64): the attack component does nothing until both are over (0xfc7e20).
+   */
+  axe: Projectile | null;
+  axeMs: number;
+  axeWait: number;
 
   constructor(id: number, def: UnitDef, card: string, team: number, x: number, y: number, tick: number) {
     this.id = id;
@@ -245,6 +276,14 @@ export class Unit {
     this.attackedTarget = false;
     this.sidestep = 0;
     this.gridStamp = 0;
+    this.prio = 0;
+    this.atkOff = false;
+    this.z = def.flyingHeight;
+    this.jumpZ = 0;
+    this.pushImmune = false;
+    this.axe = null;
+    this.axeMs = 0;
+    this.axeWait = 0;
     // Native attack timer starts at 0; the first swing starts at LoadTime - load (load 0 for a fresh
     // unit) so the first hit lands HitSpeed - LoadTime later [STAT 0xfc90b0].
     this.atkTimer = 0;
@@ -289,14 +328,40 @@ export class Projectile {
   spell: string;
   born: number;
   alive: boolean;
-  /** Piercing flight: direction x1000, distance left, units already hit, return trip. */
-  pierce: boolean;
-  dirX: number;
-  dirY: number;
-  rangeLeft: number;
+  /**
+   * Height (native actor z, +0x8c) as Projectile_update 0xf90708 sets it: the arc 0xf927ec between
+   * startZ and aimZ with the data's Gravity while flying, ConstantHeight (at least 0) on arrival,
+   * 0 back at the start for an out-and-back projectile. Read-only for the view.
+   */
+  z: number;
+  /** Start height (+0x134) and aim height (+0x128). */
+  startZ: number;
+  aimZ: number;
+  /** Ids of the actors already hit (+0x60): a piercing projectile hits each once (0xf8ff74). */
   hitIds: number[];
-  returning: boolean;
-  source: Unit | null;
+  /** Who fired it (p->shooter / source, +0xf0); null for spells and spawned projectiles. */
+  shooter: Unit | null;
+  /**
+   * Out-and-back flight (PingpongVisualTime, Executioner's axe): elapsed ms (+0x138) and its step
+   * per update (+0x140, the shooter's buff time scale of 50 ms when thrown). The position is
+   * start + sin(180·t/PingpongVisualTime)·(aim − start); at the half-way update the hit list is
+   * cleared so the way back hits again.
+   */
+  pingT: number;
+  pingStep: number;
+  /** Distance from the start of an out-and-back projectile before its last move (+0x13c, for the view). */
+  travel: number;
+  /** HomingTime re-aim (+0x1bc ms left) at target2 (+0x110). */
+  homingT: number;
+  target2: Unit | null;
+  /** Spawn-chain depth left (+0x1c8, SpawnChain): a SpawnProjectile is created on impact while > 0. */
+  chainLeft: number;
+  /** SpawnAxisX/Y side (+0x1d8). */
+  axisDir: number;
+  /** Arrived (+0x170, markReached 0xf8eed8). */
+  reached: boolean;
+  /** Spawned by another projectile (+0x1d0 set): such a copy gets a damage key of its own when it has none. */
+  fromParent: boolean;
   /** Pending damage registered on the target (projectile +0x1dc, 0xf8fa94). */
   pendReg: boolean;
   /** Damage key (projectile +0xc0): non-zero only for SpawnProjectile chains (0xf8e6fc). */
@@ -331,15 +396,22 @@ export class Projectile {
     this.spell = '';
     this.born = tick;
     this.alive = true;
-    this.pierce = false;
     this.delay = 0;
     this.group = null;
-    this.dirX = 0;
-    this.dirY = 1000;
-    this.rangeLeft = 0;
+    this.z = 0;
+    this.startZ = 0;
+    this.aimZ = 0;
     this.hitIds = [];
-    this.returning = false;
-    this.source = null;
+    this.shooter = null;
+    this.pingT = 0;
+    this.pingStep = 0;
+    this.travel = 0;
+    this.homingT = 0;
+    this.target2 = null;
+    this.chainLeft = 0;
+    this.axisDir = 0;
+    this.reached = false;
+    this.fromParent = false;
     this.pendReg = false;
     this.key = 0;
     this.chainHits = 0;
