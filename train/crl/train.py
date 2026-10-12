@@ -41,6 +41,7 @@ def parse(argv=None):
     a("--collectors", type=int, default=1, help="collector processes sharing the workers (crl/dist.py when > 1)")
     a("--learner-device", default="", help="default: cuda:1 when there are 2+ GPUs, else --device")
     a("--collector-devices", default="", help="comma-separated devices the collectors take in turn (default: --device)")
+    a("--learner-values", action="store_true", help="multi-collector: the learner computes V and GAE, collectors run the actor only")
     a("--envs", type=int, default=24, help="battles per worker")
     # env
     a("--decision-ticks", type=int, default=5, help="decision grid in 50 ms ticks")

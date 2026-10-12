@@ -44,6 +44,55 @@ def _drain(q):
             return out  # the sender (and its shared-memory tensors) is gone: shutting down
 
 
+def rollout_for_learner_values(buf: Rollout, t, lr: float):
+    """The complete transitions plus the observations their bootstraps need (a successor may still be
+    pending), for the learner to evaluate V and run GAE."""
+    n = buf.n
+    comp = np.nonzero(buf.complete[:n])[0]
+    nxt = buf.next[comp]
+    boot = (nxt >= 0) & ~buf.done[comp]
+    need = np.unique(np.concatenate([comp, nxt[boot]]))
+    pos = np.full(n, -1, np.int64)
+    pos[need] = np.arange(len(need))
+    tpos = np.full(n, -1, np.int64)
+    tpos[comp] = np.arange(len(comp))
+    safe = np.maximum(nxt, 0)
+    data = {"obs_u": t(buf.obs[need]), "self_u": t(pos[comp]), "next_u": t(np.where(boot, pos[safe], -1)),
+            "next_t": t(np.where(boot, tpos[safe], -1)), "reward": t(buf.reward[comp]), "dt": t(buf.dt[comp]),
+            "slot_mask": t(buf.slot_mask[comp]), "tile_mask": t(buf.tile_mask[comp]), "slot": t(buf.slot[comp]),
+            "tile": t(buf.tile[comp]), "logp": t(buf.logp[comp]), "lr": lr}
+    return data, {"transitions": len(comp), "play_rate": float((buf.slot[comp] > 0).mean())}
+
+
+@torch.no_grad()
+def values_and_gae(critic, data: dict, gamma: float, lam: float, device: torch.device) -> tuple[dict, float]:
+    """Learner side of --learner-values: V over the rollout's observations, then GAE along each stream
+    (A_i = d_i + gamma^dt_i * lam * A_next while the successor is in this rollout)."""
+    autocast = make_autocast(device)
+    obs_u = data["obs_u"]
+    v_u = np.empty(len(obs_u), np.float32)
+    for a in range(0, len(obs_u), 8192):
+        with autocast():
+            v_u[a:a + 8192] = critic(obs_u[a:a + 8192].to(device).float()).float().cpu().numpy()
+    self_u, next_u, next_t = data["self_u"].numpy(), data["next_u"].numpy(), data["next_t"].numpy()
+    value = v_u[self_u]
+    nv = np.where(next_u >= 0, v_u[np.maximum(next_u, 0)], 0.0).astype(np.float32)
+    disc = np.power(gamma, data["dt"].numpy()).astype(np.float32)
+    delta = data["reward"].numpy() + disc * nv - value
+    adv = np.zeros(len(value), np.float32)
+    for i in range(len(value) - 1, -1, -1):
+        j = next_t[i]
+        adv[i] = delta[i] + (disc[i] * lam * adv[j] if j >= 0 else 0.0)
+    ret = adv + value
+    out = {k: v for k, v in data.items() if k not in ("obs_u", "self_u", "next_u", "next_t", "reward", "dt")}
+    out["obs"] = obs_u[torch.from_numpy(self_u)]
+    out["value"] = torch.from_numpy(value)
+    out["adv"] = torch.from_numpy(adv)
+    out["ret"] = torch.from_numpy(ret)
+    var = float(np.var(ret))
+    return out, (1.0 - float(np.var(ret - value)) / var if var > 0 else 0.0)
+
+
 # ------------------------------------------------------------------------------------------ learner
 
 def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, coord_q, weight_qs) -> None:
@@ -86,6 +135,8 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, coord_q
         if kind != "rollout":
             continue
         _, cid, data, info = msg
+        if "obs_u" in data:
+            data, info["explained_var"] = values_and_gae(critic, data, args.gamma, args.lam, device)
         consumed[cid] += 1
         pending.append(data)
         infos.append(info)
@@ -133,7 +184,10 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
     actor.load_state_dict(a_state)
     critic.load_state_dict(c_state)
     use_graphs = device.type == "cuda" and not args.no_cuda_graphs
-    infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device, spec=spec) if use_graphs else None
+    # --learner-values: the learner computes V(s) when a rollout arrives (on its own GPU), so collectors run
+    # the actor only (the critic was about a third of the collectors' inference)
+    lv = args.learner_values
+    infer = GraphedInfer(actor, None if lv else critic, pool.floats, pool.mask_bytes, device, spec=spec) if use_graphs else None
     autocast = make_autocast(device)
     opponents: dict[int, tuple] = {}  # sid -> (model, graphs or None)
     active: list[int] = []
@@ -217,11 +271,16 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
             if learn.any():
                 li_rows = np.nonzero(learn)[0]
                 lt = torch.from_numpy(li_rows).to(device)
-                packed = infer(obs_t[lt], masks_t[lt], frame.obs, li_rows) if infer is not None else \
-                    torch.cat([actor.act_packed(obs_t[lt], masks_t[lt]), critic(obs_t[lt]).float().unsqueeze(1)], 1)
+                if infer is not None:
+                    packed = infer(obs_t[lt], masks_t[lt], frame.obs, li_rows)
+                elif lv:
+                    packed = actor.act_packed(obs_t[lt], masks_t[lt])
+                else:
+                    packed = torch.cat([actor.act_packed(obs_t[lt], masks_t[lt]), critic(obs_t[lt]).float().unsqueeze(1)], 1)
                 packed = packed.cpu().numpy()
                 s_np, t_np = packed[:, 0].astype(np.int64), packed[:, 1].astype(np.int64)
-                lp_np, v_np = packed[:, 2].astype(np.float32), packed[:, 3].astype(np.float32)
+                lp_np = packed[:, 2].astype(np.float32)
+                v_np = np.zeros(len(packed), np.float32) if lv else packed[:, 3].astype(np.float32)
                 t2 = time.time()
                 timing["p_infer_s"] += t2 - t1
                 slot[li_rows], tile[li_rows] = s_np, t_np
@@ -295,14 +354,17 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
             # back-pressure: never more than MAX_OUTSTANDING rollouts ahead of the learner
             while sent - consumed[cid] >= MAX_OUTSTANDING:
                 apply_weights([weight_q.get()])
-            idx, adv, ret = buf.advantages(args.gamma, args.lam)
             t = lambda a: torch.from_numpy(np.ascontiguousarray(a))  # noqa: E731
-            data = {"obs": t(buf.obs[idx]), "slot_mask": t(buf.slot_mask[idx]), "tile_mask": t(buf.tile_mask[idx]),
-                    "slot": t(buf.slot[idx]), "tile": t(buf.tile[idx]), "logp": t(buf.logp[idx]), "value": t(buf.value[idx]),
-                    "adv": t(adv.astype(np.float32)), "ret": t(ret.astype(np.float32)), "lr": args.lr}
-            var = float(np.var(ret))
-            info = {"transitions": len(idx), "explained_var": 1.0 - float(np.var(ret - buf.value[idx])) / var if var > 0 else 0.0,
-                    "play_rate": float((buf.slot[idx] > 0).mean())}
+            if lv:
+                data, info = rollout_for_learner_values(buf, t, args.lr)
+            else:
+                idx, adv, ret = buf.advantages(args.gamma, args.lam)
+                data = {"obs": t(buf.obs[idx]), "slot_mask": t(buf.slot_mask[idx]), "tile_mask": t(buf.tile_mask[idx]),
+                        "slot": t(buf.slot[idx]), "tile": t(buf.tile[idx]), "logp": t(buf.logp[idx]), "value": t(buf.value[idx]),
+                        "adv": t(adv.astype(np.float32)), "ret": t(ret.astype(np.float32)), "lr": args.lr}
+                var = float(np.var(ret))
+                info = {"transitions": len(idx), "explained_var": 1.0 - float(np.var(ret - buf.value[idx])) / var if var > 0 else 0.0,
+                        "play_rate": float((buf.slot[idx] > 0).mean())}
             buf.compact(stream_last)
             roll_q.put(("rollout", cid, data, info))
             sent += 1
