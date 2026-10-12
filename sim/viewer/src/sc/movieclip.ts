@@ -167,6 +167,19 @@ export class McNode {
     this.state = 2;
   }
 
+  /**
+   * 0x12437b8: play the whole clip once from frame 0 (range 0..n−1, not looped; a one-frame clip stops),
+   * and the same for every child clip instance.
+   */
+  playAll(): void {
+    this.start = 0;
+    this.loop = false;
+    this.end = this.frames - 1;
+    if (this.frames > 0) this.goto(0);
+    this.setState(this.end === 0);
+    for (const k of this.kids) k?.playAll();
+  }
+
   /** 0x12423ac */
   gotoLabel(name: string): void {
     this.gotoAndStop(this.label(name));
@@ -258,7 +271,10 @@ export class McNode {
   /** Render-time advance: this clip, then the visible clips on its display list (0x123f55c, 0x1252f60). */
   advance(dt: number): void {
     this.step(dt);
-    for (const ci of this.displayed()) {
+    // the display list of the current frame (0x123f7b4), walked without allocating
+    const c = this.clip, f = Math.min(Math.max(this.frame, 0), c.frameCount - 1);
+    for (let i = c.frameStart[f], e = c.frameStart[f + 1]; i < e; i++) {
+      const ci = c.elements[i * 3];
       const s = this.slots[ci];
       if (s?.replace) { if (s.replace.visible) s.replace.advance(dt); continue; }
       const k = this.kids[ci];
@@ -313,6 +329,43 @@ export class McNode {
         if (str) drawField(r, lib, id, str, cm, cc, b);
       }
     }
+  }
+}
+
+/**
+ * A view's clip instances (the anim entries of 0x84a310 hold one MovieClip per direction clip, made with
+ * the view and kept for its life; 0x84a7f8 / 0x83d2e0 put the shown one in the sprite). Each frame the
+ * view update stops the shown clip on its frame (vt+0xb8 -> gotoAndStop 0x1242234) and the render
+ * advances it (0x123f55c: a stopped root keeps its frame, the clips on its display list play on their
+ * own playheads; clips not shown keep theirs). One instance serves the sprite and its shadow copy, which
+ * the client advances identically.
+ */
+export class ClipInstances {
+  private readonly m = new Map<string, McNode>();
+
+  /** Whether an instance of `exportName` was made. */
+  has(exportName: string): boolean {
+    return this.m.has(exportName);
+  }
+
+  /** The instance of `exportName`, made on first use (again when its library object changes). */
+  get(lib: ScLibrary, exportName: string): McNode | null {
+    const n = this.m.get(exportName);
+    if (n !== undefined && n.lib === lib) return n;
+    const c = lib.clip(exportName);
+    if (!c) return null;
+    const k = new McNode(lib, c);
+    this.m.set(exportName, k);
+    return k;
+  }
+
+  /** Show `exportName` on `frame` this rendered frame (`dt` s after the last): gotoAndStop, then advance. */
+  show(lib: ScLibrary, exportName: string, frame: number, dt: number): McNode | null {
+    const n = this.get(lib, exportName);
+    if (n === null) return null;
+    n.gotoAndStop(frame);
+    n.advance(dt);
+    return n;
   }
 }
 

@@ -1,12 +1,10 @@
 // Original-art world renderer: draws the live engine state with the build's own SC2 movie clips
 // (baked by tools/art/bake_web.py into sim/viewer/assets/, played by sc/renderer.ts).
 //
-// Engine -> art mapping (visual only, never feeds back into the simulation):
-//   deploying  -> idle pose + the game's deploy filter clip (DeployBaseAnimExportName)
-//   attacking  -> attack clip timed so its `action_frame` lands on the engine's hit tick
-//   moving     -> run clip looping on simulation time
-//   towers     -> King activation clip / turret aimed at the target; Princess idle/attack
-//   events     -> the game's own effects (deploy, attack start, hit, projectile hit, death)
+// Engine -> art mapping (visual only, never feeds back into the simulation): every character view runs
+// the client's view update (sc/anim.ts, 0x840d44: action, direction, frame), single-clip buildings their
+// clip player, the King tower its activation controller; nested clips play on per-view instances
+// (sc/movieclip.ts ClipInstances); engine events drive the game's own effects, filters and hit wobbles.
 import {
   type Battle, KING_ACTIVATING, KING_INACTIVE, type Projectile, ST_DEAD, ST_DEPLOYING, TOWER_KING, TOWER_NONE, TOWER_PRINCESS,
   type Unit,
@@ -18,10 +16,14 @@ import type { Camera } from './camera.ts';
 import type { Frame, WorldRenderer } from './frame.ts';
 import type { ArtHooks } from './main.ts';
 import {
-  actionFrameMs, animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, ClipPlayer, EffectPlayer,
-  type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer,
+  animate, animateBuilding, type AnimFrame, type AnimState, BattleArt, type BuildingAnim, ClipPlayer, EffectPlayer,
+  type Mat, nativeAngle, newAnimState, newBuildingAnim, ScRenderer, viewAngle,
 } from './sc/index.ts';
-import { ghostSprite } from './sc/anim.ts';
+import { ghostSprite, turretPose } from './sc/anim.ts';
+import { ClipInstances, McNode } from './sc/movieclip.ts';
+import type { UnitDrawOptions } from './sc/battle_art.ts';
+import type { ScLibrary } from './sc/library.ts';
+import type { CharacterArt } from './sc/manifest.ts';
 import { arcHeight, isRolling, newProjectileViewState, projectileView } from './sc/projectile_view.ts';
 import { condMask, deployElapsed, healthBarState, newBarChoose, newBarFrame, newBarView, SUMMON_WAIT_ALPHA,
   summonViewDelay } from './sc/unit_view.ts';
@@ -63,6 +65,11 @@ interface ProjView {
   /** p->shooter (+0xf0): an out-and-back projectile back without it plays its PingpongDeathEffect */
   shooter: Unit | null;
   team: Team;
+  /** clip instances of the sprite and shadow exports (nested clips' playheads; the shadow root plays on its
+   * own: 0x8545e0 makes it and nothing sets its frame) */
+  ci: ClipInstances;
+  inst: McNode | null;
+  shadowInst: McNode | null;
 }
 
 /**
@@ -189,9 +196,20 @@ export class ArtWorld implements WorldRenderer {
    * length, so one player) and whether it has started. */
   private kingClips = new Map<number, { clip: ClipPlayer; activated: boolean }>();
   private lastSim = -1;
-  /** Hit filter per unit (direction picked from the hit vector, sim ms it started) and hits seen. */
+  /** Hit filter per unit (direction picked from the hit vector, sim ms it started) and this step's view hit calls. */
   private hits = new Map<number, { dir: 'down' | 'left' | 'up' | 'right'; start: number }>();
   private hitVec = new Map<number, [number, number]>();
+  /**
+   * Clip instances per view (sc/movieclip.ts ClipInstances; units, buildings, crown towers, projectiles,
+   * drag-preview ghosts): nested clips play on their own playheads. instNow: this frame's shown instance
+   * per actor (sprite and shadow share it); kingNow: the King tower's tower and King clips.
+   */
+  private insts = new Map<number, ClipInstances>();
+  private instNow = new Map<number, McNode | null>();
+  private kingNow = new Map<number, { tower: McNode | null; king: McNode | null }>();
+  private ghostInsts = new Map<string, { ci: ClipInstances; anim: BuildingAnim | null; seen: boolean }>();
+  /** turret child of a building / King tower instance (0x8455cc), cached by instance */
+  private turretKids = new WeakMap<McNode, McNode | null>();
   /** Client projectile views by engine projectile id. */
   private projViews = new Map<number, ProjView>();
   private lastFxSim = -1;
@@ -272,27 +290,20 @@ export class ArtWorld implements WorldRenderer {
     this.battleState(b);
     // actors of the last step and this one: one that died this step has left b.units but keeps its state
     for (const u of b.units) this.byId.set(u.id, u);
+    // the lethal damage entry's vector (health +0x18 = its native angle, set by 0xfcb29c when the hit kills;
+    // later entries skip the dead actor): the first 'damage' event of an actor after its death event
+    let died: Set<number> | null = null;
+    for (const e of b.events) {
+      if (e.type === 'death' || e.type === 'tower') (died ??= new Set()).add(e.id);
+      else if (e.type === 'damage' && died?.has(e.id) && !this.stepVec.has(e.id)) this.stepVec.set(e.id, [e.vx ?? 0, e.vy ?? 0]);
+    }
     for (const e of b.events) {
       const team = e.team as Team;
       if (e.type === 'spawn') {
         this.onSpawn(b, e.id, e.name, team, e.x, e.y, e.tick, e.src, e.pid);
-      } else if (e.type === 'hit' || e.type === 'impact') {
-        // hit vector for the damage filter: melee = victim - attacker, projectile = travel direction
-        // into the impact point (or impact -> victim for splash)
-        const src = e.type === 'hit' ? b.units.find((q) => q.id === e.id) : null;
-        const pp = e.type === 'impact' ? f.prevPos.get(e.id) : undefined;
-        for (const v of b.units) {
-          if (v.lastHurtTick !== b.tick || v.team === e.team) continue;
-          let dx = 0, dy = 0;
-          if (src) {
-            if (v.x !== e.x || v.y !== e.y) continue;
-            dx = v.x - src.x; dy = v.y - src.y;
-          } else {
-            dx = v.x - e.x; dy = v.y - e.y;
-            if (!dx && !dy && pp !== undefined) { dx = e.x - Math.floor(pp / 65536); dy = e.y - (pp % 65536); }
-          }
-          if (dx || dy) this.hitVec.set(v.id, [dx, dy]);
-        }
+      } else if (e.type === 'wobble') {
+        // the victim view's vt+0xe8 (0x83e3d8): the damage filter facing this call's vector; the last call wins
+        this.hitVec.set(e.id, [e.vx ?? 0, e.vy ?? 0]);
       }
       if (e.type === 'hit' || e.type === 'shoot') {
         // AttackComp_execute 0xfc619c: TargetedHitEffect (view vt+0x90) and a melee splash's DamageEffect
@@ -304,18 +315,7 @@ export class ArtWorld implements WorldRenderer {
       } else if (e.type === 'shieldLost') {
         this.charFx.onShieldLost(this.byId.get(e.id));
       }
-      if (e.type === 'hit') {
-        const u = b.units.find((q) => q.id === e.id);
-        // single-target melee (0xfc7080): the damage carries (target snapshot − attacker); a melee splash
-        // goes through World_areaDamage 0xf97be8, which passes none
-        if (u && u.def.areaDamageRadius <= 0) {
-          const v = u.target && u.target.lastHurtTick === b.tick ? u.target
-            : [...this.byId.values()].find((q) => q.lastHurtTick === b.tick && q.team !== u.team && q.x === e.x && q.y === e.y);
-          if (v) this.stepVec.set(v.id, [u.tsx - u.x, u.tsy - u.y]);
-        }
-      } else if (e.type === 'shoot') {
-        this.shooterEffects(b, e.id);
-      }
+      if (e.type === 'shoot') this.shooterEffects(b, e.id);
       if (e.type === 'impact') {
         // HitEffect at the aim point, z = the projectile's height on arrival (0 unless ConstantHeight),
         // angle = the start -> hit direction (0xf9188c -> 0xf8f978 -> world listener vt+0x48 0x850258)
@@ -330,13 +330,6 @@ export class ArtWorld implements WorldRenderer {
         if (p?.targettedEffect && !((p.radius as number | undefined) ?? 0) && e.src !== undefined && e.src >= 0) {
           if (pv) this.charFx.onProjectile(e.id, pv.startX, pv.startY, pv.startZ, pv.shooter);
           this.charFx.onChainHit(e.id, p.targettedEffect as string, team, this.byId.get(e.src));
-        }
-        // a single-target hit (0xf9188c -> 0xf8f618) carries (aim − start); a splash (0xf8f03c ->
-        // World_areaDamage) passes none
-        if (pv && !((p?.radius as number | undefined) ?? 0)) {
-          for (const v of this.byId.values()) {
-            if (v.lastHurtTick === b.tick && v.team !== e.team && v.x === e.x && v.y === e.y) this.stepVec.set(v.id, [e.x - pv.startX, e.y - pv.startY]);
-          }
         }
       } else if (e.type === 'death' || e.type === 'tower') {
         this.deathEffect(b, e.id, e.name, e.type === 'tower', team, e.x, e.y);
@@ -429,6 +422,9 @@ export class ArtWorld implements WorldRenderer {
     if (this.stateFor === b) return;
     this.stateFor = b;
     this.views.clear();
+    this.insts.clear();
+    this.instNow.clear();
+    this.kingNow.clear();
     this.byId.clear();
     this.projById.clear();
     this.muzzled.clear();
@@ -536,9 +532,9 @@ export class ArtWorld implements WorldRenderer {
    * Death effect (character death 0xf83990 -> world listener vt+0x60 0x850504; a crown tower's 0xfa3d08
    * ends there too in this mode): the first DeathEffectOverride among the actor's buffs (0xfc2288, buff
    * data +0x1b0) else its DeathEffect (vt+0x158), at the actor's x, y and z (0xf942a8: FlyingHeight for a
-   * flyer), angle = health +0x18 (0xfcc040), the native angle of the lethal damage's direction
-   * (0xfcb29c); none when the damage carried no direction; once (0x850504 plays through 0x82dc54,
-   * setLoop 0). Tower rubble is drawn by drawTowerRuin, so a
+   * flyer), angle = health +0x18 (0xfcc040), the native angle (0x1294e04) of the lethal damage entry's
+   * vector (+0x10: the recorded 'damage' event's vx / vy; 0 for area damage, decay and other deaths);
+   * once (0x850504 plays through 0x82dc54, setLoop 0). Tower rubble is drawn by drawTowerRuin, so a
    * tower's effect skips its permanent particles.
    */
   private deathEffect(b: Battle, id: number, name: string, tower: boolean, team: Team, x: number, y: number): void {
@@ -617,33 +613,31 @@ export class ArtWorld implements WorldRenderer {
       if (u.tower === TOWER_NONE || u.state === ST_DEAD) continue;
       const team = u.team as Team;
       if (u.tower === TOWER_KING) {
-        art.drawTowerShadow(r, 'king', team, sim, this.kingClips.get(u.id)?.clip.frame);
+        const kn = this.kingNow.get(u.id);
+        art.drawTowerShadow(r, 'king', team, sim, this.kingClips.get(u.id)?.clip.frame, [u.dirX, u.dirY], this.sinceAttack(u, b, f),
+          undefined, { tower: kn?.tower ?? undefined, king: kn?.king ?? undefined });
       } else {
-        const aim = u.target ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
-        art.drawTowerShadow(r, u.x < 9000 ? 'princessLeft' : 'princessRight', team, sim, undefined, aim,
-          this.sprites.get(u.id) ?? undefined);
+        art.drawTowerShadow(r, u.x < 9000 ? 'princessLeft' : 'princessRight', team, sim, undefined, undefined, undefined,
+          this.sprites.get(u.id) ?? undefined, { princess: this.instNow.get(u.id) ?? undefined });
       }
     }
     for (const u of b.units) {
       // state 11 (summon delay) hides the view, its shadow container included (0x839b08 +0xad5 -> +0x340)
       if (u.tower !== TOWER_NONE || u.state === ST_DEAD || u.tunneling || u.waitTicks > 0) continue;
-      const ca = m.characters[u.def.name];
-      if (!ca) continue;
-      const st = this.unitState(u, f);
-      art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), st.action, st.angle, st.ms,
-        { sprite: this.sprites.get(u.id) ?? undefined, clipFrame: this.clipFrames.get(u.id) });
+      if (!m.characters[u.def.name]) continue;
+      art.drawUnitShadow(r, u.def.name, u.team as Team, f.ux(u), f.uy(u), {
+        sprite: this.sprites.get(u.id) ?? undefined, inst: this.instNow.get(u.id) ?? undefined,
+        clipFrame: this.clipFrames.get(u.id), face: [u.dirX, u.dirY], sinceAttackS: this.sinceAttack(u, b, f),
+      });
     }
     // projectile shadows go into the same silhouette (0x855304 -> 0x856a40)
     for (const p of b.projectiles) {
       const pv = this.projViews.get(p.id);
-      if (pv?.v) art.drawProjectileShadow(r, pv.name, p.team as Team, pv.x, pv.y, pv.v);
+      if (pv?.v) art.drawProjectileShadow(r, pv.name, p.team as Team, pv.x, pv.y, pv.v, pv.shadowInst ?? undefined);
     }
     // drag preview ghosts are real actor views: their shadows join the silhouette buffer (A)
-    const ghosts = this.ui.ghostUnits().filter((g) => m.characters[g.def.name]);
-    for (const g of ghosts) {
-      const sprite = ghostSprite(art.character(g.def.name), g.team, g.dirX, g.dirY, art.flip) ?? undefined;
-      art.drawUnitShadow(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0, { sprite });
-    }
+    const ghosts = this.ghostViews(sim);
+    for (const g of ghosts) art.drawUnitShadow(r, g.u.def.name, g.u.team, g.u.x, g.u.y, g.o);
     this.fx.draw(r, 'Shadow');
     art.endShadowPass(r);
     // battle layer child 7 (after the shadow composite, before Ground effects): the illegal-area
@@ -660,20 +654,19 @@ export class ArtWorld implements WorldRenderer {
     for (const u of b.units) {
       if (u.tower === TOWER_NONE || u.state === ST_DEAD) continue;
       const team = u.team as Team;
-      const dead = false;
       const py = ypx(u.x, u.y);
       if (u.tower === TOWER_KING) {
         const kf = this.kingClips.get(u.id)?.clip.frame;
-        const aim = u.target && u.kingState !== KING_INACTIVE ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : undefined;
         const face: [number, number] = [u.dirX, u.dirY];
-        const since = u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9;
-        items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, kf, aim, dead, face, since) });
+        const since = this.sinceAttack(u, b, f);
+        const kn = this.kingNow.get(u.id);
+        items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, kf, false, face, since,
+          { tower: kn?.tower ?? undefined, king: kn?.king ?? undefined }) });
       } else {
         const side = u.x < 9000 ? 'princessLeft' : 'princessRight';
-        const atk = this.attackPhase(u, f);
-        const aim = u.target ? Math.atan2(u.target.y - u.y, u.target.x - u.x) : team === 0 ? Math.PI / 2 : -Math.PI / 2;
         const sp = this.sprites.get(u.id) ?? undefined;
-        items.push({ y: py, draw: () => art.drawPrincessTower(r, team, side, sim, atk === null ? 'idle' : 'attack', aim, atk ?? sim, dead, sp) });
+        const inst = this.instNow.get(u.id) ?? undefined;
+        items.push({ y: py, draw: () => art.drawPrincessTower(r, team, side, sp, false, inst) });
       }
     }
     // arena decorations on the object layer
@@ -695,11 +688,7 @@ export class ArtWorld implements WorldRenderer {
         items.push({ y: py, draw: () => r.drawRect(px - rr, py - rr, 2 * rr, 2 * rr, team === 0 ? [0.25, 0.5, 1, 0.8] : [1, 0.3, 0.3, 0.8]) });
         continue;
       }
-      const st = this.unitState(u, f);
-      const flying = u.def.flyingHeight > 0;
-      // sort key: ground-projected y, +48 px for an air actor (0x851b84: vt+0x108 0xf826e8 = FlyingHeight > 0
-      // without the TAG_FORCE_IS_AIR / _GROUND status tags; a river jump's z does not count)
-      const py = ypx(x, y) + (flying ? 48 : 0);
+      const py = this.sortKey(u, x, y);
       // buff filters run on their view's clock (0x82ebdc: t from the buff view's creation)
       const buffs = u.buffs.length ? u.buffs.map((q) => ({ name: q.def.name, ms: this.buffViews.filterTime(q, sim) })) : undefined;
       const hit = this.hits.get(u.id);
@@ -713,10 +702,11 @@ export class ArtWorld implements WorldRenderer {
       const view = this.views.get(u.id);
       const deployMs = view?.filterStart != null ? sim - view.filterStart : undefined;
       const alpha = view?.waiting ? SUMMON_WAIT_ALPHA : undefined;
-      const o: Parameters<BattleArt['drawUnit']>[8] = { z: lift, deployMs, deployFilter: view?.filter, alpha, buffs, damage, sprite: this.sprites.get(u.id) ?? undefined,
-        face: [u.dirX, u.dirY], sinceAttackS: u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9,
+      const o: UnitDrawOptions = { z: lift, deployMs, deployFilter: view?.filter, alpha, buffs, damage,
+        sprite: this.sprites.get(u.id) ?? undefined, inst: this.instNow.get(u.id) ?? undefined,
+        face: [u.dirX, u.dirY], sinceAttackS: this.sinceAttack(u, b, f),
         clipFrame: this.clipFrames.get(u.id), color: this.effectFilters(u) };
-      items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, st.action, st.angle, st.ms, o); } });
+      items.push({ y: py, draw: () => { art.drawUnit(r, u.def.name, team, x, y, o); } });
     }
     // projectiles: Object layer, sorted by the ground-projected y like the actors (setPos3D 0x851b84;
     // the +48 for z > 0 applies to characters only); HideWhenDelayed hides the sprite (not its shadow)
@@ -731,16 +721,14 @@ export class ArtWorld implements WorldRenderer {
       const fps = pa?.fps || 30;
       const clipFrame = pv.clip ? pv.clip.frame : 0;
       const child = Math.floor((pv.ageMs * fps) / 1000);
-      const x = pv.x, y = pv.y;
-      items.push({ y: ypx(x, y), draw: () => art.drawProjectileView(r, pv.name, team, x, y, v, clipFrame, child) });
+      const x = pv.x, y = pv.y, inst = pv.inst ?? undefined;
+      items.push({ y: ypx(x, y), draw: () => art.drawProjectileView(r, pv.name, team, x, y, v, clipFrame, child, inst) });
     }
     for (const it of this.fx.collect('Object')) items.push({ y: it.sortY, draw: () => it.draw(r) });
     // drag preview ghost units, sorted with the actors
     for (const g of ghosts) {
-      const py = ypx(g.x, g.y) + (g.def.flyingHeight > 0 ? 48 : 0);
-      // the client's direction pick for the preview actor's facing (sc/anim.ts ghostSprite)
-      const sprite = ghostSprite(art.character(g.def.name), g.team, g.dirX, g.dirY, art.flip) ?? undefined;
-      items.push({ y: py, draw: () => { art.drawUnit(r, g.def.name, g.team, g.x, g.y, 'idle', g.angle, 0, { alpha: g.alpha, sprite }); } });
+      const py = ypx(g.u.x, g.u.y) + (g.u.def.flyingHeight > 0 ? 48 : 0);
+      items.push({ y: py, draw: () => { art.drawUnit(r, g.u.def.name, g.u.team, g.u.x, g.u.y, g.o); } });
     }
     items.sort((a, c) => a.y - c.y);
     for (const it of items) it.draw();
@@ -748,7 +736,13 @@ export class ArtWorld implements WorldRenderer {
     this.clouds?.draw(r);
     this.fx.draw(r, 'Above');
 
-    // health bars (original HUD art; per-frame logic 0x83c268, sc/unit_view.ts healthBarState)
+    // health bars: battle layer 12 (0x836e58 adds each view's bar holder +0x618 with 0x8569f0(…, 0xc)),
+    // re-sorted every frame by the owner's sort key (0x856f28 -> 0x856a88: selection sort on vt+0x168,
+    // the key setPos3D 0x851b84 gives the holder through 0x8408f0: ground y, +48 for an air character);
+    // equal keys keep the actors' creation order (A: the client breaks ties by the nodes' addresses).
+    // Per-frame logic 0x83c268 (sc/unit_view.ts healthBarState) on the original HUD art.
+    const bars = this.barItems;
+    bars.length = 0;
     for (const u of b.units) {
       if (u.state === ST_DEAD || u.maxHp <= 0) continue;
       const team = u.team as Team;
@@ -757,14 +751,17 @@ export class ArtWorld implements WorldRenderer {
         const kind = king ? 'king' : u.x < 9000 ? 'princessLeft' : 'princessRight';
         const [sx, sy] = art.towerBarPx(kind, team);
         const type = (king ? m.towers.king.healthBar : m.towers.princess.healthBar) ?? (king ? 'Summoner' : 'Tower');
-        art.drawTowerHealthBar(r, type, team, sx, sy, u.hp, u.maxHp, u.def.level, u.hp, this.barFlash(u, sim));
+        const flash = this.barFlash(u, sim);
+        bars.push({ y: ypx(u.x, u.y), draw: () => art.drawTowerHealthBar(r, type, team, sx, sy, u.hp, u.maxHp, u.def.level, u.hp, flash) });
         continue;
       }
       const ca = m.characters[u.def.name];
+      const key = this.sortKey(u, f.ux(u), f.uy(u));
       // a "HealthBar" component (client-action bar): 0x83c268 updates it (0x8405c4) and draws no classic bar
       const nbs = this.newBarSpec(u.def.name);
       if (nbs) {
-        this.drawNewBar(u, nbs, sim, f);
+        const d = this.newBarDraw(u, nbs, sim, f);
+        if (d) bars.push({ y: key, draw: d });
         continue;
       }
       // HideHealthbar: no bar clips (0x836e58)
@@ -782,13 +779,110 @@ export class ArtWorld implements WorldRenderer {
       if (!st.visible) continue;
       // the bar container follows BASE_SPRITE (or GO_SPRITE) with its z (0x8408f0 -> 0x851b84)
       const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
-      art.drawUnitHealthBar(r, type, team === 0, sx, sy, st, u.def.level,
-        (ca?.showHealthNumber as boolean | undefined) ? st.hp : undefined, this.barFlash(u, sim));
+      const hpText = (ca?.showHealthNumber as boolean | undefined) ? st.hp : undefined;
+      const flash = this.barFlash(u, sim);
+      bars.push({ y: key, draw: () => art.drawUnitHealthBar(r, type, team === 0, sx, sy, st, u.def.level, hpText, flash) });
     }
+    // stable: equal keys keep the push order
+    for (let i = 0; i < bars.length; i++) bars[i].i = i;
+    bars.sort((p, q) => p.y - q.y || (p.i ?? 0) - (q.i ?? 0));
+    for (const it of bars) it.draw();
     // HUD layer (battle screen +0x300): HUD elements, deploy timers (0x8d9748) and the drag name text
     r.textStageScale = null; // the HUD's view is the stage scale itself
     this.ui.drawStage(r, dpr);
     r.end();
+  }
+
+  private barItems: { y: number; i?: number; draw: () => void }[] = [];
+
+  /** Sort key of an actor's nodes (setPos3D 0x851b84): ground-projected y, +48 px for an air character
+   * (vt+0x108 0xf826e8 = FlyingHeight > 0 without the TAG_FORCE_IS_AIR / _GROUND status tags; a river
+   * jump's z does not count). */
+  private sortKey(u: Unit, x: number, y: number): number {
+    return this.art.gameToPx(x, y)[1] + (u.def.flyingHeight > 0 ? 48 : 0);
+  }
+
+  /** Seconds since the last attack for the turret recoil (view +0x330, reset by the attack callback 0x846ab4). */
+  private sinceAttack(u: Unit, b: Battle, f: Frame): number {
+    return u.lastHitTick >= 0 ? (b.tick - u.lastHitTick + f.alpha) * 0.05 : 1e9;
+  }
+
+  /**
+   * Drag-preview ghost views (0x8e4eb4): the preview actor faces the enemy King, its view is updated with
+   * dt 0 (vt+0x208(0, 1)): a direction-clip character shows the idle action's first frame in the picked
+   * direction (sc/anim.ts ghostSprite), a single-clip building the frame its clip player gives a state-0
+   * actor (animateBuilding: e.g. Tesla's hide_start), a turret building its turret on that facing. The
+   * views render every frame, so their nested clips play (instances kept per ghost slot while it lasts).
+   */
+  private ghostViews(sim: number): { u: ReturnType<BattleUi['ghostUnits']>[number]; o: UnitDrawOptions }[] {
+    const art = this.art;
+    const m = art.manifest;
+    const dt = this.lastGhostSim < 0 ? 0 : Math.max(0, (sim - this.lastGhostSim) / 1000);
+    this.lastGhostSim = sim;
+    for (const g of this.ghostInsts.values()) g.seen = false;
+    const out: { u: ReturnType<BattleUi['ghostUnits']>[number]; o: UnitDrawOptions }[] = [];
+    this.ui.ghostUnits().forEach((g, i) => {
+      const ca = m.characters[g.def.name];
+      if (!ca) return;
+      const key = `${g.team}:${i}:${g.def.name}`;
+      let gi = this.ghostInsts.get(key);
+      if (!gi) { gi = { ci: new ClipInstances(), anim: null, seen: true }; this.ghostInsts.set(key, gi); }
+      gi.seen = true;
+      const lib = art.lib(ca.sc);
+      const o: UnitDrawOptions = { alpha: g.alpha, face: [g.dirX, g.dirY] };
+      const sp = ghostSprite(ca, g.team, g.dirX, g.dirY, art.flip);
+      const clip = g.team === 1 ? (ca.clip?.red ?? ca.clip?.blue) : ca.clip?.blue;
+      if (sp) {
+        o.sprite = sp;
+        o.inst = gi.ci.show(lib, sp.export, sp.frame, dt) ?? undefined;
+      } else if (clip) {
+        let frame = 0;
+        if (!clip.turretChild) {
+          const labels = lib.labels(clip.export);
+          if (!gi.anim) gi.anim = newBuildingAnim(ca, labels, clip.frames, clip.fps || 30);
+          frame = animateBuilding(ca, g.def.name, labels, gi.anim, { state: 0, deployLeft: 0, deployTime: (ca.deployTime as number | undefined) ?? 0,
+            hideT: 0, manaT: 0, collected: false, dt: 0 });
+          o.inst = gi.ci.show(lib, clip.export, frame, dt) ?? undefined;
+        } else {
+          o.inst = this.turretInst(gi.ci, lib, clip.export, ca, [g.dirX, g.dirY], dt) ?? undefined;
+          frame = o.inst ? (o.inst as McNode).frame : 0;
+        }
+        o.clipFrame = frame;
+      }
+      out.push({ u: g, o });
+    });
+    for (const [k, g] of this.ghostInsts) if (!g.seen) this.ghostInsts.delete(k);
+    return out;
+  }
+  private lastGhostSim = -1;
+
+  private instsOf(id: number): ClipInstances {
+    let ci = this.insts.get(id);
+    if (!ci) { ci = new ClipInstances(); this.insts.set(id, ci); }
+    return ci;
+  }
+
+  /** The `turret` child instance of a building / King tower clip (0x8455cc finds it by name), cached. */
+  private turretKid(n: McNode): McNode | null {
+    let k = this.turretKids.get(n);
+    if (k === undefined) { k = n.child('turret'); this.turretKids.set(n, k); }
+    return k;
+  }
+
+  /**
+   * A HasRotationOnTimeline building's clip instance this frame: made playing from its start, children
+   * too (0x836e58 -> wrapper vt+0x1e0 = 0x12437b8: the root plays its frames once), the turret stopped on
+   * the frame of the facing every frame (0x8455cc -> 0x1242234), then the render advance.
+   */
+  private turretInst(ci: ClipInstances, lib: ScLibrary, exp: string, ca: CharacterArt, face: [number, number], dt: number): McNode | null {
+    const fresh = !ci.has(exp);
+    const n = ci.get(lib, exp);
+    if (!n) return null;
+    if (fresh) n.playAll();
+    const t = this.turretKid(n);
+    if (t) t.gotoAndStop(turretPose(viewAngle(face[0], face[1], this.art.flip), t.frames, ca.turretMovement ?? 0, 1e9).frame);
+    n.advance(dt);
+    return n;
   }
 
   /**
@@ -865,7 +959,7 @@ export class ArtWorld implements WorldRenderer {
    * at the bar holder (the classic anchor, 0x84f740). Underground = tunnelling and the holder hidden in
    * state 11 are not traced (A).
    */
-  private drawNewBar(u: Unit, spec: NewBarSpec, sim: number, f: Frame): void {
+  private newBarDraw(u: Unit, spec: NewBarSpec, sim: number, f: Frame): (() => void) | null {
     const art = this.art, r = this.r;
     const team = u.team as Team;
     const own = team === 0;
@@ -889,14 +983,15 @@ export class ArtWorld implements WorldRenderer {
       if (ch.intro) { st.playFrom = sim; st.frame = 0; } else if (ch.badgeChanged) { st.playFrom = null; st.frame = last; }
       badgeFrame = st.playFrom !== null ? Math.min(last, Math.floor(((sim - st.playFrom) * lib.fps(e)) / 1000)) : st.frame;
     }
-    if (u.waitTicks > 0) return;
+    if (u.waitTicks > 0) return null;
     const [sx, sy] = art.unitBarPx(u.def.name, team, f.ux(u), f.uy(u), f.uz(u) - u.def.flyingHeight);
     const part = (p: NewBarPartSpec | undefined) => (p ? { exp: exp(p), offset: p.offset } : null);
-    view.nbRootX = art.drawNewHealthBar(r, sx, sy, {
+    const d = {
       base: own ? spec.base[0] : spec.base[1], badge: part(spec.badges[ch.badge]), badgeFrame, showBadge: fr.show,
       bar: part(spec.bars[ch.bar]), showBar: fr.bar, level, hpPct: fr.hpPct, shieldPct: fr.shieldPct,
       flash: this.barFlash(u, sim), rootX: view.nbRootX,
-    });
+    };
+    return () => { view.nbRootX = art.drawNewHealthBar(r, sx, sy, d); };
   }
 
   /**
@@ -949,6 +1044,8 @@ export class ArtWorld implements WorldRenderer {
     const dt = this.lastSim < 0 ? 0 : Math.max(0, (sim - this.lastSim) / 1000);
     this.lastSim = sim;
     this.sprites.clear();
+    this.instNow.clear();
+    this.kingNow.clear();
     const seen = new Set<number>();
     for (const u of b.units) {
       if (u.state === ST_DEAD || u.tunneling) continue;
@@ -971,8 +1068,12 @@ export class ArtWorld implements WorldRenderer {
         hitSpeed: u.tower === TOWER_PRINCESS ? u.def.hitSpeed : undefined,
         pathFacing: this.pathFacing.get(u.id),
         jumpLeft: state === 5 ? this.jumpLeft(u, b.arena.w) : undefined,
+        scale: buffTimeScale(u),
       });
       this.sprites.set(u.id, af);
+      // the shown direction clip's instance: stopped on this frame, its nested clips advanced by the render
+      // (0x123f55c); a view hidden in state 11 is not rendered, so its clips keep their playheads
+      if (af && u.waitTicks <= 0) this.instNow.set(u.id, this.instsOf(u.id).show(this.art.lib(ca.sc), af.export, af.frame, dt));
       // MoveEffect on the run clip's action_frame1 / 2 and the location's WalkEffect (0x840d44)
       this.unitFx.step(this.fx, ca, { id: u.id, team: u.team, x: u.x, y: u.y, z: u.z, dirX: u.dirX, dirY: u.dirY, walker }, af,
         (m.arena as { walkEffect?: string }).walkEffect);
@@ -1006,11 +1107,25 @@ export class ArtWorld implements WorldRenderer {
       let s = this.bAnims.get(u.id);
       if (!s) { s = newBuildingAnim(ca, labels, clip.frames, clip.fps || 30); this.bAnims.set(u.id, s); }
       seen.add(u.id);
-      this.clipFrames.set(u.id, animateBuilding(ca, u.def.name, labels, s, {
+      const frame = animateBuilding(ca, u.def.name, labels, s, {
         state: u.state === ST_DEPLOYING ? 4 : u.locked ? 2 : 0, deployLeft: u.deployTicks * 50,
         deployTime: (ca.deployTime as number | undefined) ?? u.deployTotal * 50, hideT: u.hideT, manaT: u.manaT,
         collected: this.collected.has(u.id), dt,
-      }));
+      });
+      this.clipFrames.set(u.id, frame);
+      if (u.waitTicks <= 0) this.instNow.set(u.id, this.instsOf(u.id).show(lib, clip.export, frame, dt));
+    }
+    // HasRotationOnTimeline buildings (Cannon, X-Bow): the root plays once from its creation, the turret
+    // follows the facing (0x8455cc); the root frame is the instance's
+    for (const u of b.units) {
+      if (u.state === ST_DEAD || u.tunneling || u.tower !== TOWER_NONE || u.waitTicks > 0) continue;
+      const ca = m.characters[u.def.name];
+      const clip = u.team === 1 ? (ca?.clip?.red ?? ca?.clip?.blue) : ca?.clip?.blue;
+      if (!ca || !clip || !clip.turretChild) continue;
+      seen.add(u.id);
+      const n = this.turretInst(this.instsOf(u.id), this.art.lib(ca.sc), clip.export, ca, [u.dirX, u.dirY], dt);
+      this.instNow.set(u.id, n);
+      if (n) this.clipFrames.set(u.id, n.frame);
     }
     this.collected.clear();
     for (const id of this.bAnims.keys()) if (!seen.has(id)) this.bAnims.delete(id);
@@ -1034,7 +1149,20 @@ export class ArtWorld implements WorldRenderer {
       if (!inactive && !c.activated) { c.activated = true; c.clip.playRange(start, stop, false); }
       else if (inactive && c.activated) { c.activated = false; c.clip.gotoAndStop(idle); }
       c.clip.advance(dt);
+      // the tower and King clip instances on the controller's frame; the turret on the facing (0x8455cc)
+      seen.add(u.id);
+      const ci = this.instsOf(u.id);
+      const tower = ci.get(this.art.lib(kt.sc), u.team === 0 ? kt.blue : kt.red);
+      if (tower) {
+        const tk = this.turretKid(tower);
+        if (tk) tk.gotoAndStop(turretPose(viewAngle(u.dirX, u.dirY, this.art.flip), tk.frames, kt.turretMovement ?? 0, 1e9).frame);
+        tower.gotoAndStop(c.clip.frame);
+        tower.advance(dt);
+      }
+      const king = ci.show(this.art.lib(kt.king.sc), u.team === 0 ? kt.king.blue : kt.king.red, c.clip.frame, dt);
+      this.kingNow.set(u.id, { tower, king });
     }
+    for (const id of this.insts.keys()) if (!seen.has(id)) this.insts.delete(id);
     // damage filter (0x83e3d8): quadrant of the hit vector's native angle, offset 135 (flipped view)
     // or 315 degrees: 0 _down, 1 _left, 2 _up, 3 _right; restarts on every hit
     const dirs = ['down', 'left', 'up', 'right'] as const;
@@ -1061,37 +1189,6 @@ export class ArtWorld implements WorldRenderer {
     const dy = Math.floor(cell / w) * 500 - u.y;
     const d = Math.abs(dx) > 46340 || Math.abs(dy) > 46340 || dx * dx + dy * dy > 0x7fffffff ? isqrt(0x7fffffff) : isqrt(dx * dx + dy * dy);
     return idiv(d, speed);
-  }
-
-  /** Engine state -> clip, angle and clip time. */
-  private unitState(u: Unit, f: Frame): { action: string; angle: number; ms: number } {
-    const angle = Math.atan2(u.dirY, u.dirX);
-    if (u.state === ST_DEPLOYING) return { action: 'idle', angle, ms: 0 };
-    const atk = this.attackPhase(u, f);
-    if (atk !== null) return { action: 'attack', angle, ms: atk };
-    if (u.moving) return { action: 'run', angle, ms: f.simMs + (u.id % 7) * 61 };
-    return { action: 'idle', angle, ms: f.simMs };
-  }
-
-  /**
-   * Attack clip time so that the clip's action_frame coincides with the engine hit: the timer
-   * crosses a multiple of HitSpeed on the hit tick. Follow-through after a hit, wind-up before
-   * the next one, idle in between. null = not attacking.
-   */
-  private attackPhase(u: Unit, f: Frame): number | null {
-    if (!u.locked && !u.hitStarted && f.battle.tick - u.lastHitTick > 20) return null;
-    const ca = this.art.manifest.characters[u.def.name] ?? (u.tower ? this.art.manifest.characters[this.art.manifest.towers.princess.character as string] : undefined);
-    const HS = u.def.hitSpeed;
-    if (!ca || HS <= 0) return null;
-    const af = actionFrameMs(ca, 'attack1', u.team as Team) ?? Math.min(HS, u.def.loadTime);
-    const act = (ca.actions as Record<string, { frames: number; fps: number }> | undefined)?.attack1 ?? (ca.actionsRed as Record<string, { frames: number; fps: number }> | undefined)?.attack1;
-    const len = act ? (act.frames / act.fps) * 1000 : HS;
-    const sinceHit = (f.battle.tick - u.lastHitTick) * 50 + f.alpha * 50;
-    if (u.lastHitTick >= 0 && sinceHit < len - af) return af + sinceHit;
-    if (!u.locked && !u.hitStarted) return null;
-    const until = HS - (u.atkTimer % HS) - f.alpha * 50;
-    if (until <= af) return Math.max(0, af - until);
-    return null;
   }
 
   /**
@@ -1121,7 +1218,7 @@ export class ArtWorld implements WorldRenderer {
           name: p.def.name, state: newProjectileViewState(), z: z0, prevZ: z0, tick: b.tick,
           startX: p.startX, startY: p.startY, startZ,
           clip: null, ageMs: 0, v: null, x: p.x, y: p.y, trail: 0, seen: true, shooter: p.shooter,
-          team: p.team as Team,
+          team: p.team as Team, ci: new ClipInstances(), inst: null, shadowInst: null,
         };
         if (isRolling(pa)) pv.clip = new ClipPlayer(frames, pa.fps || 30);
         this.projViews.set(p.id, pv);
@@ -1158,6 +1255,14 @@ export class ArtWorld implements WorldRenderer {
         distFromStart: Math.hypot(pv.x - pv.startX, pv.y - pv.startY),
         flip: this.art.flip, own: p.team === 0, name: pv.name,
       });
+      // the sprite clip on the view's frame (pitch frame, or the rolling clip's own timeline), its nested
+      // clips advanced by the render; the shadow clip plays by itself
+      const lib = this.art.lib(pa.sc);
+      const sdt = pv.ageMs > 0 ? dt / 1000 : 0;
+      pv.inst = pv.ci.show(lib, (p.team === 1 && pa.redExport) ? pa.redExport : pa.export, pv.v.frame ?? (pv.clip ? pv.clip.frame : 0), sdt);
+      const sexp = (p.team === 1 && pa.redShadow) ? pa.redShadow : pa.shadow;
+      pv.shadowInst = sexp ? pv.ci.get(lib, sexp) : null;
+      pv.shadowInst?.advance(sdt);
     }
     for (const [id, pv] of this.projViews) {
       if (pv.seen) continue;
@@ -1213,6 +1318,21 @@ export class ArtWorld implements WorldRenderer {
     else z0 = (m.characters[u.def.name]?.projectileStartZ as number | undefined) ?? 0;
     return u.def.flyingHeight + z0;
   }
+}
+
+/**
+ * The buff time scale of a 50 ms step (Buff_timeScale 0xfc27b8, as the engine's attack clock step):
+ * 50 · max(100, strongest haste)/100 · clamp(100 + strongest slow, 0..100)/100 with truncation; 0 while
+ * frozen or stunned.
+ */
+export function buffTimeScale(u: Unit): number {
+  if (u.buffs.length === 0) return 50;
+  let haste = 100, slow = 0;
+  for (const b of u.buffs) {
+    const m = b.def.hitSpeedMul;
+    if (m >= 100) { if (m > haste) haste = m; } else if (m < 0 && m < slow) slow = m;
+  }
+  return idiv(idiv(50 * haste, 100) * Math.min(100, Math.max(0, 100 + slow)), 100);
 }
 
 export type { Mat };

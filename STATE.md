@@ -271,6 +271,18 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Left: Tesla's AttackStartEffect (single-clip
    buildings), Electro Dragon's LoadAttackEffects (sound only), the Inferno view's
    +0x4cc sync to the attack clip (A), the sprite recoils (vt+0xf8).
+   Done 2026-10-12 (fix3, audit items; decompiles in `work/native/decomp_fix3/`, tests in
+   `sim/viewer/test/view_fix3.test.ts`): nested clips of unit, building, crown tower, projectile and
+   ghost views play on their own playheads (`sc/movieclip.ts` ClipInstances, renderer `inst`; 0x84a310 /
+   0x123f55c), health bars use the client's reference clip (direction _1 of the team's idle export, ⌈top⌉,
+   the King tower with the King inside; 0x836e58) and are depth-sorted in layer 12 (0x856a88), the King
+   tower's shadow holds the King and every HasRotationOnTimeline shadow poses its turret (0x8455cc),
+   the hit wobble and the death angle come from new recorded engine events (`wobble` = view vt+0xe8,
+   `damage.vx/vy` = the entry's vector; no simulation change), TryToFinishAttackAnimation stops while
+   frozen, and the legacy sprite pickers (`sc/units.ts`, BattleArt.viewAngle, art.ts unitState /
+   attackPhase) are gone: every sprite comes from the ported 0x844f78 → 0x84a7f8 path (the sc-test gallery
+   too). Left: the turret's frame-apply reset on root frame changes (–), the sprite / shadow clip copies
+   share one instance and the Electro Wizard's extra targets carry no hit vector (A).
 
 ## Open questions for the owner
 

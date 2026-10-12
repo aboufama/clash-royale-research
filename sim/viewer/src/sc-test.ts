@@ -11,9 +11,9 @@
 // ?t=<ms> freezes time (effects are simulated up to t deterministically); ?shot hides the overlay box.
 
 import {
-  BattleArt, EffectPlayer, ScRenderer, actionFrameMs, pickDirection,
+  BattleArt, EffectPlayer, ScRenderer, gallerySprite, pickDirectionNative, viewAngle,
 } from './sc/index.ts';
-import type { Col, Mat, Team } from './sc/index.ts';
+import type { CharacterArt, Col, Mat, Team } from './sc/index.ts';
 import { AreaViews, type AeoActor } from './sc/area_view.ts';
 
 const params = new URLSearchParams(location.search);
@@ -121,6 +121,30 @@ const ARENA_SET = ['Knight', 'Archer', 'Giant', 'Musketeer', 'MiniPekka', 'Valky
 const chars = params.get('set') === 'all'
   ? Object.keys(m.characters).filter((n) => n !== m.towers.princess.character && m.characters[n].actions && Object.keys(m.characters[n].actions).length)
   : ARENA_SET.filter((n) => m.characters[n]);
+// unit libraries load on demand: load the gallery's up front so a frozen frame (?t=) is complete
+await art.prewarm(mode === 'all' ? Object.keys(m.characters) : [...chars, m.towers.princess.character]);
+
+/** A facing vector (logic units, length 256) whose view angle (0x844f78) is `a` degrees (0 = screen up, clockwise). */
+function facingFor(a: number): [number, number] {
+  const n = ((a - (art.flip ? 270 : 90)) % 360 + 360) % 360;
+  return [Math.round(Math.cos((n * Math.PI) / 180) * 256), Math.round(Math.sin((n * Math.PI) / 180) * 256)];
+}
+
+/** Facing vector of an engine angle (radians, +x right, +y toward red). */
+function facingOf(ang: number): [number, number] {
+  return [Math.round(Math.cos(ang) * 256), Math.round(Math.sin(ang) * 256)];
+}
+
+/** The sprite of action `key` (run1, idle1, attack1) facing (dx, dy) through the client's direction pick. */
+function spriteOf(ca: CharacterArt, team: Team, key: string, face: [number, number], ms: number) {
+  return gallerySprite(ca, team, key, face[0], face[1], art.flip, ms) ?? gallerySprite(ca, team, 'idle1', face[0], face[1], art.flip, ms) ?? undefined;
+}
+
+/** Milliseconds from the start of an action to its action_frame (the hit), if labelled. */
+function actionFrameMs(ca: CharacterArt, key: string, team: Team): number | null {
+  const a = ((team === 1 && ca.actionsRed) ? ca.actionsRed : ca.actions)?.[key];
+  return a && a.actionFrame !== undefined ? (a.actionFrame * 1000) / a.fps : null;
+}
 const fx = new EffectPlayer(art, 7);
 const A = art.yScale;
 
@@ -223,8 +247,9 @@ function updateShots(t: number): void {
 
 // -- gallery helpers ------------------------------------------------------------------------------
 
-const DIR_ANGLES: number[] = []; // 16 directions, engine angles, starting at "up" going clockwise
-for (let k = 0; k < 16; k++) DIR_ANGLES.push(Math.PI / 2 - (k * Math.PI) / 8);
+// 16 cells: the view angles (0 = screen up, clockwise) at the centres of the 16 distinct images of a
+// 9-direction clip under 0x84a7f8 (18 sectors of 20°: 1 = sectors 17 + 0, 2..8, 9 = sectors 8 + 9, 8m..2m)
+const DIR_VIEW = [0, 30, 50, 70, 90, 110, 130, 150, 180, 210, 230, 250, 270, 290, 310, 330];
 
 function galleryBlock(action: string, x0: number, y0: number, cellW: number, cellH: number, t: number, out: Drawable[],
   team: Team = 0): void {
@@ -235,13 +260,15 @@ function galleryBlock(action: string, x0: number, y0: number, cellW: number, cel
     for (let k = 0; k < 16; k++) {
       const x = x0 + k * cellW + cellW / 2;
       const [gx, gy] = art.pxToGame(x, y);
-      const ang = DIR_ANGLES[k];
-      out.push({ y, draw: () => { art.drawUnit(r, name, team, gx, gy, action, ang, t, { loop: true, z: -((ca.flyingHeight as number) ?? 0) * 0.5 }); } });
+      const sprite = spriteOf(ca, team, action, facingFor(DIR_VIEW[k]), t);
+      out.push({ y, draw: () => { art.drawUnit(r, name, team, gx, gy, { sprite, z: -((ca.flyingHeight as number) ?? 0) * 0.5 }); } });
     }
   });
+  // the direction 0x84a7f8 picks for each cell (9 authored directions; m = mirrored)
   for (let k = 0; k < 16; k++) {
-    const pd = pickDirection(DIR_ANGLES[k], 9);
-    labels.push({ x: x0 + k * cellW + cellW / 2 - 10, y: y0 - 4, text: `${pd.dir}${pd.mirror ? 'm' : ''}`, size: 9, color: '#ffd' });
+    const f = facingFor(DIR_VIEW[k]);
+    const pd = pickDirectionNative(viewAngle(f[0], f[1], art.flip), 9, 1);
+    labels.push({ x: x0 + k * cellW + cellW / 2 - 10, y: y0 - 4, text: `${pd.idx + 1}${pd.sign < 0 ? 'm' : ''}`, size: 9, color: '#ffd' });
   }
 }
 
@@ -265,8 +292,7 @@ function drawArenaScene(t: number): void {
   for (const f of fighters) {
     const st = fighterState(f, t);
     if (st.dead || st.deployMs !== undefined) continue;
-    const ang = Math.atan2(f.ty - f.y, f.tx - f.x);
-    art.drawUnitShadow(r, f.name, f.team, f.x, f.y, st.action, ang, st.ms);
+    art.drawUnitShadow(r, f.name, f.team, f.x, f.y, { sprite: spriteOf(m.characters[f.name], f.team, st.action, [f.tx - f.x, f.ty - f.y], st.ms) });
   }
   fx.draw(r, 'Shadow');
   art.endShadowPass(r);
@@ -281,7 +307,8 @@ function drawArenaScene(t: number): void {
     const aim = team === 1 ? -Math.PI / 2 + Math.sin(t / 900) * 1.2 : undefined;
     const ruins = params.has('ruins') && team === 1;
     if (ruins) art.drawTowerRuin(r, 'king', team);
-    else items.push({ y: kpy, draw: () => art.drawKingTower(r, team, t, art.kingFrameAt(activation), aim) });
+    const face = aim !== undefined ? facingOf(aim) : undefined;
+    if (!ruins) items.push({ y: kpy, draw: () => art.drawKingTower(r, team, t, art.kingFrameAt(activation), false, face) });
     for (const side of ['princessLeft', 'princessRight'] as const) {
       const [px, py] = art.towerPos(side, team);
       const tpy = art.gameToPx(px, py)[1];
@@ -290,7 +317,9 @@ function drawArenaScene(t: number): void {
         art.drawTowerRuin(r, side, team);
         continue;
       }
-      items.push({ y: tpy, draw: () => art.drawPrincessTower(r, team, side, t, attacking ? 'attack' : 'idle', team === 0 ? Math.PI / 2 : -Math.PI / 2, t % 1200) });
+      const pc = m.characters[m.towers.princess.character];
+      const sp = pc ? spriteOf(pc, team, attacking ? 'attack1' : 'idle1', [0, team === 0 ? 256 : -256], t % 1200) : undefined;
+      items.push({ y: tpy, draw: () => art.drawPrincessTower(r, team, side, sp) });
     }
   }
   // decorations on the Object layer
@@ -303,9 +332,9 @@ function drawArenaScene(t: number): void {
   for (const f of fighters) {
     const st = fighterState(f, t);
     if (st.dead) continue;
-    const ang = Math.atan2(f.ty - f.y, f.tx - f.x);
     const [, py] = art.gameToPx(f.x, f.y);
-    items.push({ y: py, draw: () => { art.drawUnit(r, f.name, f.team, f.x, f.y, st.action, ang, st.ms, { deployMs: st.deployMs }); } });
+    const sprite = spriteOf(m.characters[f.name], f.team, st.action, [f.tx - f.x, f.ty - f.y], st.ms);
+    items.push({ y: py, draw: () => { art.drawUnit(r, f.name, f.team, f.x, f.y, { sprite, deployMs: st.deployMs }); } });
   }
   // projectiles
   for (const s of shots) {
@@ -505,9 +534,13 @@ function drawAllMode(t: number): void {
         }
       }
       const z = -((a.flyingHeight as number) ?? 0) * 0.6;
+      const face = facingOf(team === 0 ? ang : -ang);
       items.push({ y: cy + (team ? 0.1 : 0), draw: () => {
-        if (isB) art.drawBuilding(r, n, team, gx, gy, t, { aim: team === 0 ? ang : -ang, state, stateMs, z, action: 'attack', actionMs: t % 1500 });
-        else art.drawUnit(r, n, team, gx, gy, 'attack', team === 0 ? -Math.PI / 4 : Math.PI * 0.75, t % ((a.hitSpeed as number) ?? 1200), { z });
+        if (isB && a.clip) art.drawBuilding(r, n, team, gx, gy, t, { face, state, stateMs, z });
+        else {
+          const f2: [number, number] = isB ? face : facingOf(team === 0 ? -Math.PI / 4 : Math.PI * 0.75);
+          art.drawUnit(r, n, team, gx, gy, { sprite: spriteOf(a, team, 'attack1', f2, t % ((a.hitSpeed as number) ?? 1200)), z });
+        }
       } });
     }
   });
@@ -541,8 +574,9 @@ function drawAllMode(t: number): void {
   [...buffNames, 'flash'].forEach((b, i) => {
     const cx = 60 + i * 95, cy = BUFF_Y + 90;
     const [gx, gy] = art.pxToGame(cx, cy);
-    const o = b === 'flash' ? { flashMs: t % 600 } : { buffs: [{ name: b, ms: t % 3000 }] };
-    art.drawUnit(r, 'Knight', 0, gx, gy, 'run', -Math.PI / 2, t, o);
+    const sprite = spriteOf(m.characters.Knight, 0, 'run1', [0, -256], t);
+    const o = b === 'flash' ? { sprite, damage: { dir: 'down' as const, ms: t % 600 } } : { sprite, buffs: [{ name: b, ms: t % 3000 }] };
+    art.drawUnit(r, 'Knight', 0, gx, gy, o);
     labels.push({ x: cx - 40, y: cy + 40, text: b, size: 9 });
   });
   const ruinY = BUFF_Y + 270;

@@ -504,7 +504,7 @@ export interface BattleEvent {
   tick: number;
   type: 'hit' | 'death' | 'spawn' | 'impact' | 'cast' | 'tower' | 'shoot' | 'aoe' | 'appear' | 'hide' | 'collect' | 'path'
     | 'areaRing' | 'pushRing' | 'landing' | 'aoePulse' | 'elixir' | 'projEnd' | 'reject'
-    | 'damage' | 'shieldLost';
+    | 'damage' | 'shieldLost' | 'wobble';
   team: number;
   x: number;
   y: number;
@@ -536,6 +536,9 @@ export interface BattleEvent {
    *   (Projectile_init's: the shooter's DamageEffect, else "Damage"), 5 the buff's damage effect
    *   (0xf86668: BuffData +0x248, else "Damage"); `name` is the attacker / shooter / buff data name ('' for
    *   none); `src` the source actor or projectile id.
+   *   `vx`/`vy` are the entry's vector (+0x10: single melee and projectile hits, piercing hits; 0 for
+   *   area damage), whose native angle the lethal entry stores as the death angle (health +0x18).
+   * - wobble: the victim view's hit call vt+0xe8 (damage filter 0x83e3d8) with the vector `vx`/`vy`.
    * - shieldLost: the entry broke the victim's shield (0xfcb29c -> 0xf85730 -> view vt+0x110 0x846850).
    * - spawn: `src` = the source character of a spawner or death spawn (0xf8aac8 reads its
    *   SpawnCharacterEffect), else absent.
@@ -544,4 +547,7 @@ export interface BattleEvent {
    */
   fx?: number;
   src?: number;
+  /** damage / wobble: direction vector (logic units). */
+  vx?: number;
+  vy?: number;
 }

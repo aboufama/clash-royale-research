@@ -122,11 +122,13 @@ export interface AnimState {
   jumpT: number;
   /** last frame's swing flag (view +0xa15): the attack clip was in its wind-up toward the action frame */
   swing: boolean;
+  /** the attack's time step of the last attacking frame (view +0xa98, 0xfc94bc(attack, 50)): the finish clock's rate */
+  scale: number;
 }
 
 export function newAnimState(): AnimState {
   return { angle: -1, hold: 0, rot: 0, sign: 1, action: -1, actionStart: 0, stepToggle: 0, stopped: false,
-    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false };
+    finishing: false, finishClock: 0, walkAngle: -1, walkHold: 0, jumpT: 0, swing: false, scale: 50 };
 }
 
 /** Logic inputs for one character view frame (native names in brackets). */
@@ -156,6 +158,11 @@ export interface AnimInput {
   flip: boolean;
   /** HitSpeed of the actor whose attack timer drives the swing (default: the character's data) */
   hitSpeed?: number;
+  /**
+   * The buff time scale of a 50 ms step (Buff_timeScale 0xfc27b8 / 0xfc94bc(attack, 50); the engine's
+   * attack clock step): 50 unbuffed, 0 frozen or stunned. Default 50.
+   */
+  scale?: number;
   /** facing vector at the unit's path search this frame, if any (engine 'path' event, view vt+0x178) */
   pathFacing?: [number, number];
   /**
@@ -203,6 +210,21 @@ export function ghostSprite(art: CharacterArt, team: 0 | 1, dirX: number, dirY: 
   const a = r[1];
   const dir = pickDirectionNative(viewAngle(dirX, dirY, flip), a.dirs, 1);
   return { export: `${a.export}_${dir.idx + 1}`, frame: 0, mirror: dir.sign < 0 };
+}
+
+/**
+ * Gallery helper (sc-test.ts only; not a client path): the `key` action clip (run1, idle1, attack1...) of a
+ * character facing (dx, dy), direction from the client's pick (0x844f78 -> 0x84a7f8, mirror sign starting
+ * at +1), frame ⌊ms · fps / 1000⌋ looped. `dir` = the authored direction index (1-based).
+ */
+export function gallerySprite(art: CharacterArt, team: 0 | 1, key: string, dx: number, dy: number, flip: boolean, ms: number):
+  { export: string; frame: number; mirror: boolean; dir: number } | null {
+  const acts = (team === 1 && art.actionsRed) ? art.actionsRed : art.actions;
+  const a = acts?.[key];
+  if (!a || a.dirs < 1) return null;
+  const d = pickDirectionNative(viewAngle(dx, dy, flip), a.dirs, 1);
+  const frame = a.frames > 0 ? t((Math.max(0, ms) * a.fps) / 1000) % a.frames : 0;
+  return { export: `${a.export}_${d.idx + 1}`, frame, mirror: d.sign < 0, dir: d.idx + 1 };
 }
 
 /**
@@ -256,8 +278,11 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
   let slot = 1;
   let st = i.state;
   // TryToFinishAttackAnimation: after the attack state ends, keep playing the swing on a view clock
-  // continued from the last shown attack time until the clip comes back to frame 0
-  if (st < 2 && (s.action === 2 || s.finishing) && art.tryToFinishAttackAnimation) {
+  // continued from the last shown attack time until the clip comes back to frame 0; only while the buff
+  // time scale is above 0 (0x840d44 @0x840e24: no buff component or Buff_timeScale(buff, 50) > 0), so a
+  // frozen or stunned unit stops finishing
+  const scale = i.scale ?? 50;
+  if (st < 2 && (s.action === 2 || s.finishing) && art.tryToFinishAttackAnimation && scale > 0) {
     s.finishing = true;
     st = 2;
   } else {
@@ -306,11 +331,13 @@ export function animate(art: CharacterArt, team: 0 | 1, s: AnimState, i: AnimInp
     const af = a.actionFrame ?? labelFrame(a, 'action_frame1');
     let time = i.atk;
     if (s.finishing) {
-      s.finishClock += dt * 1000;
+      // +0xa94 += dt · (+0xa98 · 20): the step of the last attacking frame (stored @0x842850), float32 (0x840d44 @0x8418fc)
+      s.finishClock = Math.fround(s.finishClock + Math.fround(dt * Math.fround(s.scale * 20)));
       time = t(s.finishClock);
     } else {
       if (i.atkPrev !== i.atk) time = t(i.atkPrev + i.alpha * (i.atk - i.atkPrev));
       s.finishClock = time;
+      s.scale = scale;
     }
     const extra = i.finish > 0 ? t(i.alpha * 50) + i.finish : 0;
     if (af >= 0) {

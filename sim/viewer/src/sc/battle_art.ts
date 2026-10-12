@@ -12,10 +12,9 @@ import { emptyLibrary, ScLibraryCache } from './library.ts';
 import type { ScLibrary, ShapeCmd } from './library.ts';
 import type { BuildingClip, CharacterArt, ClipRef, Manifest } from './manifest.ts';
 import { loadManifest } from './manifest.ts';
-import type { DrawOptions } from './renderer.ts';
+import type { ClipInst, DrawOptions } from './renderer.ts';
 import { ScRenderer } from './renderer.ts';
 import { applyFilterColor, filterClipLength, filterFrame } from './area_view.ts';
-import { turretFrame, unitSprite } from './units.ts';
 import { newProjectileViewState, projectileMatrix, projectileView } from './projectile_view.ts';
 import type { ProjectileViewFrame } from './projectile_view.ts';
 import { turretPose, viewAngle as nativeViewAngle } from './anim.ts';
@@ -46,9 +45,20 @@ export interface NewBarDraw {
   /** root x kept from the last frame */
   rootX: number;
 }
-import type { ActionName, UnitSprite } from './units.ts';
 
 export type Team = 0 | 1;
+
+/** A sprite chosen by the client's view update (sc/anim.ts animate / ghostSprite / gallerySprite). */
+export interface SpriteRef {
+  export: string;
+  frame: number;
+  mirror: boolean;
+}
+
+/** The facing a crown tower or building view starts with (blue faces +y, red −y; logic units). */
+export function defaultFacing(team: Team): [number, number] {
+  return team === 0 ? [0, 256] : [0, -256];
+}
 
 export interface UnitDrawOptions {
   z?: number; // game units above ground (FlyingHeight is added automatically)
@@ -58,23 +68,22 @@ export interface UnitDrawOptions {
   deployFilter?: ClipRef | null;
   alpha?: number;
   color?: Col;
-  loop?: boolean;
-  screenAngle?: boolean; // pick directions from the on-screen angle (default: engine angle)
   /** active buffs with ms since each was applied: their colour filters are combined (Freeze, Rage...) */
   buffs?: { name: string; ms: number }[];
   /** hit filter (DamageExportName_<dir>) and ms since the hit; replaces the deploy filter while it plays */
   damage?: { dir: 'down' | 'left' | 'up' | 'right'; ms: number };
-  /** buildings: turret / aim angle (engine convention) */
-  aim?: number;
   /** buildings with a labelled clip: label to show / play (e.g. Tesla 'hidden' | 'appear' | 'up' | 'hide',
    * Tombstone 'deploy', bombs 'attack'); `<state>_start`..`<state>_end` ranges play over stateMs */
   state?: string;
   stateMs?: number;
   /** single-clip buildings: frame chosen by the client's clip player (sc/anim.ts animateBuilding) */
   clipFrame?: number;
-  /** export + frame + mirror chosen by the client's view update (sc/anim.ts); overrides action/angle */
-  sprite?: { export: string; frame: number; mirror: boolean };
-  /** facing vector (actor +0xf8/+0xfc) for turrets, and seconds since the last attack (recoil) */
+  /** export + frame + mirror chosen by the client's view update (sc/anim.ts); characters draw nothing without it */
+  sprite?: SpriteRef;
+  /** the shown clip's instance (sc/movieclip.ts ClipInstances): its nested clips' own playheads */
+  inst?: ClipInst;
+  /** facing vector (actor +0xf8/+0xfc) for turrets (default: the team's starting facing), and seconds since
+   * the last attack (recoil) */
   face?: [number, number];
   sinceAttackS?: number;
 }
@@ -200,9 +209,6 @@ export class BattleArt {
     return this.flip ? [18000 - wx, 32000 - wy] : [wx, wy];
   }
 
-  /** Engine angle -> the screen-up angle convention of the sprite pickers (x right, y up). */
-  viewAngle(a: number): number { return this.flip ? Math.PI - a : -a; }
-
   /** Engine (dx, dy) -> screen-up (dx, dy). */
   viewVec(dx: number, dy: number): [number, number] { return this.flip ? [-dx, dy] : [dx, -dy]; }
 
@@ -293,10 +299,17 @@ export class BattleArt {
     }
   }
 
-  /** Crown tower shadow: the main export (King: KingTower_*, Princess: StarTower_base_*) plus the
-   * tower princess's own shadow (she is a character attached to the tower, at its ground position). */
+  /**
+   * Crown tower shadow: the main export (King: KingTower_*, Princess: StarTower_base_*) plus the tower
+   * princess's own shadow (she is a character attached to the tower, at its ground position). The King
+   * tower's shadow copy gets the King too (0x836e58 @0x83884c: 0x83f4e4 on the shadow clip puts King_blue /
+   * King_red in its king_dummy, driven by the same activation controller, so on the King frame `kingFrame`)
+   * and its turret takes the main turret's frame, mirror and recoil every frame (0x8455cc), while 0x8455cc
+   * also stops the shadow root on frame 0 (+0x338 vt+0xb8(0)) for every HasRotationOnTimeline building.
+   */
   drawTowerShadow(r: ScRenderer, kind: 'king' | 'princessLeft' | 'princessRight', team: Team, timeMs: number,
-    kingFrame?: number, angle?: number, sprite?: { export: string; frame: number; mirror: boolean }): void {
+    kingFrame?: number, face?: [number, number], sinceAttackS?: number, sprite?: SpriteRef,
+    insts: { tower?: ClipInst; king?: ClipInst; princess?: ClipInst } = {}): void {
     const king = kind === 'king';
     const t = king ? this.manifest.towers.king : this.manifest.towers.princess;
     const [x, y] = this.towerPos(kind, team);
@@ -308,32 +321,33 @@ export class BattleArt {
     if (king) {
       const k = this.manifest.towers.king;
       const exp = team === 0 ? k.blue : k.red;
-      const frame = kingFrame ?? lib.labels(exp).idle ?? 0;
-      const named: DrawOptions['named'] = { [k.kingChild]: { hide: true } };
-      named[k.turretChild] = this.turretOverride(k.turretFrames, k.turretMovement ?? 0, undefined,
-        angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2));
-      r.draw(lib, exp, frame, m, WHITE, { childFrame: Math.floor((timeMs * k.fps) / 1000), named });
+      const kf = kingFrame ?? lib.labels(exp).idle ?? 0;
+      const clock = Math.floor((timeMs * k.fps) / 1000);
+      const named: DrawOptions['named'] = {
+        [k.kingChild]: { lib: this.lib(k.king.sc), export: team === 0 ? k.king.blue : k.king.red, frame: kf, childFrame: clock,
+          inst: insts.king },
+        [k.turretChild]: this.turretOverride(k.turretFrames, k.turretMovement ?? 0, face ?? defaultFacing(team), sinceAttackS),
+      };
+      r.draw(lib, exp, 0, m, WHITE, insts.tower ? { inst: insts.tower, named } : { childFrame: clock, named });
       return;
     }
     const p = this.manifest.towers.princess;
     r.draw(lib, p.base[team === 0 ? 'blue' : 'red'], 0, m);
     const pc = this.manifest.characters[p.character];
-    if (pc) {
-      const sp = sprite ? spriteOf(sprite)
-        : unitSprite(pc, team, 'idle', this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), timeMs);
-      if (sp) {
-        const [a, b, c, dx, dy] = this.charShadow(pc);
-        r.draw(this.lib(pc.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror));
-      }
+    if (pc && sprite) {
+      const [a, b, c, dx, dy] = this.charShadow(pc);
+      r.draw(this.lib(pc.sc), sprite.export, sprite.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sprite.mirror),
+        WHITE, insts.princess ? { inst: insts.princess } : {});
     }
   }
 
-  /** Named override for a `turret` child (FUN_008455cc): frame, mirror and recoil offset. */
-  turretOverride(n: number, turretMovement: number, face: [number, number] | undefined, aim: number,
-    sinceAttackS = 1e9): NonNullable<DrawOptions['named']>[string] {
-    const a = face ? nativeViewAngle(face[0], face[1], this.flip)
-      : nativeViewAngle(Math.round(Math.cos(aim) * 256), Math.round(Math.sin(aim) * 256), this.flip);
-    const p = turretPose(a, n, turretMovement, sinceAttackS);
+  /**
+   * Named override for a `turret` child (FUN_008455cc): frame from the view angle of the facing (0x844f78),
+   * mirror and recoil offset (the turret's timeline matrices are translations, so composing the code-set
+   * scale sign and offset after them equals the client's setScaleX / position set).
+   */
+  turretOverride(n: number, turretMovement: number, face: [number, number], sinceAttackS = 1e9): NonNullable<DrawOptions['named']>[string] {
+    const p = turretPose(nativeViewAngle(face[0], face[1], this.flip), n, turretMovement, sinceAttackS);
     return { frame: p.frame, matrix: [p.sign, 0, 0, 1, p.ox, p.oy] };
   }
 
@@ -360,9 +374,13 @@ export class BattleArt {
     return Math.min(labels.stop ?? k.frames - 1, (labels.start ?? 1) + Math.floor((activationMs * k.fps) / 1000));
   }
 
-  /** King tower with the King (king_dummy) and turret; `frame` = tower and King clip frame (kingFrameAt / 0x8643a0). */
-  drawKingTower(r: ScRenderer, team: Team, timeMs: number, frame?: number, aim?: number,
-    destroyed = false, face?: [number, number], sinceAttackS?: number): void {
+  /**
+   * King tower with the King (king_dummy) and turret; `frame` = tower and King clip frame (kingFrameAt /
+   * 0x8643a0); `insts` = the tower's and the King's clip instances (their nested clips' playheads), else
+   * the nested clips run on the shared clock.
+   */
+  drawKingTower(r: ScRenderer, team: Team, timeMs: number, frame?: number,
+    destroyed = false, face?: [number, number], sinceAttackS?: number, insts: { tower?: ClipInst; king?: ClipInst } = {}): void {
     const t = this.manifest.towers.king;
     const [x, y] = this.towerPos('king', team);
     const [px, py] = this.gameToPx(x, y);
@@ -375,12 +393,11 @@ export class BattleArt {
     if (frame === undefined) frame = lib.labels(exp).idle ?? 0;
     const clock = Math.floor((timeMs * t.fps) / 1000);
     const named: DrawOptions['named'] = {
-      [t.kingChild]: { lib: this.lib(t.king.sc), export: team === 0 ? t.king.blue : t.king.red, frame, childFrame: clock },
+      [t.kingChild]: { lib: this.lib(t.king.sc), export: team === 0 ? t.king.blue : t.king.red, frame, childFrame: clock, inst: insts.king },
       // HasRotationOnTimeline: the turret follows the facing every frame (FUN_008455cc)
-      [t.turretChild]: this.turretOverride(t.turretFrames, t.turretMovement ?? 0, face,
-        aim ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2), sinceAttackS),
+      [t.turretChild]: this.turretOverride(t.turretFrames, t.turretMovement ?? 0, face ?? defaultFacing(team), sinceAttackS),
     };
-    r.draw(lib, exp, frame, [1, 0, 0, 1, px, py], WHITE, { childFrame: clock, named });
+    r.draw(lib, exp, frame, [1, 0, 0, 1, px, py], WHITE, insts.tower ? { inst: insts.tower, named } : { childFrame: clock, named });
   }
 
   /** Rubble left by a destroyed tower (manifest towers.*.destroyed; layer Base / Ground: draw it
@@ -392,10 +409,12 @@ export class BattleArt {
     r.draw(this.lib(t.sc), t.destroyed, 0, [1, 0, 0, 1, px, py]);
   }
 
-  /** Princess tower: base, tower princess (character art), top. */
-  drawPrincessTower(r: ScRenderer, team: Team, side: 'princessLeft' | 'princessRight', timeMs: number,
-    action: ActionName = 'idle', angle?: number, actionMs = timeMs, destroyed = false,
-    sprite?: { export: string; frame: number; mirror: boolean }): void {
+  /**
+   * Princess tower: base, tower princess (her character view's sprite, raised by AttachedCharacterHeight;
+   * nothing without one), top.
+   */
+  drawPrincessTower(r: ScRenderer, team: Team, side: 'princessLeft' | 'princessRight', sprite?: SpriteRef,
+    destroyed = false, inst?: ClipInst): void {
     const t = this.manifest.towers.princess;
     const [x, y] = this.towerPos(side, team);
     const [px, py] = this.gameToPx(x, y);
@@ -407,15 +426,11 @@ export class BattleArt {
     const tm = team === 0 ? 'blue' : 'red';
     r.draw(lib, t.base[tm], 0, [1, 0, 0, 1, px, py]);
     const pc = this.manifest.characters[t.character];
-    if (pc) {
+    if (pc && sprite) {
       // the tower princess is the building's AttachedCharacter, raised by AttachedCharacterHeight
       const [qx, qy] = this.gameToPx(x, y, t.attachedHeight ?? 0);
-      const sp = sprite ? spriteOf(sprite)
-        : unitSprite(pc, team, action, this.viewAngle(angle ?? (team === 0 ? Math.PI / 2 : -Math.PI / 2)), actionMs);
-      if (sp) {
-        const s = pc.scale / 100;
-        r.draw(this.lib(pc.sc), sp.export, sp.frame, [sp.mirror ? -s : s, 0, 0, s, qx, qy]);
-      }
+      const s = pc.scale / 100;
+      r.draw(this.lib(pc.sc), sprite.export, sprite.frame, [sprite.mirror ? -s : s, 0, 0, s, qx, qy], WHITE, inst ? { inst } : {});
     }
     r.draw(lib, t.top[tm], 0, [1, 0, 0, 1, px, py]);
   }
@@ -429,24 +444,22 @@ export class BattleArt {
   }
 
   /** Sprite matrix (SC px) for a unit at game (x, y) — exposed for custom drawing. */
-  unitMatrix(art: CharacterArt, sp: UnitSprite, x: number, y: number, z = 0): Mat {
+  unitMatrix(art: CharacterArt, sp: SpriteRef, x: number, y: number, z = 0): Mat {
     const [px, py] = this.gameToPx(x, y, z + (art.flyingHeight ?? 0));
     const s = art.scale / 100;
     return [sp.mirror ? -s : s, 0, 0, s, px, py];
   }
 
-  /** Draw a unit; returns the sprite used (or null). */
-  drawUnit(r: ScRenderer, name: string, team: Team, x: number, y: number, action: ActionName, angle: number,
-    actionMs: number, o: UnitDrawOptions = {}): UnitSprite | null {
+  /**
+   * Draw a unit with the sprite its view update chose (`o.sprite`; o.inst for its nested clips' playheads);
+   * a single-clip building draws through drawBuilding. Returns the sprite drawn (or null).
+   */
+  drawUnit(r: ScRenderer, name: string, team: Team, x: number, y: number, o: UnitDrawOptions = {}): SpriteRef | null {
     const art = this.character(name);
-    const sp = o.sprite ? spriteOf(o.sprite)
-      : unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop, yScale: o.screenAngle ? this.yScale : undefined });
-    if (!sp) {
-      if (art.clip) return this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o });
-      return null;
-    }
+    const sp = o.sprite;
+    if (!sp) return art.clip ? this.drawBuilding(r, name, team, x, y, 0, o) : null;
     const m = this.filterMatrix(art, o, this.unitMatrix(art, sp, x, y, o.z ?? 0));
-    r.draw(this.lib(art.sc), sp.export, sp.frame, m, this.unitColor(o));
+    r.draw(this.lib(art.sc), sp.export, sp.frame, m, this.unitColor(o), o.inst ? { inst: o.inst } : {});
     return sp;
   }
 
@@ -454,8 +467,7 @@ export class BattleArt {
    * Shadow of a unit (call between r.beginShadows() and endShadowPass()): the current sprite frame
    * through shadowMatrix at the ground position, or the ShadowCustom clip at CollisionRadius / 1200.
    */
-  drawUnitShadow(r: ScRenderer, name: string, team: Team, x: number, y: number, action: ActionName, angle: number,
-    actionMs: number, o: UnitDrawOptions = {}): void {
+  drawUnitShadow(r: ScRenderer, name: string, team: Team, x: number, y: number, o: UnitDrawOptions = {}): void {
     const art = this.character(name);
     const [px, py] = this.gameToPx(x, y);
     if (art.shadowCustom) {
@@ -463,14 +475,15 @@ export class BattleArt {
       r.draw(this.lib(art.shadowCustom.sc), art.shadowCustom.export, 0, [s, 0, 0, s, px, py]);
       return;
     }
-    const sp = o.sprite ? spriteOf(o.sprite) : unitSprite(art, team, action, this.viewAngle(angle), actionMs, { loop: o.loop });
+    const sp = o.sprite;
     if (!sp) {
-      if (art.clip) this.drawBuilding(r, name, team, x, y, actionMs, { aim: angle, ...o, shadow: true });
+      if (art.clip) this.drawBuilding(r, name, team, x, y, 0, { ...o, shadow: true });
       return;
     }
     const [a, b, c, dx, dy] = this.charShadow(art);
     if (!a) return;
-    r.draw(this.lib(art.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror));
+    r.draw(this.lib(art.sc), sp.export, sp.frame, this.shadowMatrix(a, b, c, dx, dy, px, py, sp.mirror), WHITE,
+      o.inst ? { inst: o.inst } : {});
   }
 
   /**
@@ -531,39 +544,28 @@ export class BattleArt {
   }
 
   /**
-   * Building (or any unit whose art is one labelled clip): turret aim for clips with a `turret`
-   * child (Cannon, X-Bow: 19 frames over 180 degrees, mirrored for the left half), labelled states
-   * (Tesla hidden/appear/up/hide, Tombstone deploy, bombs attack, Rage bottle deploy), otherwise the
-   * clip loops (Elixir Collector pump). Direction-based buildings (Inferno Tower, Mortar) go through
-   * the unit path with `action` / `aim`. Draws the `top` export too when the data has one.
+   * Building (or any unit whose art is one labelled clip): turret aim for clips with a `turret` child
+   * (Cannon, X-Bow: frame, mirror and recoil from the facing, 0x8455cc; the shadow copy's root stopped on
+   * frame 0 by the same call), the frame the client's clip player chose (`clipFrame`, sc/anim.ts
+   * animateBuilding), or a labelled state (`state` / `stateMs`, gallery only), else frame 0; nested clips
+   * on `o.inst`'s playheads (else the shared clock). Direction-clip buildings (Inferno Tower, Mortar) are
+   * characters: drawUnit with their sprite. Draws the `top` export too when the data has one.
    */
   drawBuilding(r: ScRenderer, name: string, team: Team, x: number, y: number, timeMs: number,
-    o: UnitDrawOptions & { action?: ActionName; actionMs?: number; shadow?: boolean } = {}): UnitSprite | null {
+    o: UnitDrawOptions & { shadow?: boolean } = {}): SpriteRef | null {
     const art = this.character(name);
     const clip: BuildingClip | undefined = team === 1 ? (art.clip?.red ?? art.clip?.blue) : art.clip?.blue;
-    const defAim = team === 0 ? Math.PI / 2 : -Math.PI / 2;
-    if (!clip) {
-      // direction-based building; without a sprite there is nothing to draw (and no recursion)
-      if (!unitSprite(art, team, o.action ?? 'idle', this.viewAngle(o.aim ?? defAim), o.actionMs ?? timeMs, { loop: o.loop })) return null;
-      if (o.shadow) {
-        this.drawUnitShadow(r, name, team, x, y, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, o);
-        return null;
-      }
-      const { state: _s, stateMs: _sm, ...rest } = o;
-      return this.drawUnit(r, name, team, x, y, o.action ?? 'idle', o.aim ?? defAim, o.actionMs ?? timeMs, rest);
-    }
+    if (!clip) return null;
     const lib = this.lib(art.sc);
     const labels = lib.labels(clip.export);
     const fps = clip.fps || 30;
     const clock = Math.floor((timeMs * fps) / 1000);
     let frame = 0;
-    let done = false;
     const named: DrawOptions['named'] = {};
     if (clip.turretChild) {
-      const ov = this.turretOverride(clip.turretFrames ?? clip.frames, art.turretMovement ?? 0, o.face,
-        o.aim ?? defAim, o.sinceAttackS);
-      frame = clip.frames === (clip.turretFrames ?? clip.frames) ? ov.frame ?? 0 : 0;
-      named[clip.turretChild] = ov;
+      named[clip.turretChild] = this.turretOverride(clip.turretFrames ?? clip.frames, art.turretMovement ?? 0, o.face ?? defaultFacing(team),
+        o.sinceAttackS);
+      frame = o.shadow ? 0 : o.clipFrame ?? 0;
     } else if (o.clipFrame !== undefined) {
       frame = o.clipFrame;
     } else if (o.state) {
@@ -571,15 +573,8 @@ export class BattleArt {
       if (st === 'up' && labels.appear_end !== undefined) st = 'appear_end';
       if (st === 'hidden' && labels.idle !== undefined && labels.appear_start !== undefined) st = 'idle';
       const a = labels[`${st}_start`], b = labels[`${st}_end`];
-      if (a !== undefined && b !== undefined) {
-        frame = Math.min(b, a + Math.floor(((o.stateMs ?? 0) * fps) / 1000));
-        done = frame >= b;
-      } else if (labels[st] !== undefined) {
-        frame = labels[st];
-      }
-    } else {
-      const held = Object.keys(labels).some((l) => l.endsWith('_start') || l === 'idle' || l === 'deploy');
-      frame = held ? 0 : clock % clip.frames;
+      if (a !== undefined && b !== undefined) frame = Math.min(b, a + Math.floor(((o.stateMs ?? 0) * fps) / 1000));
+      else if (labels[st] !== undefined) frame = labels[st];
     }
     const [px, py] = this.gameToPx(x, y, (o.z ?? 0) + (art.flyingHeight ?? 0));
     const s = art.scale / 100;
@@ -592,11 +587,10 @@ export class BattleArt {
     }
     const c = this.unitColor(o);
     if (!o.shadow) m = this.filterMatrix(art, o, m);
-    r.draw(lib, clip.export, frame, m, c, { childFrame: clip.turretChild ? frame : clock, named });
+    r.draw(lib, clip.export, frame, m, c, o.inst ? { inst: o.inst, named } : { childFrame: clip.turretChild ? frame : clock, named });
     const top = team === 1 ? (art.top?.red ?? art.top?.blue) : art.top?.blue;
     if (top && !o.shadow) r.draw(lib, top.export, 0, m, c);
-    return { export: clip.export, frame, mirror: false, dir: 0, action: o.state ?? 'clip', frames: clip.frames, fps,
-      done };
+    return { export: clip.export, frame, mirror: false };
   }
 
   /** Deploy countdown clock over a deploying unit (ui.sc troopDeployTimer_player / _enemy); frac 0..1. */
@@ -700,24 +694,26 @@ export class BattleArt {
    * running on their own timeline, e.g. rolling projectiles); nested clips get `childFrame`.
    */
   drawProjectileView(r: ScRenderer, name: string, team: Team, x: number, y: number, v: ProjectileViewFrame,
-    clipFrame = 0, childFrame?: number): void {
+    clipFrame = 0, childFrame?: number, inst?: ClipInst): void {
     const p = this.manifest.projectiles[name];
     if (!p || !p.sc || !p.export) return;
     const lib = this.lib(p.sc);
     const exp = (team === 1 && p.redExport) ? p.redExport : p.export;
     const [px, py] = this.gameToPx(x, y, v.height / 0.002);
     const frame = v.frame ?? clipFrame;
-    r.draw(lib, exp, frame, projectileMatrix(v.rotation, v.scale, px, py), WHITE, { childFrame: childFrame ?? frame });
+    r.draw(lib, exp, frame, projectileMatrix(v.rotation, v.scale, px, py), WHITE, inst ? { inst } : { childFrame: childFrame ?? frame });
   }
 
   /** The projectile's shadow clip at (x, y, 0), rotated like the sprite unless ShadowDisableRotate and not
-   * scaled (0x8545e0 / 0x8554b0); draw it inside the shadow pass (silhouette, 0x856a40). */
-  drawProjectileShadow(r: ScRenderer, name: string, team: Team, x: number, y: number, v: ProjectileViewFrame): void {
+   * scaled (0x8545e0 / 0x8554b0); draw it inside the shadow pass (silhouette, 0x856a40). With its instance
+   * the clip shows the instance's frame (nothing sets it: it plays by itself), else frame 0. */
+  drawProjectileShadow(r: ScRenderer, name: string, team: Team, x: number, y: number, v: ProjectileViewFrame,
+    inst?: ClipInst): void {
     const p = this.manifest.projectiles[name];
     const exp = (team === 1 && p?.redShadow) ? p.redShadow : p?.shadow;
     if (!p || !p.sc || !exp) return;
     const [gx, gy] = this.gameToPx(x, y, 0);
-    r.draw(this.lib(p.sc), exp, 0, projectileMatrix(v.shadowRotation, 1, gx, gy));
+    r.draw(this.lib(p.sc), exp, inst ? inst.frame : 0, projectileMatrix(v.shadowRotation, 1, gx, gy), WHITE, inst ? { inst } : {});
   }
 
   /** Gallery helper: a projectile at game (x, y, z) moving with (vx, vy, vz) (engine units / s), through
@@ -740,50 +736,93 @@ export class BattleArt {
   private hbCache = new Map<string, number>();
 
   /**
-   * Health bar y offset (SC px) from a view's origin, following the client's character view
-   * 0x836e58: the top of the main sprite's frame-0 bounds plus HealthBarOffsetY and the team's
-   * HealthBarOffsetYBlue/Red (0xde1688). Treating the sprite query (vt+0x1b8) as the frame-0
-   * bounds top is an inference.
+   * Health bar y offset (SC px) from a view's origin, as the character view's setup 0x836e58 computes it
+   * once (@0x838a34): the bounds of the view's reference clip at the view's creation (frame 0, nested clips
+   * on frame 0) with its own scale and no translation (wrapper vt+0x1b8 0xd16930 -> 0x123c5ac(clip, no
+   * target space) -> 0x125a0f4), its top rounded up (frintp), plus HealthBarOffsetY + HealthBarOffsetYBlue
+   * (own view) / Red (0xde1688; the 2v2 terms are 0 in 1v1).
    */
-  barOffsetY(libName: string, exportName: string, scale: number, base: number, blue: number, red: number, team: Team): number {
+  barOffsetY(libName: string, exportName: string, scale: number, base: number, blue: number, red: number, own: boolean): number {
     const key = `${libName}/${exportName}/${scale}`;
     let top = this.hbCache.get(key);
     if (top === undefined) {
       const lib = this.libs.get(libName);
       const b = lib?.frameBounds(exportName, 0);
-      top = b ? b[1] * scale : 0;
-      this.hbCache.set(key, top);
+      top = b ? Math.ceil(Math.fround(b[1] * scale)) : 0;
+      if (lib) this.hbCache.set(key, top);
     }
-    return top + base + (team === 0 ? blue : red);
+    return top + base + (own ? blue : red);
   }
 
-  /** Tower health bar position (SC px): the tower's main clip (King tower / princess tower base). */
+  private kingTop: (number | undefined)[] = [];
+
+  /**
+   * Tower health bar position (SC px), barOffsetY on the view's reference clip: the princess tower's base
+   * (its own export, the BASE sprite of a building with an AttachedCharacter: loader 0xddf8a8 copies
+   * Blue/RedExportName to data +712/+720, 0x836e58 measures that clip), the King tower's main clip with
+   * the King already in its king_dummy (0x836e58 runs 0x83f4e4 @0x838820 before the query @0x838a34;
+   * King_blue / King_red on frame 0).
+   */
   towerBarPx(kind: 'king' | 'princessLeft' | 'princessRight', team: Team): [number, number] {
-    const t = kind === 'king' ? this.manifest.towers.king : this.manifest.towers.princess;
     const [x, y] = this.towerPos(kind, team);
     const [px, py] = this.gameToPx(x, y);
-    const tm = team === 0 ? 'blue' : 'red';
-    const exp = kind === 'king' ? (team === 0 ? this.manifest.towers.king.blue : this.manifest.towers.king.red)
-      : this.manifest.towers.princess.base[tm];
-    return [px, py + this.barOffsetY(t.sc, exp, (t.scale ?? 100) / 100, 0, t.healthBarOffsetYBlue ?? 0, t.healthBarOffsetYRed ?? 0, team)];
+    if (kind === 'king') {
+      const k = this.manifest.towers.king;
+      let top = this.kingTop[team];
+      if (top === undefined) {
+        top = this.kingTowerTop(team) ?? undefined;
+        this.kingTop[team] = top;
+      }
+      return [px, py + (top ?? 0) + (team === 0 ? k.healthBarOffsetYBlue ?? 0 : k.healthBarOffsetYRed ?? 0)];
+    }
+    const t = this.manifest.towers.princess;
+    const exp = t.base[team === 0 ? 'blue' : 'red'];
+    return [px, py + this.barOffsetY(t.sc, exp, (t.scale ?? 100) / 100, 0, t.healthBarOffsetYBlue ?? 0, t.healthBarOffsetYRed ?? 0, team === 0)];
   }
 
-  /** Unit health bar position (SC px) for a unit drawn at game (x, y) and z above its FlyingHeight, using its idle sprite at spawn facing. */
+  /** ceil(top) of KingTower_* frame 0 with King_* (frame 0) in its king_dummy, scale 1; null until loaded. */
+  private kingTowerTop(team: Team): number | null {
+    const k = this.manifest.towers.king;
+    const lib = this.libs.get(k.sc), kl = this.libs.get(k.king.sc);
+    const clip = lib?.clip(team === 0 ? k.blue : k.red);
+    const kid = kl?.exports.get(team === 0 ? k.king.blue : k.king.red);
+    if (!lib || !kl || !clip || kid === undefined) return null;
+    const s = (k.scale ?? 100) / 100;
+    let top = Infinity;
+    const bm = lib.banks[clip.bank].m;
+    for (let i = clip.frameStart[0]; i < clip.frameStart[1]; i++) {
+      const ci = clip.elements[i * 3], mi = clip.elements[i * 3 + 1];
+      const cm: Mat = mi >= 0 ? [bm[mi * 6], bm[mi * 6 + 1], bm[mi * 6 + 2], bm[mi * 6 + 3], bm[mi * 6 + 4], bm[mi * 6 + 5]] : [1, 0, 0, 1, 0, 0];
+      const m = matMul([s, 0, 0, s, 0, 0], cm);
+      const b = clip.names?.[ci] === k.kingChild ? idBounds(kl, kid, m) : idBounds(lib, clip.children[ci], m);
+      if (b && b[1] < top) top = b[1];
+    }
+    return top === Infinity ? null : Math.ceil(Math.fround(top));
+  }
+
+  /**
+   * The reference clip of a character view's health bar (0x836e58 @0x83834c): 0x84a7f8 with angle 0 on the
+   * anim set's second entry (slot 1, _idle1_), i.e. direction _1 for both teams of the team's own export
+   * (the red export for the enemy); no clip without an idle entry (bounds 0). A view without an anim set
+   * (single-clip buildings) measures its clip.
+   */
+  barRefClip(art: CharacterArt, team: Team): string | null {
+    const acts = (team === 1 && art.actionsRed) ? art.actionsRed : art.actions;
+    const idle = acts?.idle1;
+    if (acts && Object.keys(acts).length) return idle && idle.dirs > 0 ? `${idle.export}_1` : null;
+    const clip = team === 1 ? (art.clip?.red ?? art.clip?.blue) : art.clip?.blue;
+    return clip ? clip.export : null;
+  }
+
+  /** Unit health bar position (SC px) for a unit drawn at game (x, y) and z above its FlyingHeight (barRefClip, barOffsetY). */
   unitBarPx(name: string, team: Team, x: number, y: number, z = 0): [number, number] {
     const art = this.manifest.characters[name];
     const [px, py] = this.gameToPx(x, y, z + (art?.flyingHeight ?? 0));
     if (!art) return [px, py - 50];
-    let lib = art.sc;
-    let exp: string | null = null;
-    const sp = unitSprite(art, team, 'idle', this.viewAngle(team === 0 ? Math.PI / 2 : -Math.PI / 2), 0);
-    if (sp) exp = sp.export;
-    else {
-      const clip = team === 1 ? (art.clip?.red ?? art.clip?.blue) : art.clip?.blue;
-      if (clip) { exp = clip.export; lib = art.sc; }
-    }
-    if (!exp) return [px, py - 50];
-    return [px, py + this.barOffsetY(lib, exp, art.scale / 100, art.healthBarOffsetY ?? 0,
-      art.healthBarOffsetYBlue ?? 0, art.healthBarOffsetYRed ?? 0, team)];
+    const exp = this.barRefClip(art, team);
+    const off = art.healthBarOffsetY ?? 0, own = team === 0;
+    if (!exp) return [px, py + off + (own ? art.healthBarOffsetYBlue ?? 0 : art.healthBarOffsetYRed ?? 0)];
+    return [px, py + this.barOffsetY(art.sc, exp, art.scale / 100, off, art.healthBarOffsetYBlue ?? 0, art.healthBarOffsetYRed ?? 0, own)];
   }
 
   /**
@@ -1228,8 +1267,4 @@ function idBounds(lib: ScLibrary, id: number, m: Mat, depth = 0): [number, numbe
   };
   visit(id, m, depth);
   return b[0] <= b[2] ? b : null;
-}
-
-function spriteOf(sp: { export: string; frame: number; mirror: boolean }): UnitSprite {
-  return { export: sp.export, frame: sp.frame, mirror: sp.mirror, dir: 0, action: '', frames: 0, fps: 30, done: false };
 }

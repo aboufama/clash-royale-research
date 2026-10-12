@@ -14,7 +14,9 @@
 //     custom_sprite_shadow) into a half-resolution offscreen buffer, then one composite (shadow_2d_composite):
 //     4 taps at (+-ox, +-oy), summed, clamped to 1, times the location shadow colour.
 // Nested clips receive `childFrame` (default = the root frame), i.e. one shared clock like
-// render.py; pass a separate childFrame to hold the root on a frame while children animate.
+// render.py; pass a separate childFrame to hold the root on a frame while children animate. With
+// `inst` (a clip instance tree with its own playheads, sc/movieclip.ts McNode: the client's MovieClip
+// children, 0x123ee08 / 0x123f55c) every nested clip takes its instance's frame instead.
 //
 // API:
 //   const r = new ScRenderer(canvas);
@@ -32,6 +34,16 @@ import type { ScLibrary, ShapeCmd, TextFieldDef, TextureSource } from './library
 import type { GlyphImage as GlyphImageT, TfLayout } from './text.ts';
 import { fontGeneration, fontsLoaded, layoutTextField, loadGameFonts, textPlacement, tfOutlineColor } from './text.ts';
 
+/**
+ * A clip instance with its own playhead and one child instance per child index (null for shapes and
+ * text fields), as sc/movieclip.ts McNode keeps them.
+ */
+export interface ClipInst {
+  readonly frame: number;
+  readonly visible: boolean;
+  readonly kids: readonly (ClipInst | null)[];
+}
+
 export interface NamedOverride {
   /** skip this child */
   hide?: boolean;
@@ -42,6 +54,8 @@ export interface NamedOverride {
   /** draw this export instead of the child (child's matrix/colour still apply) */
   lib?: ScLibrary;
   export?: string;
+  /** the replacing export's instance (its frame and its children's playheads) */
+  inst?: ClipInst;
   /** extra transform applied in the child's space before its own content (e.g. mirror) */
   matrix?: Mat;
   color?: Col;
@@ -52,6 +66,8 @@ export interface NamedOverride {
 export interface DrawOptions {
   /** frame passed to nested clips (default: the root frame) */
   childFrame?: number;
+  /** the root's instance: nested clips take their instances' frames (childFrame is then unused) */
+  inst?: ClipInst;
   /** overrides by child instance name (any depth) */
   named?: Record<string, NamedOverride>;
   /** text by text-field instance name (any depth) */
@@ -368,7 +384,7 @@ export class ScRenderer {
     for (let i = 0; i < 6; i++) m[i] = matrix[i];
     for (let i = 0; i < 7; i++) c[i] = color[i];
     this.gray = !!opts.grayscale;
-    this.node(lib, id, Math.floor(frame), Math.floor(opts.childFrame ?? frame), 0, opts.blend ?? 0, opts);
+    this.node(lib, id, Math.floor(frame), Math.floor(opts.childFrame ?? frame), 0, opts.blend ?? 0, opts, opts.inst ?? null);
     this.gray = false;
   }
 
@@ -466,7 +482,7 @@ export class ScRenderer {
   // -- traversal --------------------------------------------------------------------------------
 
   private node(lib: ScLibrary, id: number, frame: number, childFrame: number, depth: number, blend: number,
-    opts: DrawOptions): void {
+    opts: DrawOptions, inst: ClipInst | null): void {
     if (depth > 32) return;
     const m = this.matStack[depth], c = this.colStack[depth];
     const shape = lib.shapes.get(id);
@@ -496,6 +512,8 @@ export class ScRenderer {
         this.maskOp(mod);
         continue;
       }
+      const kid = inst !== null ? inst.kids[ci] ?? null : null;
+      if (kid !== null && !kid.visible) continue;
       // child matrix / colour (sc2: parent * child)
       if (mi >= 0) {
         const bm = bank.m, o = mi * 6;
@@ -543,15 +561,18 @@ export class ScRenderer {
           if (ov.lib && ov.export) {
             const oid = ov.lib.exports.get(ov.export);
             if (oid !== undefined) {
-              this.node(ov.lib, oid, Math.floor(ov.frame ?? frame), Math.floor(ov.childFrame ?? childFrame), depth + 1, b, opts);
+              const oi = ov.inst ?? null;
+              this.node(ov.lib, oid, Math.floor(ov.frame ?? (oi !== null ? oi.frame : frame)), Math.floor(ov.childFrame ?? childFrame),
+                depth + 1, b, opts, oi);
             }
             continue;
           }
-          this.node(lib, cid, Math.floor(ov.frame ?? childFrame), Math.floor(ov.childFrame ?? childFrame), depth + 1, b, opts);
+          this.node(lib, cid, Math.floor(ov.frame ?? (kid !== null ? kid.frame : childFrame)), Math.floor(ov.childFrame ?? childFrame),
+            depth + 1, b, opts, kid);
           continue;
         }
       }
-      this.node(lib, cid, childFrame, childFrame, depth + 1, b, opts);
+      this.node(lib, cid, kid !== null ? kid.frame : childFrame, childFrame, depth + 1, b, opts, kid);
     }
   }
 

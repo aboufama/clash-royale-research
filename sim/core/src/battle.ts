@@ -192,6 +192,9 @@ export class Battle {
   /** Recorded only: the entry's view effect kind and its source data name (BattleEvent 'damage'). */
   private dmgFx: number[] = [];
   private dmgFxSrc: string[] = [];
+  /** the entry's direction vector (+0x10, recorded only: the death angle health +0x18 and the viewer) */
+  private dmgVx: number[] = [];
+  private dmgVy: number[] = [];
   private dmgN = 0;
   /** Projectile damage-key counter (ctx +800). */
   private nextKey = 0;
@@ -1758,7 +1761,8 @@ export class Battle {
         } else {
           // BuffOnDamage lands with the damage (flush callback 0xfd09ac)
           this.queueDamage(t, dmg, -1, d.crownTowerDamagePercent, 0, d.buffOnDamage, d.buffOnDamageTime, u.id,
-            u.charge >= 10000 ? 3 : 2, d.name);
+            u.charge >= 10000 ? 3 : 2, d.name, u.tsx - u.x, u.tsy - u.y);
+          this.viewHit(t, u.tsx - u.x, u.tsy - u.y);
           if (d.multipleTargets > 1) this.extraTargets(u, t, dmg);
         }
       }
@@ -1944,8 +1948,10 @@ export class Battle {
    * 0xfd09ac), applied only if the damage lands.
    */
   private queueDamage(t: Unit, amount: number, towerDamage: number, pct: number, key = 0,
-    buff: BuffDef | null = null, buffTime = 0, srcId = -1, fx = 0, fxSrc = ''): void {
+    buff: BuffDef | null = null, buffTime = 0, srcId = -1, fx = 0, fxSrc = '', vx = 0, vy = 0): void {
     const i = this.dmgN++;
+    this.dmgVx[i] = vx;
+    this.dmgVy[i] = vy;
     this.dmgTarget[i] = t;
     this.dmgAmount[i] = amount;
     this.dmgTower[i] = towerDamage;
@@ -1956,6 +1962,15 @@ export class Battle {
     this.dmgSrc[i] = srcId;
     this.dmgFx[i] = fx;
     this.dmgFxSrc[i] = fxSrc;
+  }
+
+  /**
+   * The victim view's hit call vt+0xe8 (0x83e3d8, the damage filter) as the recorded event `wobble`: single
+   * melee hits (0xfc7080: target snapshot − attacker), single projectile hits (0xf8f618: aim − start),
+   * piercing hits (0xf8ff74: victim − query point) and knockback starts (0xfcfbd4: victim − origin).
+   */
+  private viewHit(t: Unit, vx: number, vy: number): void {
+    if (this.recordEvents) this.events.push({ tick: this.tick, type: 'wobble', team: t.team, x: t.x, y: t.y, name: t.def.name, id: t.id, vx, vy });
   }
 
   /** Actor_circleOverlapSq 0xf95084 [STAT]: circles overlap strictly; buildings by the closest point of their square. */
@@ -2795,6 +2810,7 @@ export class Battle {
     t.kbX = t.x;
     t.kbY = t.y;
     if (len < 1 || dist < 1) { t.kbActive = false; t.kbIgnore = false; return; }
+    this.viewHit(t, dx, dy);
     let s = 0;
     let acc = 0;
     do { s += 25; acc += s; } while (acc < dist);
@@ -3328,7 +3344,7 @@ export class Battle {
     const def = p.def;
     if (def.pierceRadius < 1) return;
     const list = this.gridQueryBox(x, y, def.pierceRadius, def.pierceRadiusY);
-    for (let i = 0; i < list.length; i++) if (this.projHit(p, list[i])) break;
+    for (let i = 0; i < list.length; i++) if (this.projHit(p, list[i], x, y)) break;
     list.length = 0;
   }
 
@@ -3342,7 +3358,7 @@ export class Battle {
    * With CheckCollisions the flight ends at the first target alive before the hit. Hidden and
    * deploying actors are not exempt (0xf82e68 is called without its state checks).
    */
-  private projHit(p: Projectile, a: Unit): boolean {
+  private projHit(p: Projectile, a: Unit, qx: number, qy: number): boolean {
     const def = p.def;
     if (def.onlyEnemies && a.team === p.team) return false;
     if (p.hitIds.includes(a.id)) return false;
@@ -3352,7 +3368,9 @@ export class Battle {
     if (a.tunneling) return false; // the engine's Miner tunnel (A: native state 6 is not modelled)
     p.hitIds.push(a.id);
     const hp = a.hp;
-    this.queueDamage(a, p.damage, p.towerDamage, p.crownPct, p.key, null, 0, p.id, 4, p.shooter ? p.shooter.def.name : '');
+    this.viewHit(a, a.x - qx, a.y - qy);
+    this.queueDamage(a, p.damage, p.towerDamage, p.crownPct, p.key, null, 0, p.id, 4, p.shooter ? p.shooter.def.name : '',
+      a.x - qx, a.y - qy);
     if (this.mobile(a) && def.pushback >= 1) {
       if (def.directionalPushback) this.directionalPushback(a, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
       else this.applyPushback(a, p.x, p.y, def.pushback, def.pushbackAll);
@@ -3494,7 +3512,11 @@ export class Battle {
     if (def.radius < 1) {
       const t = p.target;
       if (t !== null) {
-        if (p.damage > 0) this.queueDamage(t, p.damage, p.towerDamage, p.crownPct, p.key, def.targetBuff, def.buffTime, p.id, 4, p.shooter ? p.shooter.def.name : '');
+        if (p.damage > 0) {
+          this.viewHit(t, p.tx - p.startX, p.ty - p.startY);
+          this.queueDamage(t, p.damage, p.towerDamage, p.crownPct, p.key, def.targetBuff, def.buffTime, p.id, 4, p.shooter ? p.shooter.def.name : '',
+            p.tx - p.startX, p.ty - p.startY);
+        }
         if (def.pushback > 0) {
           if (def.directionalPushback) this.directionalPushback(t, p.x - p.startX, p.y - p.startY, def.pushback, def.pushbackAll);
           else this.applyPushback(t, p.tx, p.ty, def.pushback, def.pushbackAll);
@@ -3675,6 +3697,7 @@ export class Battle {
       }
       if (this.recordEvents) {
         this.events.push({ tick: this.tick, type: 'damage', team: t.team, x: t.x, y: t.y, name: this.dmgFxSrc[i], id: t.id,
+          vx: this.dmgVx[i], vy: this.dmgVy[i],
           fx: this.dmgFx[i], src: this.dmgSrc[i] });
       }
       const buff = this.dmgBuff[i];
