@@ -149,10 +149,13 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
    Earthquake, champions, evolutions.
 4. **Speed:** the native movement made each tick dearer (~4,000× real time);
    inline the A* visit loop, keep spatial queries allocation-free.
-5. **HUD left:** the tiebreaker / draw / final-score clips of the HUD time
-   update 0x8d38c4, the full-elixir hand wiggle (0x907654 / 0x907ab0), the
+5. **HUD left:** the full-elixir hand wiggle (0x907654 / 0x907ab0), the
    unaffordable-drop wait (MAX_SPELL_PENDING_TIME). Training bridge (M3) and
-   the fidelity pass (M5); see [GOAL.md](GOAL.md).
+   the fidelity pass (M5); see [GOAL.md](GOAL.md). Done 2026-10-12: the
+   tiebreaker / draw / final-score clips of 0x8d38c4 and the crown-score
+   prints of 0x8d2de0 (`sc/announce.ts`), on the engine's ported tiebreak
+   (`Battle.tiebreakMs` / `drawMs`, 0x10ca9a0, `end.test.ts`); decompiles in
+   `work/native/decomp_end/`.
 6. **Viewer fidelity left:** the battle layer's vertical placement under the
    HUD (width framing is ported: 578.5 SC px on tall phones), the arena clip field
    +0x84 used as the 180° turn's ty (768 assumed), how the client picks
@@ -182,6 +185,8 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 - Double and triple elixir regen rates are inferred, not observed.
 - Some card stats may round rather than floor (see `docs/DATA_FIELDS.md`).
 - Live game updates after install aren't included in `game-files/`.
-- The overtime tiebreak (lowest tower HP decides a tied match) has a UI string
-  (`TID_OVERTIME_TIEBREAKER`) but no logic in the data. The native test runner
-  scored a tie as a draw (−1), so the tiebreak will be an approximation (A).
+- The overtime tiebreak is ported from the battle manager (0x10ca9a0: field
+  cleared, 3.25 s pause, all towers drain until the lowest falls; equal towers
+  draw), gated by the game mode's NoDraws (Ladder: true). The Duel series flow
+  (BestOfGame between games) is not ported. The native test runner scored a
+  tie as a draw (−1); why (its mode's NoDraws, equal towers) was not traced.

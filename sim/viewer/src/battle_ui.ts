@@ -66,7 +66,8 @@ export class BattleUi {
     this.hud = new Hud(art);
   }
 
-  /** Timed announcements of the HUD time update 0x8d38c4 (countdown, 60/30 s, elixir speed, extra time). */
+  /** Announcements of the HUD time update 0x8d38c4 (countdown, 60/30 s, elixir speed, extra time,
+   * tiebreaker, draw, final score) and the crown-score prints of 0x8d2de0. */
   private announce: Announcements | null = null;
 
   private announcer(): Announcements | null {
@@ -311,7 +312,7 @@ export class BattleUi {
     // cost texts: UI clips on the wall clock, removed once played through
     this.floats = this.floats.filter((fl) => { const was = fl.clip.playing; fl.clip.advance(dt); return was; });
     this.hud.update(dt, b);
-    this.announcer()?.update(dt, b);
+    this.announcer()?.update(dt, b, team);
     // preview clips
     const pv = this.preview;
     if (!pv || !ui) {

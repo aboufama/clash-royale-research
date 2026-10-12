@@ -136,6 +136,8 @@ HUD_EXPORTS = (
     "print_60secondsLeft_overtime", "print_elixir_speed", "print_endTimer", "pvp_battle_start",
     # timed announcements of the HUD time update 0x8d38c4 (30 s banner, overtime, tiebreaker, end)
     "print_30secondsLeft", "print_extra_time", "print_tiebreaker", "duel_battle_draw", "finalScore",
+    # crown-score prints of the HUD crown update 0x8d2de0 (0x8e8470 / 0x8e86e8; gate finalScore)
+    "printScore_player", "printScore_enemy",
     # deploy UI
     "troopDeployTimer_player", "troopDeployTimer_enemy", "deployArea_base",
     "deployArea_corner_leftBottom", "deployArea_corner_leftTop", "deployArea_corner_rightBottom",
@@ -149,7 +151,7 @@ HUD_EXPORTS = (
 # Localised strings the battle HUD fills in (texts.csv, EN): TID_* instance names and formats.
 HUD_TEXTS = ("TID_TIME_LEFT", "TID_OVERTIME", "TID_NEXT_CARD", "TID_NO_CLAN", "TID_NPC_CLAN", "TID_MAX_ELIXIR",
              "TID_SPELL_ITEM_LEVEL_SHORT", "TID_TIME_RUN_OUT", "TID_EXTRA_TIME_SECONDS", "TID_ELIXIR_MULTIPLIER",
-             "TID_MATCH_OVER", "TID_TIME_M_S")
+             "TID_MATCH_OVER", "TID_TIME_M_S", "TID_YOU", "TID_ENEMY")
 
 
 def r2(v: float) -> float | int:

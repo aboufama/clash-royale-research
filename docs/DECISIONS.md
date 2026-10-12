@@ -156,3 +156,16 @@ change it.
   river jump, a lobbed spell, a scatter spell, a projectile spawn spell and a
   rolling spell, so each mechanic family is exercised.
 - **Would change if:** the owner names other cards to bring to the same bar.
+
+## 2026-10-12 — Battles default to the Ladder game mode's end rules
+
+- **Decision:** `BattleConfig.noDraws` defaults to true and `bestOfGame` to
+  false, the Ladder row of game_modes.csv (GameModeData +0x180 / +0x181). A
+  tie at the end of overtime therefore runs the battle manager's tiebreak
+  (0x10ca9a0); the Duel coin flip runs only when a caller sets `bestOfGame`.
+- **Why:** the sandbox has no game mode, and Ladder is the mode a normal 1v1
+  battle uses. The earlier community "lowest tower loses" rule was an
+  approximation; the ported tiebreak drains every tower until the lowest
+  falls, and equal towers draw.
+- **Would change if:** the viewer gains a mode picker or a native trace of a
+  tied battle shows another mode's flags.

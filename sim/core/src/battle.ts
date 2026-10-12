@@ -9,6 +9,8 @@
 //      projectile updates, then the damage flush (damage applied end of tick)
 //   4. end check
 //   5. frame counter increments
+// Once time is up with equal crowns (GameMode NoDraws), the battle manager's tiebreak (0x10ca9a0)
+// replaces 1-4 on every later tick (tiebreakTick) until a tower falls or the towers are level.
 // Each function below says where its behaviour comes from; see docs/FIDELITY.md.
 
 import { Arena, ARENA_H, ARENA_W, CELL, F_BLOCKED, F_OCCLUDER, F_WATER, PATH_CROSS, PATH_WALK } from './arena.ts';
@@ -38,6 +40,13 @@ export interface BattleConfig {
   recordEvents?: boolean;
   /** Deal decks in order instead of shuffling (tests). */
   noShuffle?: boolean;
+  /**
+   * The game mode's end flags (GameModeData NoDraws +0x180 / BestOfGame +0x181, loader 0xe2dd44,
+   * game_modes.csv). Default: the Ladder row (NoDraws true, BestOfGame false). NoDraws runs the
+   * tiebreak when time is up with equal crowns; BestOfGame (the Duel modes) takes its coin-flip branch.
+   */
+  noDraws?: boolean;
+  bestOfGame?: boolean;
   /**
    * Synthetic fixture mode (differential tests against native fixtures): no towers, every
    * point walkable, positions clamped to [0,width-1] x [0,height-1], no end checks.
@@ -104,8 +113,22 @@ export class Battle {
   readonly protectionCap: number;
   /** LOGIC_SYMMETRICAL_DEPLOY_SNAP (0xf9e16c). */
   readonly symmetricSnap: boolean;
+  /** GameModeData NoDraws / BestOfGame (see BattleConfig). */
+  readonly noDraws: boolean;
+  readonly bestOfGame: boolean;
 
   tick = 0;
+  /**
+   * Time is up (0xd360a8) and the end check was held back by the tiebreak gate: from the next tick
+   * on, step() runs the battle manager's tiebreak branch (0x10ca9a0) instead of the world tick.
+   */
+  timeUp = false;
+  /** Tiebreak clock, battle manager +0x1f4 (ms): +50 per tiebreak tick. The HUD shows print_tiebreaker past 1000. */
+  tiebreakMs = 0;
+  /** Draw clock, battle manager +0x1f8 (ms, BestOfGame only): +50 per tick while <= 2499. The HUD shows duel_battle_draw while non-zero. */
+  drawMs = 0;
+  /** Tiebreak finished, battle manager +0x1ef: the end check runs on the next tick. */
+  tiebreakDone = false;
   units: Unit[] = [];
   projectiles: Projectile[] = [];
   areaEffects: AreaEffect[] = [];
@@ -165,6 +188,8 @@ export class Battle {
     this.currentIgnoresPending = G.CURRENT_TARGET_IGNORES_PENDING_DAMAGE === true;
     this.protectionCap = typeof G.PROTECTION_CAP_PERCENTAGE === 'number' ? G.PROTECTION_CAP_PERCENTAGE : 100;
     this.symmetricSnap = G.LOGIC_SYMMETRICAL_DEPLOY_SNAP === true;
+    this.noDraws = cfg.noDraws ?? true;
+    this.bestOfGame = cfg.bestOfGame ?? false;
 
     const mk = (team: number): Player => {
       const deckNames = cfg.decks[team];
@@ -506,7 +531,25 @@ export class Battle {
   step(): void {
     if (this.result) return;
     if (this.recordEvents) this.events.length = 0;
+    if (this.timeUp) {
+      // battle manager tick 0x10ca9a0 with the time up (0xd360a8): the tiebreak branch while its gate
+      // holds, else the end check 0x10cb17c -> 0xd3e360
+      if (this.tiebreakGate()) this.tiebreakTick();
+      else this.endMatch('tiebreak');
+      this.tick++;
+      return;
+    }
     this.commitCommands();
+    this.worldTick();
+    this.checkEnd();
+    this.tick++;
+  }
+
+  /**
+   * The battle tick 0xd33f74 (timeline and world, without the command manager): King tower parts
+   * (hand refill, elixir), then the world phases of 0xf8cd90 (PORT_NOTES §1.3) and its maintenance.
+   */
+  private worldTick(): void {
     this.handTick();
     this.regenElixir();
     const units = this.units;
@@ -525,8 +568,6 @@ export class Battle {
     this.flushDamage(); // world vt+0x90 damage queue flush
     this.projectileMaintenance(); // world vt+0x18 at the end of the tick
     this.removeDead();
-    this.checkEnd();
-    this.tick++;
   }
 
   /** Advance n ticks (stops at the end of the match). */
@@ -3399,9 +3440,12 @@ export class Battle {
   // ---------------------------------------------------------------- end of match
 
   /**
-   * End rules [STAT runner audit]: a King at 0 HP ends the match at once. At the end of
-   * regulation the match ends if crowns differ, else overtime, where the first crown lead
-   * wins. Tied after overtime: tiebreak by the lowest tower HP (A, community rule).
+   * End check at the end of a world tick. A King at 0 HP ends the match at once [STAT runner
+   * audit]. Time is up (0xd360a8 / timeline 0xd5665c) at the end of regulation when the crowns
+   * differ, during overtime as soon as they differ, and at the end of overtime. Then the battle
+   * manager (0x10ca9a0) skips the end check while the tiebreak gate holds (equal crowns, NoDraws)
+   * and runs the tiebreak from the next tick on; otherwise the end check 0x10cb17c -> 0xd3e360 ends
+   * the match with the crown winner (equal crowns: a draw, -1).
    */
   private checkEnd(): void {
     if (this.fixture) return;
@@ -3412,17 +3456,136 @@ export class Battle {
       return;
     }
     const t = this.tick + 1; // ticks elapsed after this one
-    if (t >= this.regulationTicks) {
-      if (p0.crowns !== p1.crowns) {
-        this.result = { winner: p0.crowns > p1.crowns ? 0 : 1, reason: t === this.regulationTicks ? 'time' : 'overtime', tick: this.tick };
-        return;
+    if (t < this.regulationTicks) return;
+    if (p0.crowns === p1.crowns && t < this.regulationTicks + this.overtimeTicks) return;
+    if (this.tiebreakGate()) {
+      this.timeUp = true;
+      return;
+    }
+    this.endMatch(t === this.regulationTicks ? 'time' : 'overtime');
+  }
+
+  /** 0xd3e360 (non-BestOfGame branch): winner by crowns (0xfa4038), equal crowns -1. */
+  private endMatch(reason: BattleResult['reason']): void {
+    const a = this.players[0].crowns;
+    const b = this.players[1].crowns;
+    this.result = { winner: a === b ? -1 : a > b ? 0 : 1, reason, tick: this.tick };
+  }
+
+  /**
+   * Tiebreak gate of 0x10ca9a0: crowns equal (0xd3d63c) && GameMode.NoDraws && !touchdown (0xd36084,
+   * TargetTouchdowns; no touchdown modes here) && !tiebreak done (+0x1ef) && !ended (0xd4220c).
+   */
+  private tiebreakGate(): boolean {
+    return this.players[0].crowns === this.players[1].crowns && this.noDraws && !this.tiebreakDone && this.result === null;
+  }
+
+  /**
+   * One battle-manager tick of the tiebreak (0x10ca9a0, time up and gate held) [STAT]. Clock +0x1f4
+   * += 50 (compared before the add). Up to 1450 ms: the field is cleared (0x10cad30) and, if it
+   * held anything, one battle tick runs (0xd33f74). From 3250 ms: the towers drain (0x10cae90)
+   * until the lowest tower HP (0xd3d464) is gone or both sides' lowest are equal (0x10cb060); then
+   * done (+0x1ef). BestOfGame: equal sides at 1 HP (or a dead King) run the draw clock +0x1f8 to
+   * 2500 ms, then the drain picks one side at random (the coin flip). Every tiebreak tick ends with
+   * the world's damage flush (vt+0x90), its maintenance (vt+0x18) and the command manager (0xd75ed0).
+   */
+  private tiebreakTick(): void {
+    const old = this.tiebreakMs;
+    this.tiebreakMs = old + 50;
+    if (old <= 1450) {
+      if (this.tiebreakClear() > 0) this.worldTick();
+    } else if (old >= 3250) {
+      // 0xd3c0ec: leader (King) HP of side 0 / 1
+      const kingDead = this.players[0].king.hp < 1 || this.players[1].king.hp < 1;
+      let done: boolean;
+      if (!this.bestOfGame) {
+        this.tiebreakDrain(false);
+        done = this.lowestTowerHp() < 1 || this.towersTied();
+      } else {
+        const draw = this.towersTied() ? kingDead || this.lowestTowerHp() === 1 : kingDead;
+        let drain = !draw;
+        if (draw) {
+          if (this.drawMs <= 2499) this.drawMs += 50;
+          else if (kingDead) this.players[0].king.hp = 1; // leader 0 health +0x10 = 1
+          else drain = true;
+        }
+        if (drain) this.tiebreakDrain(true);
+        done = this.lowestTowerHp() <= 0 && !kingDead;
       }
-      if (t >= this.regulationTicks + this.overtimeTicks) {
-        const low = (p: Player) => Math.min(...[p.king, ...p.princess].filter((u) => u.alive).map((u) => u.hp));
-        const a = low(p0);
-        const b = low(p1);
-        this.result = { winner: a === b ? -1 : a > b ? 0 : 1, reason: 'tiebreak', tick: this.tick };
+      if (done) {
+        this.projectileMaintenance(); // world vt+0x18(0)
+        this.tiebreakDone = true;
       }
+    }
+    this.flushDamage(); // world vt+0x90
+    this.projectileMaintenance(); // world vt+0x18(0)
+    this.removeDead();
+    this.commitCommands(); // command manager 0xd75ed0
+  }
+
+  /**
+   * 0x10cad30 [STAT]: over the world list in id order (area effects from 3,000,000, projectiles
+   * from 4,000,000, characters from 5,000,000) area effects and projectiles are removed and every
+   * character except the crown towers (tower class vt+0x178, IsSummonerTower, CaptureTower) gets
+   * Actor_resumeDefaultState (0xf81a28; here the attack reset the engine uses for it) and a queued
+   * kill (0xfca24c: damage = its current HP, flag 8). Returns the number of actors found.
+   */
+  private tiebreakClear(): number {
+    let n = this.areaEffects.length + this.projectiles.length;
+    this.areaEffects.length = 0;
+    this.projectiles.length = 0;
+    for (const u of this.units) {
+      if (u.tower !== TOWER_NONE) continue;
+      if (u.state !== ST_DEAD) {
+        this.resetAttack(u);
+        this.queueDamage(u, u.hp, -1, 0);
+      }
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * Lowest tower HP of a side, 0xd3d4c8: min over its live Princess towers (list ctx +0x110) and
+   * its King (leader), from 999999.
+   */
+  private sideLowestHp(team: number): number {
+    const p = this.players[team];
+    let v = 999999;
+    for (const t of p.princess) if (t.alive && t.hp < v) v = t.hp;
+    return Math.min(v, p.king.hp);
+  }
+
+  /** 0xd3d464: lowest tower HP over both sides. */
+  lowestTowerHp(): number {
+    return Math.min(this.sideLowestHp(0), this.sideLowestHp(1));
+  }
+
+  /** 0x10cb060 (1v1): both sides' lowest tower HP are equal. */
+  towersTied(): boolean {
+    return this.sideLowestHp(0) === this.sideLowestHp(1);
+  }
+
+  /**
+   * Tower drain 0x10cae90(mgr, 0, coinFlip) [STAT]: the amount follows the lowest tower HP L
+   * (L < 21: 1, < 200: 10, < 500: 20, > 999: 50, else 40); every live Princess tower then the King of
+   * side 0, then side 1, gets it as queued damage (0xfca4d8, flag 8). With coinFlip, L == 1 and equal
+   * sides, only side Rng_rand(battle RNG, 2) drains. The DummyKingTower leaders (0xde09f4) are not
+   * drained; the crown towers here are never those.
+   */
+  private tiebreakDrain(coinFlip: boolean): void {
+    const low = this.lowestTowerHp();
+    const amount = low < 21 ? 1 : low < 200 ? 10 : low < 500 ? 20 : low > 999 ? 50 : 40;
+    let from = 0;
+    let to = 2;
+    if (low === 1 && this.towersTied() && coinFlip) {
+      from = this.nrng.next(2);
+      to = from + 1;
+    }
+    for (let i = from; i < to; i++) {
+      const p = this.players[i];
+      for (const t of p.princess) if (t.alive) this.queueDamage(t, amount, -1, 0);
+      this.queueDamage(p.king, amount, -1, 0);
     }
   }
 
@@ -3432,6 +3595,8 @@ export class Battle {
   hash(): string {
     const h = new Hasher();
     h.add(this.tick);
+    h.add(this.timeUp ? 1 : 0); h.add(this.tiebreakMs); h.add(this.drawMs); h.add(this.tiebreakDone ? 1 : 0);
+    h.add(this.nrng.state);
     for (const p of this.players) {
       h.add(p.elixir); h.add(p.pending); h.add(p.crowns);
       for (const c of p.hand) h.add(c);

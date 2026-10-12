@@ -29,7 +29,8 @@ test('random self-play matches end with a result by the overtime limit', () => {
   for (const seed of [11, 12, 13, 14]) {
     const b = selfPlay(seed, 7000);
     assert.ok(b.result, `seed ${seed} ended`);
-    assert.ok(b.result!.tick < 6000);
+    // a tie at the end of overtime goes through the tiebreak (0x10ca9a0), which ends it in at most ~10 s
+    assert.ok(b.result!.tick < 6000 || (b.result!.reason === 'tiebreak' && b.result!.tick < 6200));
     assert.ok(b.players.every((p) => p.elixir >= 0 && p.elixir <= 100000));
   }
 });
