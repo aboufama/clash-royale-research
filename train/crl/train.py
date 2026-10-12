@@ -79,7 +79,8 @@ def parse(argv=None):
     a("--ckpt-every", type=int, default=10)
     a("--max-updates", type=int, default=0, help="stop after this many updates (0 = no limit)")
     a("--resume", default="", help="checkpoint path (default: <out>/latest.pt if present)")
-    a("--compile", action="store_true", help="torch.compile the networks")
+    a("--compile", action="store_true", help="(unused)")
+    a("--no-cuda-graphs", action="store_true", help="eager inference instead of CUDA graphs")
     a("--smoke", action="store_true", help="tiny CPU configuration for a quick end-to-end check")
     args = p.parse_args(argv)
     if args.smoke:
@@ -181,6 +182,54 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
     return {k: float(torch.stack(v).float().mean()) for k, v in logs.items()}
 
 
+class GraphedInfer:
+    """Inference through CUDA graphs captured at a few batch sizes: one replay instead of ~1000 kernel
+    launches per call (the launches, not the arithmetic, dominated a frame's inference). Rows are padded
+    to the next captured size; padded rows have no legal action and are dropped. Weights are updated in
+    place (load_state_dict copies into the captured parameters), so the graphs stay valid."""
+
+    def __init__(self, actor, critic, floats: int, mask_bytes: int, device: torch.device, sizes=(64, 128, 256, 512, 1024, 2048)):
+        self.actor, self.critic, self.sizes = actor, critic, sizes
+        self.graphs = {}
+        autocast = make_autocast(device)
+        for B in sizes:
+            obs = torch.zeros(B, floats, device=device)
+            masks = torch.zeros(B, mask_bytes, dtype=torch.uint8, device=device)
+            masks[:, 0] = 1
+            stream = torch.cuda.Stream()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream), torch.no_grad(), autocast():
+                for _ in range(2):
+                    self._run(obs, masks)
+            torch.cuda.current_stream().wait_stream(stream)
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g), torch.no_grad(), autocast():
+                out = self._run(obs, masks)
+            self.graphs[B] = (g, obs, masks, out)
+
+    def _run(self, obs, masks):
+        a = self.actor.act_packed(obs, masks)
+        if self.critic is None:
+            return a
+        return torch.cat([a, self.critic(obs).float().unsqueeze(1)], 1)
+
+    def __call__(self, obs: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
+        n = obs.shape[0]
+        B = next((b for b in self.sizes if b >= n), None)
+        if B is None:  # larger than every capture: split
+            half = n // 2
+            return torch.cat([self(obs[:half], masks[:half]), self(obs[half:], masks[half:])])
+        g, so, sm, out = self.graphs[B]
+        so[:n].copy_(obs)
+        sm[:n].copy_(masks)
+        if n < B:
+            so[n:].zero_()
+            sm[n:].zero_()
+            sm[n:, 0] = 1
+        g.replay()
+        return out[:n]
+
+
 def cpu_state(m: torch.nn.Module) -> dict:
     return {k: v.detach().to("cpu", copy=True) for k, v in m.state_dict().items()}
 
@@ -270,6 +319,9 @@ def main(argv=None):
     critic.load_state_dict(c_state)
     run_actor, run_critic = actor, critic
     autocast = make_autocast(device)
+    use_graphs = device.type == "cuda" and not args.no_cuda_graphs
+    infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device) if use_graphs else None
+    opp_graphs: dict[int, GraphedInfer] = {}
 
     league.resample(actor, device)
     models: dict[int, torch.nn.Module] = {s.sid: m for s, m in league.active}
@@ -342,7 +394,8 @@ def main(argv=None):
             if learn.any():
                 li_rows = np.nonzero(learn)[0]
                 lt = torch.from_numpy(li_rows).to(device)
-                packed = torch.cat([run_actor.act_packed(obs_t[lt], masks_t[lt]), run_critic(obs_t[lt]).float().unsqueeze(1)], 1)
+                packed = infer(obs_t[lt], masks_t[lt]) if infer is not None else \
+                    torch.cat([run_actor.act_packed(obs_t[lt], masks_t[lt]), run_critic(obs_t[lt]).float().unsqueeze(1)], 1)
                 packed = packed.cpu().numpy()  # the one host sync for the learner's rows
                 s_np, t_np = packed[:, 0].astype(np.int64), packed[:, 1].astype(np.int64)
                 lp_np, v_np = packed[:, 2].astype(np.float32), packed[:, 3].astype(np.float32)
@@ -369,7 +422,8 @@ def main(argv=None):
                 if m is None:
                     continue  # snapshot dropped while its episode ran: it waits (slot 0)
                 rt = torch.from_numpy(rows).to(device)
-                pk = m.act_packed(obs_t[rt], masks_t[rt]).cpu().numpy()
+                gi_ = opp_graphs.get(sid)
+                pk = (gi_(obs_t[rt], masks_t[rt]) if gi_ is not None else m.act_packed(obs_t[rt], masks_t[rt])).cpu().numpy()
                 slot[rows], tile[rows] = pk[:, 0].astype(np.int64), pk[:, 1].astype(np.int64)
             timing["p_opp_s"] += time.time() - tp3
         return np.stack([gids, teams, slot, tile], 1).astype(np.int32)
@@ -400,6 +454,13 @@ def main(argv=None):
             if sid not in new_models and sid in models:
                 new_models[sid] = models[sid]
         models = new_models
+        if use_graphs:
+            for sid in list(opp_graphs):
+                if sid not in models:
+                    del opp_graphs[sid]
+            for sid, m in models.items():
+                if sid not in opp_graphs:
+                    opp_graphs[sid] = GraphedInfer(m, None, pool.floats, pool.mask_bytes, device, sizes=(64, 128, 256, 512))
         info = p["info"]
         rec = {"update": update, "decisions": total_decisions, "transitions": info["transitions"], "shape_coef": shape_coef(),
                "explained_var": info["explained_var"], "play_rate": info["play_rate"], "league": len(league.pool),
