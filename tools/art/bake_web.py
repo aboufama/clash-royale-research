@@ -1294,7 +1294,8 @@ class Baker:
             d = {"name": r["Name"], "hi": int(r.get("IndexHi") or 0), "lo": lo, "sc": pack, "clip": clip, "icon": icon,
                  "crystal": r.get("UseCrystalBackground") == "True", "frames": self.clip_info(r["ScFile"], clip)["frames"]}
             sfx = r.get("SfxFile") or ""
-            if sfx and apk.exists(sfx):
+            # decoded audio follows --no-audio (the Pages bake keeps audio off the public site)
+            if sfx and self.args.audio and apk.exists(sfx):
                 (OUT / "emotes").mkdir(parents=True, exist_ok=True)
                 (OUT / "emotes" / Path(sfx).name).write_bytes(apk.read(sfx))
                 d["sfx"] = f"emotes/{Path(sfx).name}"
