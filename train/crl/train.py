@@ -64,7 +64,9 @@ def parse(argv=None):
     a("--clip", type=float, default=0.2)
     a("--vclip", type=float, default=0.5)
     a("--vf", type=float, default=0.5)
-    a("--ent", type=float, default=0.01)
+    a("--ent", type=float, default=0.01, help="default for --ent-slot / --ent-tile")
+    a("--ent-slot", type=float, default=None, help="entropy bonus of the slot head (wait / which card)")
+    a("--ent-tile", type=float, default=None, help="entropy bonus of the tile head")
     a("--max-grad", type=float, default=1.0)
     a("--total-decisions", type=float, default=5e9)
     # model
@@ -96,6 +98,10 @@ def parse(argv=None):
         args.bot_prob = 0.25
     if not args.buffer:
         args.buffer = 2 * args.rollout + 4 * args.workers * args.envs
+    if args.ent_slot is None:
+        args.ent_slot = args.ent
+    if args.ent_tile is None:
+        args.ent_tile = args.ent
     if not args.learner_device:
         args.learner_device = "cuda:1" if args.device.startswith("cuda") and torch.cuda.device_count() > 1 else args.device
     return args
@@ -178,7 +184,8 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
             r = d["ret"][mb]
             vl = 0.5 * torch.max((v - r) ** 2, (vc - r) ** 2).mean()
             ent = ent_s.mean() + ent_t.mean()
-            loss = pg + args.vf * vl - args.ent * ent
+            # separate entropy weights: the slot choice (when / which card) collapsed far faster than the tile
+            loss = pg + args.vf * vl - args.ent_slot * ent_s.mean() - args.ent_tile * ent_t.mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             gn = torch.nn.utils.clip_grad_norm_(params, args.max_grad)
