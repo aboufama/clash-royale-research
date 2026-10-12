@@ -97,6 +97,7 @@ def parse(argv=None):
         args.snapshot_every, args.ckpt_every = 1, 1
         args.max_updates = args.max_updates or 3
         args.bot_prob = 0.25
+    args.workers = max(args.workers, args.collectors)  # every collector needs at least one worker
     if not args.buffer:
         args.buffer = 2 * args.rollout + 4 * args.workers * args.envs
     if args.ent_slot is None:

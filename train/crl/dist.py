@@ -40,6 +40,8 @@ def _drain(q):
             out.append(q.get_nowait())
         except queue.Empty:
             return out
+        except (FileNotFoundError, ConnectionError, EOFError):
+            return out  # the sender (and its shared-memory tensors) is gone: shutting down
 
 
 # ------------------------------------------------------------------------------------------ learner
