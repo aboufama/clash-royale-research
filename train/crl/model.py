@@ -160,6 +160,13 @@ class TileHead(nn.Module):
         return self.out(q)  # (B, tiles, dt), tile index = row * w + col
 
 
+def sample_logits(logits: torch.Tensor) -> torch.Tensor:
+    """Categorical sample by the Gumbel-max trick: no host sync (torch.distributions.Categorical validates
+    its arguments with a .all() that waits for the GPU)."""
+    u = torch.rand_like(logits).clamp_(1e-12, 1.0 - 1e-7)
+    return (logits - torch.log(-torch.log(u))).argmax(-1)
+
+
 def masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
 
@@ -206,7 +213,7 @@ class Actor(nn.Module):
         tok, kpm, glob, slot_tok = self.trunk(obs)
         sm = masks[:, :5].bool()
         sl = masked_logits(self.slot_logits(glob, slot_tok).float(), sm)
-        slot = sl.argmax(-1) if greedy else torch.distributions.Categorical(logits=sl).sample()
+        slot = sl.argmax(-1) if greedy else sample_logits(sl)
         logp = torch.log_softmax(sl, -1).gather(1, slot.unsqueeze(1)).squeeze(1)
         tile = torch.zeros_like(slot)
         play = slot > 0
@@ -215,7 +222,7 @@ class Actor(nn.Module):
             tl = self.tile_logits(tok[r], kpm[r], glob[r], slot_tok[r], slot[r]).float()
             tm = self.chosen_tile_mask(masks[r], slot[r])
             tl = masked_logits(tl, tm)
-            t = tl.argmax(-1) if greedy else torch.distributions.Categorical(logits=tl).sample()
+            t = tl.argmax(-1) if greedy else sample_logits(tl)
             tile[r] = t
             logp[r] = logp[r] + torch.log_softmax(tl, -1).gather(1, t.unsqueeze(1)).squeeze(1)
         return slot, tile, logp
@@ -226,13 +233,13 @@ class Actor(nn.Module):
         its tile is ignored). Returns one (B, 3) float tensor [slot, tile, logp] for a single transfer."""
         tok, kpm, glob, slot_tok = self.trunk(obs)
         sl = masked_logits(self.slot_logits(glob, slot_tok).float(), masks[:, :5].bool())
-        slot = sl.argmax(-1) if greedy else torch.distributions.Categorical(logits=sl).sample()
+        slot = sl.argmax(-1) if greedy else sample_logits(sl)
         logp = torch.log_softmax(sl, -1).gather(1, slot.unsqueeze(1)).squeeze(1)
         tl = self.tile_logits(tok, kpm, glob, slot_tok, slot).float()
         tm = self.chosen_tile_mask(masks, slot)
         tm = tm | ~tm.any(-1, keepdim=True)  # a waiting row may have no legal tile for slot 1
         tl = masked_logits(tl, tm)
-        tile = tl.argmax(-1) if greedy else torch.distributions.Categorical(logits=tl).sample()
+        tile = tl.argmax(-1) if greedy else sample_logits(tl)
         tlp = torch.log_softmax(tl, -1).gather(1, tile.unsqueeze(1)).squeeze(1)
         play = slot > 0
         logp = logp + torch.where(play, tlp, torch.zeros_like(tlp))
