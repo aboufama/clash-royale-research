@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
+import queue
 import random
 import time
 from collections import defaultdict
@@ -122,6 +122,100 @@ class Stats:
         return out
 
 
+def make_autocast(device: torch.device):
+    if device.type == "cuda":
+        return lambda: torch.autocast("cuda", dtype=torch.bfloat16)
+    return lambda: torch.autocast("cpu", enabled=False)
+
+
+def build_nets(spec: dict, mcfg: ModelConfig, device: torch.device):
+    lay = Layout(spec)
+    return Actor(lay, mcfg).to(device), Critic(lay, mcfg).to(device)
+
+
+def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> dict:
+    """PPO epochs over one rollout (`data`: CPU tensors from the collector). Returns mean logs."""
+    autocast = make_autocast(device)
+    params = list(actor.parameters()) + list(critic.parameters())
+    if args.lr_decay:
+        for g in opt.param_groups:
+            g["lr"] = data["lr"]
+    d = {k: v.to(device) for k, v in data.items() if isinstance(v, torch.Tensor)}
+    obs_all = d["obs"]  # float16
+    N = obs_all.shape[0]
+    logs = defaultdict(list)
+    actor.train()
+    critic.train()
+    for _ in range(args.epochs):
+        perm = torch.randperm(N, device=device)
+        for start in range(0, N, args.minibatch):
+            mb = perm[start:start + args.minibatch]
+            o = obs_all[mb].float()
+            with autocast():
+                logp, ent_s, ent_t = actor.evaluate(o, d["slot_mask"][mb], d["tile_mask"][mb], d["slot"][mb], d["tile"][mb])
+                v = critic(o).float()
+            ratio = torch.exp(logp - d["logp"][mb])
+            a = d["adv"][mb]
+            pg = -torch.min(ratio * a, ratio.clamp(1 - args.clip, 1 + args.clip) * a).mean()
+            vo = d["value"][mb]
+            vc = vo + (v - vo).clamp(-args.vclip, args.vclip)
+            r = d["ret"][mb]
+            vl = 0.5 * torch.max((v - r) ** 2, (vc - r) ** 2).mean()
+            ent = ent_s.mean() + ent_t.mean()
+            loss = pg + args.vf * vl - args.ent * ent
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            gn = torch.nn.utils.clip_grad_norm_(params, args.max_grad)
+            opt.step()
+            with torch.no_grad():
+                plays = (d["slot"][mb] > 0).sum().clamp(min=1)
+                logs["loss_pg"].append(pg.detach())
+                logs["loss_v"].append(vl.detach())
+                logs["entropy_slot"].append(ent_s.mean().detach())
+                logs["entropy_tile"].append(ent_t.sum().detach() / plays)
+                logs["approx_kl"].append(((ratio - 1) - torch.log(ratio)).mean().detach())
+                logs["clipfrac"].append(((ratio - 1).abs() > args.clip).float().mean().detach())
+                logs["grad_norm"].append(gn.detach())
+    actor.eval()
+    critic.eval()
+    return {k: float(torch.stack(v).float().mean()) for k, v in logs.items()}
+
+
+def cpu_state(m: torch.nn.Module) -> dict:
+    return {k: v.detach().to("cpu", copy=True) for k, v in m.state_dict().items()}
+
+
+def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, out_q) -> None:
+    """Learner process: owns the trained networks and the optimizer, so the PPO update runs while the
+    collector keeps simulating with the previous weights (PPO's ratio uses the behaviour log-probs)."""
+    device = torch.device(args.device)
+    torch.set_num_threads(2)
+    actor, critic = build_nets(spec, mcfg, device)
+    opt = torch.optim.Adam(list(actor.parameters()) + list(critic.parameters()), lr=args.lr, eps=1e-5)
+    if resume:
+        ck = torch.load(resume, map_location=device)
+        actor.load_state_dict(ck["actor"])
+        critic.load_state_dict(ck["critic"])
+        opt.load_state_dict(ck["opt"])
+    actor.eval()
+    critic.eval()
+    out_q.put(("init", cpu_state(actor), cpu_state(critic)))
+    while True:
+        msg = in_q.get()
+        if msg[0] == "stop":
+            return
+        if msg[0] == "update":
+            t0 = time.time()
+            logs = ppo_update(actor, critic, opt, msg[1], args, device)
+            logs["update_s"] = time.time() - t0
+            out_q.put(("updated", logs, cpu_state(actor), cpu_state(critic)))
+        elif msg[0] == "ckpt":
+            path, extra = msg[1], msg[2]
+            tmp = Path(str(path) + ".tmp")
+            torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "opt": opt.state_dict(), **extra}, tmp)
+            os.replace(tmp, path)
+
+
 def main(argv=None):
     args = parse(argv)
     out = Path(args.out)
@@ -141,12 +235,13 @@ def main(argv=None):
     pool = EnvPool(args.workers, args.envs, args.seed, env_cfg)
     spec = pool.spec
     (out / "spec.json").write_text(json.dumps(spec))
-    lay = Layout(spec)
     mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.tile_dim, 4, args.critic_d_model, args.critic_layers)
-    actor = Actor(lay, mcfg).to(device)
-    critic = Critic(lay, mcfg).to(device)
-    params = list(actor.parameters()) + list(critic.parameters())
-    opt = torch.optim.Adam(params, lr=args.lr, eps=1e-5)
+    # the collector's copies (behaviour policy); the learner process owns the trained ones
+    actor, critic = build_nets(spec, mcfg, device)
+    actor.eval()
+    critic.eval()
+    for p_ in list(actor.parameters()) + list(critic.parameters()):
+        p_.requires_grad_(False)
     league = League(out, args.league_size, args.active_opponents, args.pfsp_power, rng)
     n_tiles = spec["sizes"]["N_TILES"]
     buf = Rollout(args.buffer, pool.floats, n_tiles)
@@ -157,19 +252,20 @@ def main(argv=None):
     total_decisions = 0
     resume = args.resume or (str(out / "latest.pt") if (out / "latest.pt").exists() else "")
     if resume:
-        ck = torch.load(resume, map_location=device)
-        actor.load_state_dict(ck["actor"])
-        critic.load_state_dict(ck["critic"])
-        opt.load_state_dict(ck["opt"])
+        ck = torch.load(resume, map_location="cpu")
         league.load_state(ck["league"])
         update, total_decisions = ck["update"], ck["total_decisions"]
         print(f"resumed {resume} at update {update}, {total_decisions:.3g} decisions", flush=True)
+        del ck
+    mp = torch.multiprocessing.get_context("spawn")
+    to_learner, from_learner = mp.Queue(), mp.Queue()
+    learner = mp.Process(target=learner_main, args=(args, spec, mcfg, resume, to_learner, from_learner), daemon=True)
+    learner.start()
+    _, a_state, c_state = from_learner.get()
+    actor.load_state_dict(a_state)
+    critic.load_state_dict(c_state)
     run_actor, run_critic = actor, critic
-    if args.compile:
-        run_actor = torch.compile(actor)
-        run_critic = torch.compile(critic)
-    amp = device.type == "cuda"
-    autocast = (lambda: torch.autocast("cuda", dtype=torch.bfloat16)) if amp else (lambda: torch.autocast("cpu", enabled=False))
+    autocast = make_autocast(device)
 
     league.resample(actor, device)
     models: dict[int, torch.nn.Module] = {s.sid: m for s, m in league.active}
@@ -264,6 +360,54 @@ def main(argv=None):
                 slot[rows], tile[rows] = s.cpu().numpy(), t.cpu().numpy()
         return np.stack([gids, teams, slot, tile], 1).astype(np.int32)
 
+    def snapshot() -> dict:
+        """Hand the complete transitions to the learner and free them from the buffer."""
+        idx, adv, ret = buf.advantages(args.gamma, args.lam)
+        adv_n = (adv - adv.mean()) / (adv.std() + 1e-8)
+        t = lambda a: torch.from_numpy(np.ascontiguousarray(a))  # noqa: E731
+        data = {"obs": t(buf.obs[idx]), "slot_mask": t(buf.slot_mask[idx]), "tile_mask": t(buf.tile_mask[idx]),
+                "slot": t(buf.slot[idx]), "tile": t(buf.tile[idx]), "logp": t(buf.logp[idx]), "value": t(buf.value[idx]),
+                "adv": t(adv_n.astype(np.float32)), "ret": t(ret.astype(np.float32)),
+                "lr": args.lr * max(0.0, 1.0 - total_decisions / args.total_decisions)}
+        var = float(np.var(ret))
+        info = {"transitions": len(idx), "explained_var": 1.0 - float(np.var(ret - buf.value[idx])) / var if var > 0 else 0.0,
+                "play_rate": float((buf.slot[idx] > 0).mean()), "t_submit": time.time()}
+        buf.compact(stream_last)
+        return {"data": data, "info": info}
+
+    def finish_update(p: dict, ulogs: dict) -> bool:
+        nonlocal models
+        if update % args.snapshot_every == 0:
+            league.add(actor, update)
+        league.resample(actor, device)
+        referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
+        new_models = {s_.sid: m for s_, m in league.active}
+        for sid in referenced:
+            if sid not in new_models and sid in models:
+                new_models[sid] = models[sid]
+        models = new_models
+        info = p["info"]
+        rec = {"update": update, "decisions": total_decisions, "transitions": info["transitions"], "shape_coef": shape_coef(),
+               "explained_var": info["explained_var"], "play_rate": info["play_rate"], "league": len(league.pool),
+               "update_wall_s": time.time() - info["t_submit"], **ulogs, **stats.summary(), **{f"t_{k}": v for k, v in timing.items()}}
+        metrics_f.write(json.dumps(rec) + "\n")
+        metrics_f.flush()
+        wr = " ".join(f"{k[11:]}={v:.2f}" for k, v in rec.items() if k.startswith("winrate_vs_"))
+        print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
+              f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "
+              f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s "
+              f"proc {timing['process_s']:.1f}s upd {rec.get('update_s', 0):.1f}s rec/frame "
+              f"{timing['records'] / max(1, timing['frames']):.0f}", flush=True)
+        stats.reset()
+        timing.clear()
+        if update % args.ckpt_every == 0:
+            extra = {"league": league.state(), "update": update, "total_decisions": total_decisions, "args": vars(args),
+                     "model": mcfg.__dict__}
+            to_learner.put(("ckpt", str(out / "latest.pt"), extra))
+            torch.save({"actor": actor.state_dict(), "model": mcfg.__dict__, "update": update}, out / f"actor_{update:06d}.pt")
+        return bool((args.max_updates and update >= args.max_updates) or total_decisions >= args.total_decisions)
+
+    pending = None
     timing = defaultdict(float)
     groups = [list(pool.group(g, args.groups)) for g in range(args.groups)]
     groups = [g for g in groups if g]
@@ -284,96 +428,26 @@ def main(argv=None):
         timing["frames"] += 1
         timing["records"] += len(fr.meta)
         gi = (gi + 1) % len(groups)
-        if buf.n_complete < args.rollout:
-            continue
-
-        # ---------------------------------------------------------------- PPO update
-        t_up = time.time()
-        if args.lr_decay:
-            for g in opt.param_groups:
-                g["lr"] = args.lr * max(0.0, 1.0 - total_decisions / args.total_decisions)
-        idx, adv, ret = buf.advantages(args.gamma, args.lam)
-        N = len(idx)
-        adv_n = (adv - adv.mean()) / (adv.std() + 1e-8)
-        dev = lambda a, dt=None: torch.from_numpy(np.ascontiguousarray(a)).to(device, dtype=dt)  # noqa: E731
-        obs_all = torch.from_numpy(buf.obs[idx]).to(device)  # float16, the whole rollout on the device
-        sm_all, tm_all = dev(buf.slot_mask[idx]), dev(buf.tile_mask[idx])
-        slot_all, tile_all = dev(buf.slot[idx]), dev(buf.tile[idx])
-        logp_old, v_old = dev(buf.logp[idx]), dev(buf.value[idx])
-        adv_t, ret_t = dev(adv_n), dev(ret)
-        logs = defaultdict(list)
-        actor.train()
-        critic.train()
-        for _ in range(args.epochs):
-            perm = torch.randperm(N)
-            for start in range(0, N, args.minibatch):
-                mb = perm[start:start + args.minibatch]
-                mbd = mb.to(device)
-                o = obs_all[mbd].float()
-                with autocast():
-                    logp, ent_s, ent_t = run_actor.evaluate(o, sm_all[mbd], tm_all[mbd], slot_all[mbd], tile_all[mbd])
-                    v = run_critic(o).float()
-                ratio = torch.exp(logp - logp_old[mbd])
-                a = adv_t[mbd]
-                pg = -torch.min(ratio * a, ratio.clamp(1 - args.clip, 1 + args.clip) * a).mean()
-                vo = v_old[mbd]
-                vc = vo + (v - vo).clamp(-args.vclip, args.vclip)
-                r = ret_t[mbd]
-                vl = 0.5 * torch.max((v - r) ** 2, (vc - r) ** 2).mean()
-                ent = ent_s.mean() + ent_t.mean()
-                loss = pg + args.vf * vl - args.ent * ent
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                gn = torch.nn.utils.clip_grad_norm_(params, args.max_grad)
-                opt.step()
-                with torch.no_grad():
-                    logs["loss_pg"].append(pg.item())
-                    logs["loss_v"].append(vl.item())
-                    logs["entropy_slot"].append(ent_s.mean().item())
-                    logs["entropy_tile"].append(ent_t.sum().item() / max(1, int((slot_all[mbd] > 0).sum())))
-                    logs["approx_kl"].append(((ratio - 1) - torch.log(ratio)).mean().item())
-                    logs["clipfrac"].append(((ratio - 1).abs() > args.clip).float().mean().item())
-                    logs["grad_norm"].append(float(gn))
-        actor.eval()
-        critic.eval()
-        var = float(np.var(ret))
-        ev = 1.0 - float(np.var(ret - buf.value[idx])) / var if var > 0 else 0.0
-        play_rate = float((buf.slot[idx] > 0).mean())
-        buf.compact(stream_last)
-        update += 1
-
-        if update % args.snapshot_every == 0:
-            league.add(actor, update)
-        league.resample(actor, device)
-        referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
-        new_models = {s.sid: m for s, m in league.active}
-        for sid in referenced:
-            if sid not in new_models and sid in models:
-                new_models[sid] = models[sid]
-        models = new_models
-
-        rec = {"update": update, "decisions": total_decisions, "transitions": N, "shape_coef": shape_coef(), "explained_var": ev,
-               "play_rate": play_rate, "update_s": time.time() - t_up, "league": len(league.pool),
-               **{k: float(np.mean(v)) for k, v in logs.items()}, **stats.summary(), **{f"t_{k}": v for k, v in timing.items()}}
-        metrics_f.write(json.dumps(rec) + "\n")
-        metrics_f.flush()
-        wr = " ".join(f"{k[11:]}={v:.2f}" for k, v in rec.items() if k.startswith("winrate_vs_"))
-        print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {ev:.2f} kl {rec.get('approx_kl', 0):.4f} "
-              f"ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} play {play_rate:.2f} "
-              f"ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s proc {timing['process_s']:.1f}s "
-              f"upd {rec['update_s']:.1f}s rec/frame {timing['records'] / max(1, timing['frames']):.0f}", flush=True)
-        stats.reset()
-        timing.clear()
-
-        if update % args.ckpt_every == 0:
-            ck = {"actor": actor.state_dict(), "critic": critic.state_dict(), "opt": opt.state_dict(), "league": league.state(),
-                  "update": update, "total_decisions": total_decisions, "args": vars(args), "model": mcfg.__dict__}
-            tmp = out / "latest.pt.tmp"
-            torch.save(ck, tmp)
-            os.replace(tmp, out / "latest.pt")
-            torch.save({"actor": actor.state_dict(), "model": mcfg.__dict__, "update": update}, out / f"actor_{update:06d}.pt")
-        if (args.max_updates and update >= args.max_updates) or total_decisions >= args.total_decisions:
-            break
+        if pending is not None:
+            # wait for the learner only when the buffer could overflow before the next frame
+            full = buf.n + 2 * args.workers * args.envs > buf.cap
+            try:
+                msg = from_learner.get() if full else from_learner.get_nowait()
+            except queue.Empty:
+                msg = None
+            if msg is not None:
+                _, ulogs, a_state, c_state = msg
+                actor.load_state_dict(a_state)
+                critic.load_state_dict(c_state)
+                update += 1
+                if finish_update(pending, ulogs):
+                    break
+                pending = None
+        if pending is None and buf.n_complete >= args.rollout:
+            pending = snapshot()
+            to_learner.put(("update", pending["data"]))
+    to_learner.put(("stop",))
+    learner.join(timeout=60)
     pool.close()
     metrics_f.close()
 
