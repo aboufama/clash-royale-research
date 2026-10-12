@@ -51,6 +51,8 @@ export class BattleUi {
   areaAlpha = 0;
   preview: PreviewInput | null = null;
   private timers: { t: DeployTimer; x: number; y: number; team: Team }[] = [];
+  /** elixir cost texts of the own plays (0xbe5898 / 0xbe59e8, list +0x400 of the battle screen) */
+  private floats: { x: number; y: number; text: string; clip: ClipPlayer }[] = [];
   private range: ImageBitmap | null = null;
   private footprint: { exp: string; clip: ClipPlayer; scale: number } | null = null;
   private indicatorClip: ClipPlayer | null = null;
@@ -66,6 +68,7 @@ export class BattleUi {
   /** New battle: drop timers, pending marks and the overlay state. */
   reset(): void {
     this.timers = [];
+    this.floats = [];
     this.pending = [];
     this.preview = null;
     this.areaAlpha = 0;
@@ -183,7 +186,17 @@ export class BattleUi {
    * "remove" or "remove_end" label strings, so those ranges of the clip are never played.
    */
   markPending(team: number, card: string, x: number, y: number, tick: number): void {
-    void team; void card; void x; void y; void tick;
+    void tick;
+    // the own play's elixir cost floats up from the drop point (hand release 0x8df9fc -> 0xbe59e8):
+    // elixir_float_txt with icon/txt = "-<cost>", played once, then removed
+    const ui = this.ui;
+    const b = this.battleRef;
+    if (!ui || !b || team !== this.hud.team || !ui.has('elixir_float_txt')) return;
+    const cost = b.defs.card(card, b.levels[team]).cost;
+    if (cost < 1) return;
+    const clip = new ClipPlayer(ui.frameCount('elixir_float_txt'), ui.fps('elixir_float_txt') || 30);
+    clip.playRange(0, clip.frames - 1, false);
+    this.floats.push({ x, y, text: `-${cost}`, clip });
   }
 
   /** Footprint clip of a card (0x8e4eb4: TileSize of a building, capped at 4; 1x1 otherwise; none without ghosts). */
@@ -272,6 +285,8 @@ export class BattleUi {
     this.areaAlpha = deployAreaAlpha(this.areaAlpha, deployAreaShown(sel ? this.spellOf(sel) : null), dt);
     // deploy timers (0x8d9ad0)
     this.timers = this.timers.filter((tm) => tm.t.update(simDt));
+    // cost texts: UI clips on the wall clock, removed once played through
+    this.floats = this.floats.filter((fl) => { const was = fl.clip.playing; fl.clip.advance(dt); return was; });
     this.hud.update(dt, b);
     // preview clips
     const pv = this.preview;
@@ -418,6 +433,12 @@ export class BattleUi {
       const [sx, sy] = this.toStage(...this.art.gameToPx(tm.x, tm.y));
       const exp = tm.team === this.hud.team ? 'troopDeployTimer_player' : 'troopDeployTimer_enemy';
       r.draw(ui, exp, tm.t.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE, { childFrame: tm.t.frame });
+    }
+    // own plays' elixir cost texts, in the same container as the timers (+0x300), added after them
+    for (const fl of this.floats) {
+      const [sx, sy] = this.toStage(...this.art.gameToPx(fl.x, fl.y));
+      r.draw(ui, 'elixir_float_txt', fl.clip.frame, [1, 0, 0, 1, Math.trunc(sx), Math.trunc(sy)], WHITE,
+        { childFrame: fl.clip.frame, text: { txt: fl.text } });
     }
     // drag name text (spell_placement_text): projected drop point, y + SPELL_DRAG_NAME_Y_POS / layer scale
     const pv = this.preview;
