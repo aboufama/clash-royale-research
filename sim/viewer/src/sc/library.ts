@@ -169,6 +169,19 @@ export class ScLibrary {
     return out;
   }
 
+  /**
+   * Height (maxY − minY) of an export's frame drawn through the 2×2 matrix [a, b, c, d] with no
+   * translation: DisplayObject height 0x123ca58 (bounds pass 0x125a0f4 with the object's own matrix).
+   * 0 when the frame is empty.
+   */
+  frameHeight(exportName: string, frame: number, m: [number, number, number, number]): number {
+    const id = this.exports.get(exportName);
+    if (id === undefined) return 0;
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    this.accBounds(id, frame, [m[0], m[1], m[2], m[3], 0, 0], b, 0);
+    return b[0] <= b[2] ? b[3] - b[1] : 0;
+  }
+
   private accBounds(id: number, frame: number, m: number[], b: number[], depth: number): void {
     if (depth > 16) return;
     const shape = this.shapes.get(id);

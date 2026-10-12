@@ -38,10 +38,13 @@
 // (unless NoBounce) restarts the arc at 0 with direction and vz × 0.65 (StopOnBounce: everything 0 and
 // the clip stops). Scale RandomScale-jittered × RenderableScale% × lerp(StartScale, EndScale)/100 over
 // life (only when either is set); FadeIn/FadeOut alpha; RotateToDirection turns the clip by the launch
-// angle; RotateMin/MaxSpeed spin per step. Clips play once over the particle's life (frame
+// angle (not with FrameFromAngle, which launches along (sin, −cos) and picks frame ⌊⌊angle⌋·n / 360⌋);
+// RotateMin/MaxSpeed spin per step. Clips play once over the particle's life (frame
 // ⌊age·n/life⌋) unless LoopParticleClip (loop) or PlayParticleClipOnce / a "playOnce" first label
 // (play once at fps). Tails (Min/MaxTailLength ms): a second point integrated `tail` ms behind; the
-// clip is stretched from it to the head ((|d| + w)·s / w along atan2 d). Shadow emitters add a copy in
+// clip is stretched from it to the head ((|d| + h)·s / h along atan2 d, h = the clip's height
+// 0x123ca58: its current frame's bounds through its own rotation, before this step's frame update;
+// the client measures the height, not the width). Shadow emitters add a copy in
 // the Ground layer at (x, y, 0) offset (−5, 15 + ShadowYShift) px, skew 0.6, flipped vertically,
 // tinted by the location shadow colour × ShadowMul% and alpha ShadowA · ShadowMulA / 25500.
 //
@@ -52,7 +55,7 @@
 //
 // Approximations (A): the client's Mersenne-Twister effect RNG is replaced by a seeded xorshift;
 // emitter modifiers (EmitterReplaceType), trails (TrailSWF), SpecialEffect emitter types 1/2,
-// FrameFromAngle / ResourceFromAngle, AngularSpeed spirals around a parent and the 3D/light paths are
+// ResourceFromAngle, AngularSpeed spirals around a parent and the 3D/light paths are
 // not ported; area effects can be scaled by radius (`radius`/`refRadius`) and cut off (`durationMs`)
 // by the caller.
 
@@ -151,7 +154,8 @@ class Particle {
   acc = 0; // fixed-step accumulator (Inertia)
   rs = 1; // random scale factor (+0x1e4)
   compScale = 1; // RenderableScale (+0x1bc)
-  clipRot: number; // RotateToDirection clip rotation, degrees
+  clipRot: number; // the clip's own rotation (RotateToDirection without FrameFromAngle), degrees
+  dirAngle: number; // +0x1d8: the launch angle with RotateToDirection, else 0
   rotSpeed: number;
   rotAcc = 0;
   /** container matrix a, b, c, d and screen position */
@@ -173,6 +177,7 @@ class Particle {
     this.seq = seq;
     const rad = angle * 0.017453294;
     let cx = Math.cos(rad), sy = Math.sin(rad);
+    if (e.FrameFromAngle) { const c = cx; cx = sy; sy = -c; }
     x += radius * cx;
     y += radius * sy;
     if (e.InverseSpeed) { cx = -cx; sy = -sy; }
@@ -182,7 +187,8 @@ class Particle {
     this.g = g;
     this.floor = bounces ? 0 : -1e6;
     this.sortOff = sortOff;
-    this.clipRot = e.RotateToDirection ? angle : 0;
+    this.dirAngle = e.RotateToDirection ? angle : 0;
+    this.clipRot = e.RotateToDirection && !e.FrameFromAngle ? angle : 0;
     // the clip plays on its own when its first label is "playOnce", PlayParticleClipOnce or LoopParticleClip
     const once = ref.labels?.['0'] === 'playOnce' || !!e.PlayParticleClipOnce;
     if (once || e.LoopParticleClip) {
@@ -292,7 +298,7 @@ class Particle {
       this.a = s; this.d = s;
     }
     if (this.t) {
-      const w = this.width();
+      const w = this.height();
       const dx = this.px - tx, dy = this.py - ty;
       if (w > 0) {
         const len = ((Math.sqrt(dx * dx + dy * dy) + w) * s) / w;
@@ -304,14 +310,20 @@ class Particle {
       this.py = ty + dy * 0.5;
     }
     if (this.mode === 'life') {
-      let f = this.life ? Math.trunc((this.age * this.frames) / this.life) : 0;
+      const n = this.frames;
+      let f = this.life ? Math.trunc((this.age * n) / this.life) : 0;
       if (f < 0) f = 0;
-      if (f >= this.frames) f = this.frames - 1;
+      if (f >= n) f = n - 1;
+      if (e.FrameFromAngle) {
+        // the frame picks the launch direction instead of the age
+        const an = Math.trunc(this.dirAngle) * n;
+        f = an < -359 ? 0 : Math.min(n - 1, Math.trunc(an / 360));
+      }
       this.frame = f;
     }
     if (Math.abs(this.rotSpeed) > 0.05) {
       this.rotAcc += this.rotSpeed;
-      this.setRot((e.RotateToDirection ? this.clipRot : 0) + this.rotAcc, s);
+      this.setRot((e.FrameFromAngle ? 0 : this.dirAngle) + this.rotAcc, s);
     }
     let a = 1;
     const fin = (e.FadeInDuration as number | undefined) ?? 0;
@@ -326,14 +338,14 @@ class Particle {
     return this.life <= this.age;
   }
 
-  private wCache = -1;
-  /** clip width (0x123ca58) for tail stretching */
-  private width(): number {
-    if (this.wCache < 0) {
-      const b = this.lib.frameBounds(this.exp, 0);
-      this.wCache = b ? Math.max(0, b[2] - b[0]) : 0;
-    }
-    return this.wCache;
+  /**
+   * The clip's height (0x123ca58: maxY − minY of its current frame through its own rotation matrix)
+   * for tail stretching. The frame is the one shown before this step's frame update.
+   */
+  private height(): number {
+    const r = this.clipRot * 0.017453292;
+    const c = Math.cos(r), sn = Math.sin(r);
+    return this.lib.frameHeight(this.exp, this.frame, [c, sn, -sn, c]);
   }
 
   advanceClip(dtS: number): void {
