@@ -33,9 +33,9 @@ import { Clouds } from './sc/clouds.ts';
 import { UnitFx } from './sc/unit_fx.ts';
 import { applyPanelSkin } from './panel_skin.ts';
 import type { ProjectileViewFrame, ProjectileViewState } from './sc/projectile_view.ts';
-import { applyFilterColor, AreaViews, BuffViews } from './sc/area_view.ts';
+import { applyFilterColor, AreaViews, BuffViews, crownTowerFilterColor } from './sc/area_view.ts';
 import { CharEffects, deathSpawnFilter } from './sc/char_effects.ts';
-import type { Col } from './sc/math.ts';
+import { type Col, WHITE } from './sc/math.ts';
 import type { ClipRef } from './sc/manifest.ts';
 
 type Team = 0 | 1;
@@ -290,6 +290,8 @@ export class ArtWorld implements WorldRenderer {
     this.battleState(b);
     // actors of the last step and this one: one that died this step has left b.units but keeps its state
     for (const u of b.units) this.byId.set(u.id, u);
+    // logic-side effects of this step: GenericDie, the crowd reactions, the King activation (sc/char_effects.ts)
+    this.charFx.onStep(b, (id) => this.byId.get(id));
     // the lethal damage entry's vector (health +0x18 = its native angle, set by 0xfcb29c when the hit kills;
     // later entries skip the dead actor): the first 'damage' event of an actor after its death event
     let died: Set<number> | null = null;
@@ -491,7 +493,8 @@ export class ArtWorld implements WorldRenderer {
       const live = f && f.battle.units.includes(u) && u.state !== ST_DEAD;
       return live && f ? [f.ux(u), f.uy(u), f.uz(u)] as [number, number, number] : null;
     } : undefined;
-    this.fx.play(eff, u.x, u.y + front, { team: u.team as Team, z: u.z, follow, filterParent: u.id });
+    // the parent view gives PivotClip / ParentLookAtOffsetRadius their offsets (0x82bf10 @0x82c2ac)
+    this.fx.play(eff, u.x, u.y + front, { team: u.team as Team, z: u.z, follow, filterParent: u.id, parentView: this.charFx.parentView(u) });
   }
 
   /**
@@ -660,13 +663,15 @@ export class ArtWorld implements WorldRenderer {
         const face: [number, number] = [u.dirX, u.dirY];
         const since = this.sinceAttack(u, b, f);
         const kn = this.kingNow.get(u.id);
+        const col = this.towerColor(u, sim);
         items.push({ y: py, draw: () => art.drawKingTower(r, team, sim, kf, false, face, since,
-          { tower: kn?.tower ?? undefined, king: kn?.king ?? undefined }) });
+          { tower: kn?.tower ?? undefined, king: kn?.king ?? undefined }, col) });
       } else {
         const side = u.x < 9000 ? 'princessLeft' : 'princessRight';
         const sp = this.sprites.get(u.id) ?? undefined;
         const inst = this.instNow.get(u.id) ?? undefined;
-        items.push({ y: py, draw: () => art.drawPrincessTower(r, team, side, sp, false, inst) });
+        const col = this.towerColor(u, sim);
+        items.push({ y: py, draw: () => art.drawPrincessTower(r, team, side, sp, false, inst, col) });
       }
     }
     // arena decorations on the object layer
@@ -890,6 +895,17 @@ export class ArtWorld implements WorldRenderer {
    * filter_protection): each multiplies the colour in with the buff filters' arithmetic
    * (sc/area_view.ts applyFilterColor; alpha kept for crown towers). Undefined: none.
    */
+  /**
+   * A crown tower's colour: its buff filters (each on its buff view's clock, 0x82ebdc) and effect Filter
+   * components multiplied in with the crown-tower branch that keeps alpha (sc/area_view.ts).
+   */
+  private towerColor(u: Unit, sim: number): Readonly<Col> {
+    const efc = this.effectFilters(u);
+    const art = this.art;
+    const buffs = u.buffs.map((q) => art.buffColor(q.def.name, this.buffViews.filterTime(q, sim)));
+    return crownTowerFilterColor(buffs, efc ?? WHITE) ?? efc ?? WHITE;
+  }
+
   private effectFilters(u: Unit): Col | undefined {
     if (!this.filterParents.has(u.id)) return undefined;
     const fs = this.fx.filters(u.id);
@@ -1085,10 +1101,14 @@ export class ArtWorld implements WorldRenderer {
       if (u.tower === TOWER_NONE) this.charFx.viewUpdate(u, af);
       if (af?.attackStart) {
         const eff = ca.effects?.attackStartEffect;
+        // 0x83e524 passes the buffs' AudioPitchModifier product as the effect speed +0xb0 (sound pitch)
         if (u.tower === TOWER_PRINCESS) {
-          if (eff && this.fx.has(eff)) this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: (m.towers.princess.attachedHeight as number | undefined) ?? 0, loop: false });
+          if (eff && this.fx.has(eff)) {
+            this.fx.play(eff, u.x, u.y, { team: u.team as Team, z: (m.towers.princess.attachedHeight as number | undefined) ?? 0, loop: false,
+              soundPitch: this.charFx.attackStartPitch(u) });
+          }
         } else {
-          this.playOnActor(u, eff);
+          this.charFx.playOnActor(u, eff, undefined, this.charFx.attackStartPitch(u));
         }
       }
     }

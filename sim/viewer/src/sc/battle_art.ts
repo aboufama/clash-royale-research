@@ -380,7 +380,8 @@ export class BattleArt {
    * the nested clips run on the shared clock.
    */
   drawKingTower(r: ScRenderer, team: Team, timeMs: number, frame?: number,
-    destroyed = false, face?: [number, number], sinceAttackS?: number, insts: { tower?: ClipInst; king?: ClipInst } = {}): void {
+    destroyed = false, face?: [number, number], sinceAttackS?: number, insts: { tower?: ClipInst; king?: ClipInst } = {},
+    col: Readonly<Col> = WHITE): void {
     const t = this.manifest.towers.king;
     const [x, y] = this.towerPos('king', team);
     const [px, py] = this.gameToPx(x, y);
@@ -397,7 +398,8 @@ export class BattleArt {
       // HasRotationOnTimeline: the turret follows the facing every frame (FUN_008455cc)
       [t.turretChild]: this.turretOverride(t.turretFrames, t.turretMovement ?? 0, face ?? defaultFacing(team), sinceAttackS),
     };
-    r.draw(lib, exp, frame, [1, 0, 0, 1, px, py], WHITE, insts.tower ? { inst: insts.tower, named } : { childFrame: clock, named });
+    // `col`: the buff / effect filter colour of the tower (sc/area_view.ts crownTowerFilterColor, 0x82ebdc)
+    r.draw(lib, exp, frame, [1, 0, 0, 1, px, py], col, insts.tower ? { inst: insts.tower, named } : { childFrame: clock, named });
   }
 
   /** Rubble left by a destroyed tower (manifest towers.*.destroyed; layer Base / Ground: draw it
@@ -414,7 +416,7 @@ export class BattleArt {
    * nothing without one), top.
    */
   drawPrincessTower(r: ScRenderer, team: Team, side: 'princessLeft' | 'princessRight', sprite?: SpriteRef,
-    destroyed = false, inst?: ClipInst): void {
+    destroyed = false, inst?: ClipInst, col: Readonly<Col> = WHITE): void {
     const t = this.manifest.towers.princess;
     const [x, y] = this.towerPos(side, team);
     const [px, py] = this.gameToPx(x, y);
@@ -424,15 +426,15 @@ export class BattleArt {
       return;
     }
     const tm = team === 0 ? 'blue' : 'red';
-    r.draw(lib, t.base[tm], 0, [1, 0, 0, 1, px, py]);
+    r.draw(lib, t.base[tm], 0, [1, 0, 0, 1, px, py], col);
     const pc = this.manifest.characters[t.character];
     if (pc && sprite) {
       // the tower princess is the building's AttachedCharacter, raised by AttachedCharacterHeight
       const [qx, qy] = this.gameToPx(x, y, t.attachedHeight ?? 0);
       const s = pc.scale / 100;
-      r.draw(this.lib(pc.sc), sprite.export, sprite.frame, [sprite.mirror ? -s : s, 0, 0, s, qx, qy], WHITE, inst ? { inst } : {});
+      r.draw(this.lib(pc.sc), sprite.export, sprite.frame, [sprite.mirror ? -s : s, 0, 0, s, qx, qy], col, inst ? { inst } : {});
     }
-    r.draw(lib, t.top[tm], 0, [1, 0, 0, 1, px, py]);
+    r.draw(lib, t.top[tm], 0, [1, 0, 0, 1, px, py], col);
   }
 
   // -- units -----------------------------------------------------------------------------------
@@ -1124,7 +1126,7 @@ export class BattleArt {
    * 0x123c580). m places the card origin (the frame spans x -64..64, y -79.3..81.05 at scale 1).
    */
   drawCard(r: ScRenderer, card: string, m: Mat, opts: { elixir?: number; dim?: boolean; grayscale?: boolean;
-    fill?: number | null; noCost?: boolean; alpha?: number } = {}): void {
+    fill?: number | null; noCost?: boolean; alpha?: number; color?: Readonly<Col> } = {}): void {
     const c = this.manifest.cards[card];
     const hud = this.libs.get(this.manifest.hud.sc);
     if (!c) return;
@@ -1133,7 +1135,8 @@ export class BattleArt {
       return;
     }
     const a = opts.alpha ?? 1;
-    const col: Col = [1, 1, 1, a, 0, 0, 0];
+    // the panel's gain flash adds white to its card children (0x8db8e0 +0xd..+0xf, hud.ts flashed)
+    const col: Col = colMul(opts.color ?? WHITE, [1, 1, 1, a, 0, 0, 0]);
     const gray = !!(opts.grayscale ?? opts.dim);
     const rare = c.rarity ?? 'Common';
     const suffix = rare === 'Legendary' ? '_legendary' : rare === 'Champion' ? '_champion' : '';
