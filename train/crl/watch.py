@@ -70,6 +70,7 @@ def run(actor: Actor, opp: str, games: int, workers: int, envs: int, seed: int, 
     if len(d):
         out.update(win=float(np.mean(d[:, 3] > 0)), draw=float(np.mean(d[:, 3] == 0)), crowns=float(d[:, 8].mean()),
                    crowns_lost=float(d[:, 9].mean()), dominant=float(np.mean((d[:, 8] >= 2) & (d[:, 9] == 0))),
+                   dominant1=float(np.mean((d[:, 8] >= 1) & (d[:, 9] == 0))),
                    length_s=float(d[:, 7].mean() / 20))
         if beh_f and d.shape[1] >= 11 + 2 * beh_f:
             own, op = d[:, 11:11 + beh_f], d[:, 11 + beh_f:11 + 2 * beh_f]
@@ -103,7 +104,7 @@ def report(name: str, r: dict, maps: bool) -> str:
     lines = [f"== vs {name}: {r['games']} games"]
     if "win" in r:
         lines.append(f"   win {r['win']:.2f} draw {r['draw']:.2f} | crowns {r['crowns']:.2f} taken / {r['crowns_lost']:.2f} lost | "
-                     f"2+ crowns & 0 lost {r['dominant']:.2f} | length {r['length_s']:.0f}s")
+                     f"1+ crown & 0 lost {r['dominant1']:.2f} (2+ {r['dominant']:.2f}) | length {r['length_s']:.0f}s")
     lines.append(f"   decisions {r['decisions']}, plays {r['plays']} (rate {r['play_rate']:.3f}); at full elixir on "
                  f"{r['full_elixir_decisions']:.2f} of decisions, waited on {r['waited_at_full']:.2f} of those"
                  + (f"; {r['full_elixir_s']:.0f}s per game at full elixir (opponent {r['opp_full_elixir_s']:.0f}s, "

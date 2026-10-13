@@ -133,6 +133,7 @@ class Stats:
         self.games = defaultdict(int)
         self.wins = defaultdict(float)
         self.dominant = defaultdict(float)
+        self.dominant1 = defaultdict(float)
         self.crowns = defaultdict(float)
         self.lost = defaultdict(float)
         self.ep_ticks = []
@@ -149,8 +150,10 @@ class Stats:
             self.beh_n[opp] += 1
         self.games[opp] += 1
         self.wins[opp] += 1.0 if outcome > 0 else 0.5 if outcome == 0 else 0.0
-        # the owner's bar against the hard bot: at least 2 crowns without losing a tower
+        # the owner's bar against the hard bot: at least 1 crown without losing a tower (dominant1, the bar
+        # since 2026-10-13 23:00); dominant keeps the first bar, at least 2 crowns without losing a tower
         self.dominant[opp] += 1.0 if crowns >= 2 and opp_crowns == 0 else 0.0
+        self.dominant1[opp] += 1.0 if crowns >= 1 and opp_crowns == 0 else 0.0
         self.crowns[opp] += crowns
         self.lost[opp] += opp_crowns
         self.ep_ticks.append(ep_ticks)
@@ -162,6 +165,7 @@ class Stats:
             out[f"winrate_vs_{k}"] = self.wins[k] / n
             out[f"games_vs_{k}"] = n
             out[f"dominant_vs_{k}"] = self.dominant[k] / n
+            out[f"dominant1_vs_{k}"] = self.dominant1[k] / n
             out[f"crowns_vs_{k}"] = self.crowns[k] / n
             out[f"crowns_lost_vs_{k}"] = self.lost[k] / n
         if self.ep_ticks:
@@ -723,7 +727,7 @@ def main(argv=None):
         metrics_f.flush()
         wr = " ".join(f"{k[11:]}={v:.2f}" for k, v in rec.items() if k.startswith("winrate_vs_"))
         if "dominant_vs_bot" in rec:
-            wr += (f" [bot: 2+crowns&0 lost {rec['dominant_vs_bot']:.2f}, crowns {rec['crowns_vs_bot']:.2f}"
+            wr += (f" [bot: 1+crown&0 lost {rec.get('dominant1_vs_bot', 0):.2f} (2+ {rec['dominant_vs_bot']:.2f}), crowns {rec['crowns_vs_bot']:.2f}"
                    f"/{rec['crowns_lost_vs_bot']:.2f}, n={rec['games_vs_bot']}]")
         print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
               f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "

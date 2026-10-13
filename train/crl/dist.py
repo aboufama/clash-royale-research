@@ -371,7 +371,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
             buf.compact(stream_last)
             roll_q.put(("rollout", cid, data, info))
             sent += 1
-            stats_q.put(("stats", cid, {"games": dict(stats.games), "wins": dict(stats.wins), "dominant": dict(stats.dominant),
+            stats_q.put(("stats", cid, {"games": dict(stats.games), "wins": dict(stats.wins), "dominant": dict(stats.dominant), "dominant1": dict(stats.dominant1),
                                         "crowns": dict(stats.crowns), "lost": dict(stats.lost), "ep_ticks": list(stats.ep_ticks),
                                         "decisions": stats.decisions, "illegal": stats.illegal,
                                         "beh": {k: v.tolist() for k, v in stats.beh.items()}, "beh_n": dict(stats.beh_n)},
@@ -442,8 +442,8 @@ def main(args) -> None:
                 _, cid, st, tm, lres = m
                 for k, n in st["games"].items():
                     stats.games[k] += n
-                for f in ("wins", "dominant", "crowns", "lost"):
-                    for k, v in st[f].items():
+                for f in ("wins", "dominant", "dominant1", "crowns", "lost"):
+                    for k, v in st.get(f, {}).items():
                         getattr(stats, f)[k] += v
                 stats.ep_ticks.extend(st["ep_ticks"])
                 stats.decisions += st["decisions"]
@@ -481,7 +481,7 @@ def main(args) -> None:
             metrics_f.flush()
             wr = " ".join(f"{k[11:]}={v:.2f}" for k, v in rec.items() if k.startswith("winrate_vs_"))
             if "dominant_vs_bot" in rec:
-                wr += (f" [bot: 2+crowns&0 lost {rec['dominant_vs_bot']:.2f}, crowns {rec['crowns_vs_bot']:.2f}"
+                wr += (f" [bot: 1+crown&0 lost {rec.get('dominant1_vs_bot', 0):.2f} (2+ {rec['dominant_vs_bot']:.2f}), crowns {rec['crowns_vs_bot']:.2f}"
                        f"/{rec['crowns_lost_vs_bot']:.2f}, n={rec['games_vs_bot']}]")
             nf = max(1, timing["frames"])
             print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
