@@ -127,42 +127,57 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). See
 [train/README.md](train/README.md) and DECISIONS "Self-play RL setup".
 
-**Live run.** RunPod pod `crl-2`, 2× H100 80GB with 52 vCPUs (about 44-core quota) at $7.98/hr.
-Run directory `/workspace/crl/runs/exp1`. CUDA MPS runs on the pod; restart it after a CUDA fault.
-- **Driving it:** `train/runpod/launch.py --pod crl-2 status|log|ls|fetch|upload|stop|start|terminate`
-  with `RUNPOD_API_KEY` set. The pod id and its control token are in `work/runpod/pods.json`
-  (ignored, this container only).
-- **Current flags:** `--mirror --collectors 2 --workers 38 --envs 96 --active-opponents 2 --bot-prob 0.1
-  --epochs 1 --minibatch 2048 --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --learner-values`.
-- **Throughput:** about 16–18k decisions/s. Collectors 0 and 1 run inference on GPU 0. The learner
-  and the value pass run on GPU 1.
-  - **Fixes that got it there:** learner process; MPS; CUDA-graph inference trimmed to the entity
-    slots in use; no host syncs; worker pipes 1 MB with 20 µs waits; learner-side values.
-  - **Known failure:** a third collector on the learner's GPU crashed under MPS ("unspecified launch
-    failure").
+**Live run (2026-10-13).** RunPod pod `crl-5090a`: one RTX 5090 on community cloud, $0.69/hr,
+31-core CPU quota. Run directory `/workspace/crl/runs/exp1`. CUDA MPS runs on the pod; restart it after a CUDA fault.
+- **Driving it:** `train/runpod/launch.py --pod crl-5090a status|log|ls|fetch|upload|exec|stop|start|terminate`
+  with `RUNPOD_API_KEY` set. Pod ids and control tokens are in `work/runpod/pods.json` (ignored, this
+  container only). `create` makes the new pod the default, so always pass `--pod`.
+- **Current flags:** `--mirror --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048
+  --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --crown-coef 1.0 --card-kl 0.02`, single collector (28 workers).
+- **Throughput:** 7.5–13k decisions/s. The simulation is CPU-bound, so value tracks the CPU quota.
+- **Cost:** about 13–19k decisions/s per $/hr, against about 2k for 2× H100 secure ($7.98/hr, 16–18k/s).
+  Community stock is thin, and some hosts have a broken GPU (`cuInit` 999, `/dev/nvidia-uvm` I/O error).
+  Verify CUDA right after `wait`. Before renting, read the 2026-10-13 cost entry in DECISIONS.
 - **Opponents:** pure self-play, mirror match on the default blue deck, against the current policy
   and a PFSP league of snapshots. The scripted bot is a benchmark only: the learner plays it in 10 %
   of episodes and those games are never stored. Before update 200 the matchup was deck 0 vs deck 1,
   and 5–25 % of training games were against the bot.
 - **Restarts:** stop, push, start with the same `--run`. It resumes from `latest.pt`, written every
   10 updates. A local backup copy lives in the scratchpad.
-
-**Pod stopped 2026-10-13 ~00:00 UTC** when the account balance ran out, at update ~1273 (85M
-decisions). The volume (checkpoints, league, metrics) is kept while the pod is stopped. To resume:
-`launch.py --pod crl-2 resume-pod`, then `wait`, then
-`exec 'nvidia-cuda-mps-control -d'`, then `push`, then `start --run exp1 -- <current flags>`.
+- **History:** update 1–1273 on 2× H100 (pod `crl-2`, terminated after the balance ran out).
+  Update 1270 onward on the 5090. Update 1350 onward with behaviour monitoring. Update 1430 onward
+  with `--card-kl`.
 
 **Progress against the hard bot** (benchmark only; mirror and pure self-play since update 210):
-- **Wins:** 6 % at updates 220–259, 19 % at 320–379, 23–30 % at 380–430.
-- **Crowns per game:** 0.2 taken / 1.3 lost at first, about 0.8 taken / 1.3 lost by update 430.
-- **The owner's bar:** at least 2 crowns without losing a tower, most or all of the time; the
-  trainer logs it as `dominant_vs_bot`. It went from 0 to about 1–2 %, with 8 % in one update (494).
+- **Wins:** 6 % at 220–259, 19 % at 320–379, then about 30–36 % from 700 to 1430.
+- **Crowns per game:** 0.7–0.8 taken / 1.0–1.3 lost.
+- **The owner's bar:** at least 2 crowns without losing a tower, most or all of the time; the trainer
+  logs it as `dominant_vs_bot`. It stays at 0–2 %.
+
+**Card collapse found by the monitoring (update 1350).** The agent played only five of its eight
+cards; Giant, Fireball and Arrows stayed in hand all game.
+- **How collapsed:** p(card | play) for those three was about 1e-9, so an entropy bonus has no gradient.
+- **What it meant:** one hand slot cycled; the deck's only win condition (Giant) and both spells
+  were never used.
+- **Fix:** `--card-kl` penalizes KL(uniform over legal cards || p(card | play)). Card entropy went
+  from about 0 to about 1 within two updates. Watch that the bot benchmark recovers and that
+  Giant, Fireball and Arrows become useful, not just played.
+
+**Monitoring (do this often, not only the win rate).**
+- **Training log:** every 10 updates it prints per-card plays per game, seconds at full elixir,
+  elixir at play, enemy-half placements and tower damage, for self, league and bot games
+  (`beh_*` in metrics.jsonl). It warns on illegal sampled actions.
+- **Watch report:** `python -m crl.watch latest.pt --games 32 --maps --out work/watch/uNNNN` (from
+  `train/`) plays the bot and itself. It reports results, a per-card table (plays, elixir, timing,
+  placement bands), placement heatmaps and elixir habits, and writes replays.
+- **Look at games:** copy a replay to `sim/viewer/assets/replays/` and open
+  `?replay=assets/replays/<file>.json`. Look at the frames, not only the numbers.
 
 **Watching the agent.**
-- **Replays:** `train/crl/evaluate.py --replays DIR` writes them, and the viewer plays them with
-  `?replay=replays/<file>.json`. Two update-30 replays are in `sim/viewer/replays/`.
+- **Replays:** `crl.watch --out DIR` or `train/crl/evaluate.py --replays DIR` write them, and the viewer
+  plays them with `?replay=<path>`. Two update-30 replays are in `sim/viewer/replays/`.
 - **Playing against it:** `?vs=agent`, or the "Red AI" button cycled to "RL agent". It runs
-  `sim/viewer/models/agent.onnx`, currently the update-370 actor, with onnxruntime-web. Both sides get the agent's deck.
+  `sim/viewer/models/agent.onnx`, currently the update-830 actor, with onnxruntime-web. Both sides get the agent's deck.
 - **Updating the published agent:** fetch `actor_XXXXXX.pt` and `spec.json`, then run
   `python -m crl.export actor.pt --spec spec.json --out ../sim/viewer/models/agent.onnx` from
   `train/`, then commit.

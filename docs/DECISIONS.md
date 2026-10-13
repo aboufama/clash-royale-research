@@ -446,3 +446,48 @@ change it.
 - **Would change if:** the model grows past what a browser should download (distil it, or quantise), or
   per-version history becomes too heavy (publish only milestone versions).
 
+
+## 2026-10-13 — Training compute: community RTX 5090s, one experiment per pod
+
+- **Decision:** train on community-cloud RTX 5090 pods ($0.69/hr) rather than H100s. Each pod runs
+  its own run (a population of variants compared on the bot benchmark), not a shard of one run.
+- **Why:** the simulation is CPU-bound. Throughput follows the pod's CPU quota once the GPU keeps
+  up with inference and the PPO update.
+  - **Measured:** one 5090 with a 31-core quota does 7.5–13k decisions/s (about 13–19k per $/hr).
+    2× H100 secure did 16–18k/s at $7.98/hr (about 2k per $/hr); 1× H100 did about 7.5k/s at $3.99.
+  - **Why separate runs:** sharing one run across pods would ship hundreds of MB/s of rollouts
+    between datacenters. Separate runs need nothing.
+- **Caveats:** community stock is thin, and two of three hosts rented on 2026-10-13 had a broken
+  GPU (`cuInit` 999, `/dev/nvidia-uvm` I/O error). Verify CUDA right after the pod starts and
+  terminate a bad host at once.
+- **Would change if:** a single run needs more than one pod's throughput (then distributed
+  collectors with compressed rollouts), or GPU prices or CPU quotas change.
+
+## 2026-10-13 — Behaviour monitoring, and a KL floor on the card choice
+
+- **Decision:** the environment reports per-episode behaviour for both sides:
+  - card plays by deck index;
+  - enemy-half plays;
+  - elixir at play;
+  - ticks at full elixir;
+  - tower damage dealt and taken.
+
+  The trainer logs these per opponent kind. `crl.watch` produces per-card tables, heatmaps and
+  replays from a checkpoint.
+
+  The card choice gets `--card-kl`: a penalty on KL(uniform over the legal cards || p(card | play)).
+- **Why:** the win rate against the bot hid a collapse that the first behaviour report showed at once.
+  - **The collapse:** the agent never played Giant, Fireball or Arrows. They stayed in hand all
+    game with p(card | play) around 1e-9, so one hand slot cycled five cards.
+  - **Why an entropy bonus fails:** its gradient is about p·log(1/p), so it cannot pull a
+    probability back from 1e-9.
+  - **Why the KL works:** its gradient with respect to the logits is p − U. It stays O(1), acts as a
+    floor on every legal card, and leaves the policy free to prefer cards where the advantage says
+    so.
+- **Also:**
+  - The terminal reward counts crowns: `--crown-coef`, + coef · (crowns taken − lost) / 3. It stays
+    zero-sum, so self-play is unchanged in kind.
+  - `--shape-floor` keeps a small zero-sum tower-damage weight after the anneal.
+  - Both follow the research notes (JueWu and OpenAI Five keep zero-sum shaping).
+- **Would change if:** the card floor keeps the policy from committing to good choices. Then lower
+  `--card-kl` or anneal it once every card has a learned use.
