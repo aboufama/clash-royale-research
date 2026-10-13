@@ -71,6 +71,7 @@ def parse(argv=None):
     a("--ent-slot", type=float, default=None, help="entropy bonus of the slot head (wait / which card)")
     a("--ent-tile", type=float, default=None, help="entropy bonus of the tile head")
     a("--ent-card", type=float, default=0.0, help="entropy bonus of which card, given a play (slots 1-4 renormalized)")
+    a("--card-kl", type=float, default=0.0, help="penalty on KL(uniform over legal cards || p(card | play)): a floor on every card")
     a("--max-grad", type=float, default=1.0)
     a("--total-decisions", type=float, default=5e9)
     # model
@@ -232,7 +233,7 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
             mb = perm[start:start + args.minibatch]
             o = obs_all[mb].float()
             with autocast():
-                logp, ent_s, ent_t, ent_c = actor.evaluate(o, d["slot_mask"][mb], d["tile_mask"][mb], d["slot"][mb], d["tile"][mb])
+                logp, ent_s, ent_t, ent_c, kl_c = actor.evaluate(o, d["slot_mask"][mb], d["tile_mask"][mb], d["slot"][mb], d["tile"][mb])
                 v = critic(o).float()
             ratio = torch.exp(logp - d["logp"][mb])
             a = d["adv"][mb]
@@ -243,7 +244,7 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
             vl = 0.5 * torch.max((v - r) ** 2, (vc - r) ** 2).mean()
             ent = ent_s.mean() + ent_t.mean()
             # separate entropy weights: the slot choice (when / which card) collapsed far faster than the tile
-            loss = pg + args.vf * vl - args.ent_slot * ent_s.mean() - args.ent_tile * ent_t.mean() - args.ent_card * ent_c.mean()
+            loss = pg + args.vf * vl - args.ent_slot * ent_s.mean() - args.ent_tile * ent_t.mean() - args.ent_card * ent_c.mean() + args.card_kl * kl_c.mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             gn = torch.nn.utils.clip_grad_norm_(params, args.max_grad)
@@ -259,6 +260,7 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
                 logs["entropy_slot"].append(ent_s.mean().detach())
                 logs["entropy_tile"].append(ent_t.sum().detach() / plays)
                 logs["entropy_card"].append(ent_c.mean().detach())
+                logs["kl_card"].append(kl_c.mean().detach())
                 logs["approx_kl"].append(((ratio - 1) - torch.log(ratio)).mean().detach())
                 logs["clipfrac"].append(((ratio - 1).abs() > args.clip).float().mean().detach())
                 logs["grad_norm"].append(gn.detach())
@@ -617,6 +619,7 @@ def main(argv=None):
                    f"/{rec['crowns_lost_vs_bot']:.2f}, n={rec['games_vs_bot']}]")
         print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
               f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "
+              f"card {rec.get('entropy_card', 0):.2f}/kl {rec.get('kl_card', 0):.2f} "
               f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | wait {timing['wait_s']:.1f}s "
               f"proc {timing['process_s']:.1f}s (book {timing['p_bookkeep_s']:.1f} infer {timing['p_infer_s']:.1f} "
               f"store {timing['p_store_s']:.1f} opp {timing['p_opp_s']:.1f}) upd {rec.get('update_s', 0):.1f}s rec/frame "
