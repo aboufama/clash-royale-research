@@ -467,7 +467,7 @@ def main(args) -> None:
             update += 1
             if update % args.snapshot_every == 0:
                 league.add(template, update)
-            if update % 5 == 0:  # rotate the league opponents now and then (each new one costs graph captures)
+            if update % args.opp_every == 0:  # rotate the league opponents now and then (each new one costs graph captures)
                 send_opponents()
             dt = time.time() - t_last
             t_last = time.time()

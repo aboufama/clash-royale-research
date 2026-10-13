@@ -88,6 +88,8 @@ def parse(argv=None):
     a("--league-size", type=int, default=64)
     a("--active-opponents", type=int, default=4)
     a("--pfsp-power", type=float, default=1.0)
+    a("--opp-every", type=int, default=10, help="updates between league opponent rotations (each running game keeps its "
+                                              "opponent alive, so rotating every update piles up models and graph replays)")
     a("--ckpt-every", type=int, default=10)
     a("--max-updates", type=int, default=0, help="stop after this many updates (0 = no limit)")
     a("--resume", default="", help="checkpoint path (default: <out>/latest.pt if present)")
@@ -597,7 +599,8 @@ def main(argv=None):
         nonlocal models
         if update % args.snapshot_every == 0:
             league.add(actor, update)
-        league.resample(actor, device)
+        if update % args.opp_every == 0 or not league.active:
+            league.resample(actor, device)
         referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
         new_models = {s_.sid: m for s_, m in league.active}
         for sid in referenced:
@@ -614,6 +617,7 @@ def main(argv=None):
         info = p["info"]
         rec = {"update": update, "decisions": total_decisions, "transitions": info["transitions"], "shape_coef": shape_coef(),
                "explained_var": info["explained_var"], "play_rate": info["play_rate"], "league": len(league.pool),
+               "opp_models": len(models),
                "update_wall_s": time.time() - info["t_submit"], **ulogs, **stats.summary(), **{f"t_{k}": v for k, v in timing.items()}}
         metrics_f.write(json.dumps(rec) + "\n")
         metrics_f.flush()
