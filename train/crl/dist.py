@@ -27,7 +27,7 @@ from .envpool import EnvPool
 from .league import League
 from .model import ModelConfig, param_count
 from .rollout import Rollout
-from .train import OPP_NAMES, GraphedInfer, Stats, behaviour, behaviour_line, build_nets, count_illegal, load_actor, wait_ticks, cpu_state, make_autocast, ppo_update
+from .train import OPP_NAMES, GraphedInfer, Stats, behaviour, behaviour_line, build_nets, count_illegal, load_actor, load_opt, wait_ticks, cpu_state, make_autocast, ppo_update
 
 MAX_OUTSTANDING = 2  # rollouts a collector may have in flight before it waits for new weights
 
@@ -104,15 +104,7 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, coord_q
         ck = torch.load(resume, map_location=device)
         added = load_actor(actor, ck["actor"])
         critic.load_state_dict(ck["critic"])
-        if added:  # see train.learner_main
-            head = list(actor.wait_dur.parameters())
-            ids = {id(p) for p in head}
-            opt = torch.optim.Adam([p for p in actor.parameters() if id(p) not in ids] + list(critic.parameters()),
-                                   lr=args.lr, eps=1e-5)
-            opt.load_state_dict(ck["opt"])
-            opt.add_param_group({"params": head})
-        else:
-            opt.load_state_dict(ck["opt"])
+        opt = load_opt(actor, critic, ck["opt"], added, args.lr)
     actor.eval()
     critic.eval()
     version = 0

@@ -216,6 +216,26 @@ def load_actor(actor, state: dict, absent_bias: float = 3.0) -> bool:
     return bool(missing)
 
 
+def load_opt(actor, critic, state: dict, added: bool, lr: float):
+    """The Adam optimizer for a resumed run. A wait head added at this resume, or at an earlier one, lives in
+    its own parameter group after the other parameters (the saved state then has two groups)."""
+    head = list(actor.wait_dur.parameters()) if getattr(actor, "n_wait", 0) else []
+    ids = {id(p) for p in head}
+    rest = [p for p in actor.parameters() if id(p) not in ids] + list(critic.parameters())
+    if head and (added or len(state["param_groups"]) == 2):
+        opt = torch.optim.Adam(rest, lr=lr, eps=1e-5)
+        if added:
+            opt.load_state_dict(state)
+            opt.add_param_group({"params": head})
+        else:
+            opt.add_param_group({"params": head})
+            opt.load_state_dict(state)
+        return opt
+    opt = torch.optim.Adam(list(actor.parameters()) + list(critic.parameters()), lr=lr, eps=1e-5)
+    opt.load_state_dict(state)
+    return opt
+
+
 def count_illegal(masks: np.ndarray, slot: np.ndarray, tile: np.ndarray, n_tiles: int) -> int:
     """Actions the masks forbid (inference sanity check: should always be 0)."""
     if len(slot) == 0:
@@ -473,18 +493,9 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, out_q) 
         ck = torch.load(resume, map_location=device)
         added = load_actor(actor, ck["actor"])
         critic.load_state_dict(ck["critic"])
+        opt = load_opt(actor, critic, ck["opt"], added, args.lr)
         if added:
-            # the checkpoint's optimizer state covers the networks without the new wait head: load it for
-            # those and give the head its own fresh group
-            head = list(actor.wait_dur.parameters())
-            ids = {id(p) for p in head}
-            opt = torch.optim.Adam([p for p in actor.parameters() if id(p) not in ids] + list(critic.parameters()),
-                                   lr=args.lr, eps=1e-5)
-            opt.load_state_dict(ck["opt"])
-            opt.add_param_group({"params": head})
             print("  resumed without a wait head: added one preferring the shortest wait", flush=True)
-        else:
-            opt.load_state_dict(ck["opt"])
     actor.eval()
     critic.eval()
     out_q.put(("init", cpu_state(actor), cpu_state(critic)))
