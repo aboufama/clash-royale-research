@@ -183,6 +183,10 @@ Windowed over 50 updates:
   The most common result is a 0-1 loss: the agent defends but has no offence. It sends single
   units over one bridge, mostly Mini P.E.K.K.A, and Giant, the deck's win condition, is played
   0.16 times a game.
+- **Main run 1800–1983:** bot win rate fell to 12–17 % (crowns 0.3 / 1.3) while it beat its league
+  63 % of the time. PFSP gave the exploiter's snapshots most of its league games. The run was reset
+  to the update-1780 checkpoint (the 1983 one is kept as `latest_1983_exploited.pt`). Main and `b1`
+  now run with `--import-share 0.15`, a cap on imported snapshots' share of PFSP weight.
 - **Run `b1` tests credit assignment:** longer λ and a kept tower-damage shaping.
 - **Next if the plateau holds:** a delay head (choose a wait length, so saving for a Giant push is
   one decision), or a short engine lookahead.
