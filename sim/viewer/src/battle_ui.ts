@@ -513,8 +513,11 @@ export class BattleUi {
    */
   releasePreview(which: 0 | 1, play: { x: number; y: number } | null): void {
     const pv = which === 0 ? this.preview : this.held;
-    const view = this.views[which];
     const b = this.battleRef;
+    // a preview released before any frame drew it gets its preview object now, with dt 0 (the client
+    // builds it in the touch handler that hid the card, 0x8e1fb8 -> 0x8d95ac, and updates it there)
+    if (play && pv && b && this.views[which]?.card !== pv.card) this.updateViews(0, b);
+    const view = this.views[which];
     if (play && pv && view && b) {
       const card = b.defs.card(pv.card, b.levels[pv.team]);
       const nm = this.nameText(pv, view);

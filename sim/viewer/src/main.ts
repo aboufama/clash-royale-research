@@ -343,10 +343,23 @@ class App {
         board.setPointerCapture(e.pointerId);
         this.dragMove(bx, by);
       } else if (ui.hud.selected >= 0 && sy < ui.hud.handTop) {
-        // tap on the arena with a selected card: play it there
-        const pos = this.logicAt(bx, by);
-        this.playCard(team, ui.hud.selected, pos.x, pos.y);
-        ui.hud.select(-1);
+        // A touch on the arena with a card selected (battle screen touch begin 0xbe08d8): with the emote
+        // menu closed (0x8d1adc), no arena drag in progress (+0x358), the battle not over (0xd4220c) and
+        // the selected card (0x8d52ac: the first slot holding a card with +0x319) not already in drag mode
+        // (+0x318: dragged, or released and waiting for its elixir), that card takes the touch (0x8e30c0:
+        // its touch begin 0x8e2894, the drag start 0x8e2a74 at the touch point, its touch move 0x8e2948,
+        // then the grab offset +0x2c8/+0x2cc zeroed). It is then an ordinary drag: the moves update it
+        // (0xbe0aa0 -> card vt+0x118) and the touch end releases it (0xbe1120 -> card vt+0x120 0x8e2c04),
+        // so the play is submitted at the touch end with the drag preview's leftover, or waits for its
+        // elixir, exactly like a card dragged from the hand.
+        const slotSel = ui.hud.selected;
+        const p = this.battle.players[team];
+        const def = p.hand[slotSel] >= 0 ? p.deck[p.hand[slotSel]] : undefined;
+        if (def && !this.drag && this.held?.slot !== slotSel && !ui.emotes?.menuOpen && !this.battle.result) {
+          this.drag = { team, slot: slotSel, card: def.name, sx, sy, moved: true, previewOn: false, px: bx, py: by, dom: null, gx: 0, gy: 0 };
+          board.setPointerCapture(e.pointerId);
+          this.dragMove(bx, by);
+        }
       }
     });
     board.addEventListener('pointermove', (e) => {
@@ -458,6 +471,14 @@ class App {
   private release(d: Drag, which: 0 | 1): void {
     const ui = this.ui;
     if (!ui) return;
+    // 0x8e29f4(touch-end point, card, 1) -> 0x8e1fb8 updates the drag preview at the touch-end point
+    // before 0xbe1634 submits and 0xbe1aa8 builds the leftover from it. The client makes the preview in
+    // the touch handlers, so it exists at the release however quick the touch was; here it is fed once
+    // per frame, so it is brought up to the touch-end point now (a press and release with no frame in
+    // between, e.g. a quick tap on the arena with a selected card, would otherwise leave nothing).
+    const pv = this.previewOf(d);
+    if (which === 0) ui.preview = pv;
+    else ui.held = pv;
     let play: { x: number; y: number } | null = null;
     if (d.previewOn && this.cardScale(d) <= 0) {
       const pos = this.logicAt(d.px, d.py);
