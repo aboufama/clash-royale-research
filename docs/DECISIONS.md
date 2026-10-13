@@ -520,3 +520,18 @@ change it.
 - **Would change if:** the head stays on the shortest wait after training (no gain), or the
   interrupts prove too coarse. Then add an interrupt on own tower damage or on an enemy unit crossing
   the bridge.
+
+## 2026-10-13 — Fixed learning rate 2e-4 (KL-adaptive lr withdrawn)
+
+- **Decision:** the population trains with a fixed `--lr 2e-4` and no `--target-kl`.
+- **Why:** the rl_games-style adaptive rule went wrong both ways. The trouble is that a few play rows
+  per batch have a collapsing probability ratio, which makes the KL estimate unreliable.
+  - **Uncapped estimate:** those rows held the KL above 2× target, and the lr fell to its floor
+    (3e-5 on `h1`, 12.6 % bot win rate).
+  - **Per-row KL capped at 1:** the estimate read low, and the lr climbed to 2× base (8e-4). Within
+    about 50 updates `f1` fell from 27 % to 8.5 % and `c2` from 23 % to 11.5 %.
+  - **What stayed healthy:** the runs whose lr had settled near 1.8e-4 (the delay-head runs). The
+    stable stretches earlier in the day ran at a fixed 3–4e-4.
+  - **Background:** a resumed optimizer kept its checkpoint lr before `--lr` was applied every update.
+- **Would change if:** the collapsing rows are understood (they are play rows: tile or card choices
+  with very peaked logits). Then a KL computed without them could drive the lr again.

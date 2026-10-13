@@ -141,14 +141,18 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   |---|---|---|---|
   | `crl-5090a` | `exp1` | community 5090 | main run |
   | `crl-b` | `x1` | secure 4090 | exploiter, reset to main's update-2040 weights at 21:35 |
-  | `crl-c` | `c2` | secure 4090 | from `e1` u1960, `--crown-coef 3.0` |
+  | `crl-c` | `w5` | secure 4090 | from `w2` u2268, `--wait-options 5 --crown-coef 3.0` (delay head) |
   | `crl-d` | `w2` | secure 4090 | from `e1` u1960, `--wait-options 5 --crown-coef 1.5 --shape-floor 0.2` (delay head) |
   | `crl-e` | `e2` | secure 4090 | from `x1` u2192, `--crown-coef 2.0` |
-  | `crl-f` | `f1` | secure 4090 | `--shape-floor 0.2 --crown-coef 1.5` |
+  | `crl-f` | `w4` | secure 4090 | from `w3` u2264, `--wait-options 5 --crown-coef 1.0` (delay head) |
   | `crl-g` | `g2` | secure 4090 | from `e1` u1960, `--crown-coef 2.0 --shape-floor 0.2` |
   | `crl-h` | `w3` | secure 4090 | from `w2` u2170, `--wait-options 5 --crown-coef 2.0` (delay head) |
   | `crl-i` | `w1` | secure 4090 | from `e1` u1960, `--wait-options 5 --crown-coef 2.0` (delay head) |
 
+  - **22:45:** every run moved to a fixed `--lr 2e-4` with no `--target-kl` (see DECISIONS).
+    - **Population step:** f1 (8.5 %) and c2 (11.5 %) became `w4` and `w5` from the delay-head
+      runs, which held about 30 % and lose the fewest crowns (0.86–0.89 per game).
+    - **Mix:** five of nine runs now use the delay head.
   - **22:20 ranking and changes:**
     - **Ranking** (bot win, last 100 updates):
 
@@ -191,7 +195,7 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   - **Shared settings:** every run except `x1` started from the update-1780 checkpoint
     (scratchpad `backup/latest_1780.pt`). They share the main flags: `--mirror --envs 96
     --active-opponents 2 --epochs 1 --minibatch 2048 --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005
-    --crown-coef 1.0 --card-floor 0.01 --target-kl 0.01 --import-share 0.15 --bot-prob 0.1
+    --crown-coef 1.0 --card-floor 0.01 --import-share 0.15 --bot-prob 0.1 --lr 2e-4 (fixed since 22:45)
     --import-dir /workspace/crl/runs/<run>/import`.
   - **Relays:** each run imports the exploiter's snapshots through a one-way relay (scratchpad
     `relay_<pod>.log`). Only `exp1` sends snapshots to the exploiter.
