@@ -66,6 +66,7 @@ def parse(argv=None):
     a("--epochs", type=int, default=2)
     a("--lr", type=float, default=3e-4)
     a("--lr-decay", action="store_true", help="linear decay to 0 over --total-decisions")
+    a("--target-kl", type=float, default=0.0, help="adapt the lr each update toward this approx KL (0 = fixed lr)")
     a("--clip", type=float, default=0.2)
     a("--vclip", type=float, default=0.5)
     a("--vf", type=float, default=0.5)
@@ -226,9 +227,11 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
     """PPO epochs over one rollout (`data`: CPU tensors from the collector). Returns mean logs."""
     autocast = make_autocast(device)
     params = list(actor.parameters()) + list(critic.parameters())
-    if args.lr_decay:
-        for g in opt.param_groups:
-            g["lr"] = data["lr"]
+    # the learning rate is set every update: a resumed optimizer otherwise keeps the checkpoint's lr, so
+    # --lr changes did not take effect; --target-kl scales it (rl_games-style KL-adaptive rule)
+    lr_now = (data["lr"] if args.lr_decay else args.lr) * getattr(args, "lr_scale", 1.0)
+    for g in opt.param_groups:
+        g["lr"] = lr_now
     d = {k: v.to(device) for k, v in data.items() if isinstance(v, torch.Tensor)}
     obs_all = d["obs"]  # float16
     N = obs_all.shape[0]
@@ -271,12 +274,27 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
                 logs["entropy_card"].append(ent_c.mean().detach())
                 logs["card_floor_pen"].append(fl_c.mean().detach())
                 logs["ratio_max"].append(ratio.max().detach())
-                logs["approx_kl"].append(((ratio - 1) - torch.log(ratio)).mean().detach())
+                # log-ratio clamped: a row whose ratio underflows to 0 made the estimate inf
+                lr_ = (logp - d["logp"][mb]).clamp(-20, 20)
+                logs["approx_kl"].append((torch.exp(lr_) - 1 - lr_).mean().detach())
+                tiny = (logp - d["logp"][mb]) < -13.8
+                played = d["slot"][mb] > 0
+                logs["ratio_tiny_play"].append((tiny & played).float().sum() / played.float().sum().clamp(min=1))
+                logs["ratio_tiny_wait"].append((tiny & ~played).float().sum() / (~played).float().sum().clamp(min=1))
                 logs["clipfrac"].append(((ratio - 1).abs() > args.clip).float().mean().detach())
                 logs["grad_norm"].append(gn.detach())
     actor.eval()
     critic.eval()
-    return {k: float(torch.stack(v).float().mean()) for k, v in logs.items()}
+    out = {k: float(torch.stack(v).float().mean()) for k, v in logs.items()}
+    if args.target_kl > 0 and "approx_kl" in out:
+        sc = getattr(args, "lr_scale", 1.0)
+        if out["approx_kl"] > 2 * args.target_kl:
+            sc /= 1.5
+        elif out["approx_kl"] < args.target_kl / 2:
+            sc *= 1.5
+        args.lr_scale = min(2.0, max(0.05, sc))
+    out["lr"] = lr_now
+    return out
 
 
 _SLOT_COLS: dict[int, tuple[np.ndarray, int]] = {}
