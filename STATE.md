@@ -134,20 +134,38 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   container only). `create` makes the new pod the default, so always pass `--pod`.
 - **Current flags:** `--mirror --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048
   --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --crown-coef 1.0 --card-floor 0.01`, single collector (28 workers).
-- **Population (2026-10-13 21:08 UTC):** 9 pods, $7.81/hr, about 53k decisions/s in total.
+- **Population (2026-10-13 21:50 UTC):** 9 pods, $7.81/hr, about 53k decisions/s in total.
+  Updated after the first population step at 21:35.
 
   | Pod | Run | Hardware | Role and flags |
   |---|---|---|---|
   | `crl-5090a` | `exp1` | community 5090 | main run |
-  | `crl-b` | `x1` | secure 4090 | exploiter: plays only main's newest 2 snapshots |
-  | `crl-c` | `b1` | secure 4090 | `--lam 0.98 --shape-floor 0.1` |
-  | `crl-d` | `d1` | secure 4090 | replicate, `--seed 11` |
+  | `crl-b` | `x1` | secure 4090 | exploiter, reset to main's update-2040 weights at 21:35 |
+  | `crl-c` | `c2` | secure 4090 | from `e1` u1960, `--crown-coef 3.0` |
+  | `crl-d` | `w2` | secure 4090 | from `e1` u1960, `--wait-options 5 --crown-coef 1.5 --shape-floor 0.2` (delay head) |
   | `crl-e` | `e1` | secure 4090 | `--crown-coef 2.0` |
   | `crl-f` | `f1` | secure 4090 | `--shape-floor 0.2 --crown-coef 1.5` |
-  | `crl-g` | `g1` | secure 4090 | `--epochs 2` |
+  | `crl-g` | `g2` | secure 4090 | from `e1` u1960, `--crown-coef 2.0 --shape-floor 0.2` |
   | `crl-h` | `h1` | secure 4090 | `--lam 0.98` |
-  | `crl-i` | `i1` | secure 4090 | `--self-play-prob 0.8` |
+  | `crl-i` | `w1` | secure 4090 | from `e1` u1960, `--wait-options 5 --crown-coef 2.0` (delay head) |
 
+  - **Ranking at 21:33** (bot win, last 100 updates, 1000–2500 games each):
+
+    | Run | Win |
+    |---|---|
+    | e1 | 35.2 % |
+    | exp1 | 33.2 % |
+    | f1 | 32.5 % |
+    | h1 | 32.1 % |
+    | d1 | 29.3 % |
+    | i1 | 28.8 % |
+    | g1 (`--epochs 2`) | 20.3 % |
+    | b1 (`--lam 0.98 --shape-floor 0.1`; its lr collapsed to 2e-5) | 14.2 % |
+
+    Crown-heavy rewards take the most crowns: f1 0.93 and e1 0.86 per game, against 0.74 for exp1.
+  - **e1 u1960 watch** (32 bot games): 47 % wins, crowns 0.97 / 0.94, seven three-crown wins. It
+    opens with a Giant at the bridge (median play time 1 s) and sends Knight to the bridge 52 % of
+    the time.
   - **Shared settings:** every run except `x1` started from the update-1780 checkpoint
     (scratchpad `backup/latest_1780.pt`). They share the main flags: `--mirror --envs 96
     --active-opponents 2 --epochs 1 --minibatch 2048 --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005
