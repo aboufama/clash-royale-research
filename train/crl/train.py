@@ -294,9 +294,10 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
                 logs["entropy_card"].append(ent_c.mean().detach())
                 logs["card_floor_pen"].append(fl_c.mean().detach())
                 logs["ratio_max"].append(ratio.max().detach())
-                # log-ratio clamped: a row whose ratio underflows to 0 made the estimate inf
+                # per-row KL capped at 1: the few play rows whose probability collapsed (ratio_tiny_play) each
+                # added ~19 and held the estimate above 2x --target-kl, so the adaptive lr fell to its floor
                 lr_ = (logp - d["logp"][mb]).clamp(-20, 20)
-                logs["approx_kl"].append((torch.exp(lr_) - 1 - lr_).mean().detach())
+                logs["approx_kl"].append((torch.exp(lr_) - 1 - lr_).clamp(max=1.0).mean().detach())
                 tiny = (logp - d["logp"][mb]) < -13.8
                 played = d["slot"][mb] > 0
                 logs["ratio_tiny_play"].append((tiny & played).float().sum() / played.float().sum().clamp(min=1))
