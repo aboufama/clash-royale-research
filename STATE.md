@@ -202,7 +202,8 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   - **Scratchpad tools:**
     - `fleet.sh` / `grab4.sh` rent and verify pods one at a time.
     - `popstat.sh` prints the last-100-update bot benchmark per run.
-    - `breakwatch.py` reports a run at ≥ 40 % bot wins or ≥ 5 % of games meeting the owner's bar,
+    - `breakwatch.py` reports a run whose games meet the owner's bar ≥ 50 % of the time, or at ≥ 45 %
+      bot wins (BREAKTHROUGH), or whose bar rate rose 3+ points above 25 % (big leap),
       over ≥ 250 games.
   - **Plan:** every ~2 h, copy the best run's checkpoint into the worst (population-based
     training), keeping each run's own flags.
@@ -239,7 +240,10 @@ Windowed over 50 updates:
 | 1351–1380 | 7–10 % | | after the card-floor surgery |
 | 1700–1766 | 28–29 % | 0.71 / 1.2 | baseline again |
 
-- **Owner's bar** (`dominant_vs_bot`): 0–1 %.
+- **Owner's bar:** since 2026-10-13 23:00, at least 1 crown without losing a tower, the majority of
+  the time (`dominant1_vs_bot`, logged from 23:00).
+  - **Original bar:** at least 2 crowns without losing a tower (`dominant_vs_bot`), 0–2 % all day.
+  - **Estimate before logging:** about 25 % of e1's u1960 watch games met the new bar.
 - **Update-1760 watch:** the fast 0-3 losses are gone, which fits training against the exploiter.
   The most common result is a 0-1 loss: the agent defends but has no offence. It sends single
   units over one bridge, mostly Mini P.E.K.K.A, and Giant, the deck's win condition, is played
