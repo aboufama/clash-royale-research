@@ -6,7 +6,7 @@
     python3 train/runpod/launch.py push            # upload sim/ (engine + gameplay data) and train/
     python3 train/runpod/launch.py start --run exp1 -- --rollout 65536
     python3 train/runpod/launch.py status | log | ls runs/exp1 | fetch runs/exp1/latest.pt
-    python3 train/runpod/launch.py stop | terminate
+    python3 train/runpod/launch.py stop | stop-pod | resume-pod | terminate
 
 The pod runs podserver.py as its container command (passed base64-encoded in its environment) and
 is reached through RunPod's proxy at https://<pod id>-8000.proxy.runpod.net with a random bearer
@@ -189,6 +189,19 @@ def cmd_exec(args):
     print(f"[exit {r['code']}]")
 
 
+def cmd_resume_pod(args):
+    """Start a stopped pod again (its volume, checkpoints and league are kept); then `wait`, restart MPS
+    with `exec 'nvidia-cuda-mps-control -d'`, `push` and `start`."""
+    p = pod(args)
+    print(json.dumps(rest("POST", f"/pods/{p['id']}/start"), indent=1)[:800])
+
+
+def cmd_stop_pod(args):
+    """Stop (not delete) the pod: billing drops to the volume's storage rate."""
+    p = pod(args)
+    print(json.dumps(rest("POST", f"/pods/{p['id']}/stop"), indent=1)[:800])
+
+
 def cmd_terminate(args):
     st = load_state()
     p = pod(args)
@@ -237,12 +250,15 @@ def main():
     e = sub.add_parser("exec")
     e.add_argument("shell", nargs=argparse.REMAINDER)
     e.add_argument("--timeout", type=float, default=60)
+    sub.add_parser("resume-pod")
+    sub.add_parser("stop-pod")
     sub.add_parser("terminate")
     args = ap.parse_args()
     if getattr(args, "train_args", None) and args.train_args[:1] == ["--"]:
         args.train_args = args.train_args[1:]
     {"create": cmd_create, "wait": cmd_wait, "push": cmd_push, "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
-     "log": cmd_log, "ls": cmd_ls, "fetch": cmd_fetch, "upload": cmd_upload, "exec": cmd_exec, "terminate": cmd_terminate}[args.cmd](args)
+     "log": cmd_log, "ls": cmd_ls, "fetch": cmd_fetch, "upload": cmd_upload, "exec": cmd_exec, "resume-pod": cmd_resume_pod, "stop-pod": cmd_stop_pod,
+     "terminate": cmd_terminate}[args.cmd](args)
 
 
 if __name__ == "__main__":

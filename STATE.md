@@ -147,6 +147,11 @@ Run directory `/workspace/crl/runs/exp1`. CUDA MPS runs on the pod; restart it a
 - **Restarts:** stop, push, start with the same `--run`. It resumes from `latest.pt`, written every
   10 updates. A local backup copy lives in the scratchpad.
 
+**Pod stopped 2026-10-13 ~00:00 UTC** when the account balance ran out, at update ~1273 (85M
+decisions). The volume (checkpoints, league, metrics) is kept while the pod is stopped. To resume:
+`launch.py --pod crl-2 resume-pod`, then `wait`, then
+`exec 'nvidia-cuda-mps-control -d'`, then `push`, then `start --run exp1 -- <current flags>`.
+
 **Progress against the hard bot** (benchmark only; mirror and pure self-play since update 210):
 - **Wins:** 6 % at updates 220–259, 19 % at 320–379, 23–30 % at 380–430.
 - **Crowns per game:** 0.2 taken / 1.3 lost at first, about 0.8 taken / 1.3 lost by update 430.
