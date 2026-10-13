@@ -11,6 +11,7 @@ Reward: +1 / -1 / 0 for a win / loss / draw, plus an optional crown-tower damage
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import queue
@@ -88,6 +89,7 @@ def parse(argv=None):
     a("--league-size", type=int, default=64)
     a("--active-opponents", type=int, default=4)
     a("--pfsp-power", type=float, default=1.0)
+    a("--opp-slots", type=int, default=8, help="model slots for league opponents (graphs captured once per slot)")
     a("--opp-every", type=int, default=10, help="updates between league opponent rotations (each running game keeps its "
                                               "opponent alive, so rotating every update piles up models and graph replays)")
     a("--ckpt-every", type=int, default=10)
@@ -372,6 +374,49 @@ class GraphedInfer:
         return out[:n].clone()
 
 
+class OppSlots:
+    """League opponents in a fixed set of model slots whose CUDA graphs (trimmed, like the learner's) are
+    captured once. A new opponent's weights are copied into a free slot in place, so its graphs stay valid;
+    a slot is free when neither the new picks nor a running episode use its snapshot. Rebuilding graphs per
+    opponent cost 36 captures each, and untrimmed graphs made an opponent row ~1.7x a learner row."""
+
+    def __init__(self, template, n: int, floats: int, mask_bytes: int, device: torch.device, spec: dict, use_graphs: bool):
+        self.models, self.graphs, self.sid = [], [], [None] * n
+        for _ in range(n):
+            m = copy.deepcopy(template).to(device).eval()
+            m.enc.trim_tokens = False
+            for p_ in m.parameters():
+                p_.requires_grad_(False)
+            self.models.append(m)
+            self.graphs.append(GraphedInfer(m, None, floats, mask_bytes, device, sizes=(64, 128, 256, 512), spec=spec)
+                               if use_graphs else None)
+
+    def load(self, picks, referenced: set) -> list:
+        """Put `picks` (league snapshots) into slots; returns league.active [(snapshot, model)]."""
+        keep = {s.sid for s in picks} | referenced
+        active = []
+        for s in picks:
+            if s.sid in self.sid:
+                i = self.sid.index(s.sid)
+            else:
+                free = [i for i, x in enumerate(self.sid) if x is None or x not in keep]
+                if not free:
+                    continue  # every slot is busy with running games: fewer opponents this round
+                i = free[0]
+                if s.state is None:
+                    s.state = torch.load(s.path, map_location="cpu")["actor"]
+                self.models[i].load_state_dict(s.state)
+                self.sid[i] = s.sid
+            active.append((s, self.models[i]))
+        return active
+
+    def get(self, sid: int):
+        if sid not in self.sid:
+            return None, None
+        i = self.sid.index(sid)
+        return self.models[i], self.graphs[i]
+
+
 def cpu_state(m: torch.nn.Module) -> dict:
     return {k: v.detach().to("cpu", copy=True) for k, v in m.state_dict().items()}
 
@@ -466,10 +511,8 @@ def main(argv=None):
     autocast = make_autocast(device)
     use_graphs = device.type == "cuda" and not args.no_cuda_graphs
     infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device, spec=spec) if use_graphs else None
-    opp_graphs: dict[int, GraphedInfer] = {}
-
-    league.resample(actor, device)
-    models: dict[int, torch.nn.Module] = {s.sid: m for s, m in league.active}
+    opp_slots = OppSlots(actor, args.opp_slots, pool.floats, pool.mask_bytes, device, spec, use_graphs)
+    league.active = opp_slots.load(league.pick(), set())
     stream_last: dict[tuple[int, int], int | None] = {}
     ep_nets: dict[tuple[int, int], list] = {}
     stats = Stats()
@@ -570,12 +613,12 @@ def main(argv=None):
             tp3 = time.time()
             for sid in {v for v in nets_r if isinstance(v, int)}:
                 rows = np.nonzero(np.array([v == sid for v in nets_r]))[0]
-                m = models.get(sid)
+                m, gi_ = opp_slots.get(sid)
                 if m is None:
                     continue  # snapshot dropped while its episode ran: it waits (slot 0)
                 rt = torch.from_numpy(rows).to(device)
-                gi_ = opp_graphs.get(sid)
-                pk = (gi_(obs_t[rt], masks_t[rt]) if gi_ is not None else m.act_packed(obs_t[rt], masks_t[rt])).cpu().numpy()
+                pk = (gi_(obs_t[rt], masks_t[rt], frame.obs, rows) if gi_ is not None
+                      else m.act_packed(obs_t[rt], masks_t[rt])).cpu().numpy()
                 slot[rows], tile[rows] = pk[:, 0].astype(np.int64), pk[:, 1].astype(np.int64)
             timing["p_opp_s"] += time.time() - tp3
         return np.stack([gids, teams, slot, tile], 1).astype(np.int32)
@@ -596,28 +639,15 @@ def main(argv=None):
         return {"data": data, "info": info}
 
     def finish_update(p: dict, ulogs: dict) -> bool:
-        nonlocal models
         if update % args.snapshot_every == 0:
             league.add(actor, update)
         if update % args.opp_every == 0 or not league.active:
-            league.resample(actor, device)
-        referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
-        new_models = {s_.sid: m for s_, m in league.active}
-        for sid in referenced:
-            if sid not in new_models and sid in models:
-                new_models[sid] = models[sid]
-        models = new_models
-        if use_graphs:
-            for sid in list(opp_graphs):
-                if sid not in models:
-                    del opp_graphs[sid]
-            for sid, m in models.items():
-                if sid not in opp_graphs:
-                    opp_graphs[sid] = GraphedInfer(m, None, pool.floats, pool.mask_bytes, device, sizes=(64, 128, 256, 512))
+            referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
+            league.active = opp_slots.load(league.pick(), referenced)
         info = p["info"]
         rec = {"update": update, "decisions": total_decisions, "transitions": info["transitions"], "shape_coef": shape_coef(),
                "explained_var": info["explained_var"], "play_rate": info["play_rate"], "league": len(league.pool),
-               "opp_models": len(models),
+               "opp_models": sum(x is not None for x in opp_slots.sid),
                "update_wall_s": time.time() - info["t_submit"], **ulogs, **stats.summary(), **{f"t_{k}": v for k, v in timing.items()}}
         metrics_f.write(json.dumps(rec) + "\n")
         metrics_f.flush()
