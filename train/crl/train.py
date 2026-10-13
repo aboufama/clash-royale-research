@@ -89,6 +89,8 @@ def parse(argv=None):
     a("--league-size", type=int, default=64)
     a("--active-opponents", type=int, default=4)
     a("--pfsp-power", type=float, default=1.0)
+    a("--import-dir", default="", help="add actor checkpoints dropped here (another run's snapshots) to the league")
+    a("--import-keep", type=int, default=0, help="keep only the newest N imported snapshots in the league (0 = all)")
     a("--opp-slots", type=int, default=8, help="model slots for league opponents (graphs captured once per slot)")
     a("--opp-every", type=int, default=10, help="updates between league opponent rotations (each running game keeps its "
                                               "opponent alive, so rotating every update piles up models and graph replays)")
@@ -641,6 +643,11 @@ def main(argv=None):
     def finish_update(p: dict, ulogs: dict) -> bool:
         if update % args.snapshot_every == 0:
             league.add(actor, update)
+        if args.import_dir:
+            n_imp = league.import_dir(Path(args.import_dir), args.import_keep)
+            if n_imp:
+                print(f"  imported {n_imp} snapshot(s) from {args.import_dir}; league {len(league.pool)}", flush=True)
+                league.active = []  # rotate now so the new snapshots play
         if update % args.opp_every == 0 or not league.active:
             referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
             league.active = opp_slots.load(league.pick(), referenced)

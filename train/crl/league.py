@@ -51,6 +51,31 @@ class League:
             self.pool.remove(drop)
         return s
 
+    def import_dir(self, path: Path, keep: int = 0) -> int:
+        """Add actor checkpoints dropped into `path` (another run's snapshots: a main agent for an
+        exploiter, an exploiter for the main agent) to the pool. Returns how many were added. With
+        `keep`, only the newest `keep` imported snapshots stay in the pool."""
+        if not path.is_dir():
+            return 0
+        known = {s.path for s in self.pool} | getattr(self, "_imported", set())
+        new = sorted(str(f) for f in path.glob("*.pt") if str(f) not in known)
+        self._imported = known | set(new)
+        for f in new:
+            try:
+                d = torch.load(f, map_location="cpu")
+            except Exception:  # still being written: retried next scan
+                self._imported.discard(f)
+                continue
+            s = Snapshot(self.next_sid, int(d.get("update", -1)), f, state=d["actor"])
+            s.imported = True
+            self.next_sid += 1
+            self.pool.append(s)
+        if keep:
+            imp = [s for s in self.pool if getattr(s, "imported", False) or s.path.startswith(str(path))]
+            for s in imp[:-keep]:
+                self.pool.remove(s)
+        return len(new)
+
     def pick(self) -> list[Snapshot]:
         """Choose up to n_active snapshots by PFSP weights (no models loaded)."""
         if not self.pool:
