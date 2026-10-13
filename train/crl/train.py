@@ -56,7 +56,8 @@ def parse(argv=None):
     # reward
     a("--crown-coef", type=float, default=0.0, help="terminal reward += coef * (crowns taken - crowns lost) / 3")
     a("--shape-coef", type=float, default=0.5, help="crown-tower damage reward weight at the start")
-    a("--shape-anneal", type=float, default=2e8, help="decisions over which the shaping weight decays to 0")
+    a("--shape-anneal", type=float, default=2e8, help="decisions over which the shaping weight decays to --shape-floor")
+    a("--shape-floor", type=float, default=0.0, help="shaping weight after the anneal (zero-sum, so self-play stays fair)")
     # ppo
     a("--rollout", type=int, default=65536, help="complete transitions per update")
     a("--buffer", type=int, default=0, help="rollout buffer capacity (default 2x rollout)")
@@ -471,7 +472,7 @@ def main(argv=None):
     metrics_f = open(out / "metrics.jsonl", "a")
 
     def shape_coef() -> float:
-        return args.shape_coef * max(0.0, 1.0 - total_decisions / max(1.0, args.shape_anneal))
+        return max(args.shape_floor, args.shape_coef * max(0.0, 1.0 - total_decisions / max(1.0, args.shape_anneal)))
 
     def assign(opp_code: int, team: int) -> list:
         if opp_code != 0:

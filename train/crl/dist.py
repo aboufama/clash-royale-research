@@ -420,7 +420,7 @@ def main(args) -> None:
         p.start()
 
     def shape_coef() -> float:
-        return args.shape_coef * max(0.0, 1.0 - total_decisions / max(1.0, args.shape_anneal))
+        return max(args.shape_floor, args.shape_coef * max(0.0, 1.0 - total_decisions / max(1.0, args.shape_anneal)))
 
     def send_opponents():
         picks = league.pick()
