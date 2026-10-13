@@ -54,6 +54,7 @@ def parse(argv=None):
     a("--mirror", action="store_true", help="mirror match: both sides play the first deck (sim/rl/env.ts DEFAULT_ENV)")
     a("--self-play-prob", type=float, default=0.5, help="py-vs-py episodes where both sides are the learner")
     # reward
+    a("--crown-coef", type=float, default=0.0, help="terminal reward += coef * (crowns taken - crowns lost) / 3")
     a("--shape-coef", type=float, default=0.5, help="crown-tower damage reward weight at the start")
     a("--shape-anneal", type=float, default=2e8, help="decisions over which the shaping weight decays to 0")
     # ppo
@@ -69,6 +70,7 @@ def parse(argv=None):
     a("--ent", type=float, default=0.01, help="default for --ent-slot / --ent-tile")
     a("--ent-slot", type=float, default=None, help="entropy bonus of the slot head (wait / which card)")
     a("--ent-tile", type=float, default=None, help="entropy bonus of the tile head")
+    a("--ent-card", type=float, default=0.0, help="entropy bonus of which card, given a play (slots 1-4 renormalized)")
     a("--max-grad", type=float, default=1.0)
     a("--total-decisions", type=float, default=5e9)
     # model
@@ -122,9 +124,16 @@ class Stats:
         self.lost = defaultdict(float)
         self.ep_ticks = []
         self.decisions = 0
+        self.illegal = 0
+        self.beh: dict[str, np.ndarray] = {}  # summed done-record behaviour (own, opponent) per opponent kind
+        self.beh_n = defaultdict(int)
         self.t0 = time.time()
 
-    def record(self, opp: str, outcome: float, ep_ticks: float, crowns: float = 0, opp_crowns: float = 0):
+    def record(self, opp: str, outcome: float, ep_ticks: float, crowns: float = 0, opp_crowns: float = 0,
+               beh: np.ndarray | None = None):
+        if beh is not None and len(beh):
+            self.beh[opp] = self.beh.get(opp, 0) + beh.astype(np.float64)
+            self.beh_n[opp] += 1
         self.games[opp] += 1
         self.wins[opp] += 1.0 if outcome > 0 else 0.5 if outcome == 0 else 0.0
         # the owner's bar against the hard bot: at least 2 crowns without losing a tower
@@ -135,7 +144,7 @@ class Stats:
 
     def summary(self) -> dict:
         dt = max(1e-6, time.time() - self.t0)
-        out = {"decisions_per_s": self.decisions / dt}
+        out = {"decisions_per_s": self.decisions / dt, "illegal_actions": self.illegal}
         for k, n in self.games.items():
             out[f"winrate_vs_{k}"] = self.wins[k] / n
             out[f"games_vs_{k}"] = n
@@ -144,7 +153,53 @@ class Stats:
             out[f"crowns_lost_vs_{k}"] = self.lost[k] / n
         if self.ep_ticks:
             out["episode_s"] = float(np.mean(self.ep_ticks)) / 20
+        for k, v in self.beh.items():
+            out[f"beh_{k}"] = behaviour(v / self.beh_n[k])
+            out[f"beh_{k}"]["n"] = self.beh_n[k]
         return out
+
+
+def behaviour(v: np.ndarray) -> dict:
+    """Per-game means of the done-record behaviour block (sim/rl/env.ts BEH_F) for both sides."""
+    f = len(v) // 2
+    out = {}
+    for side, b in (("own", v[:f]), ("opp", v[f:])):
+        plays = float(b[:8].sum())
+        out[side] = {"cards": [round(float(x), 3) for x in b[:8]], "plays": plays,
+                     "enemy_half": float(b[8]) / max(plays, 1e-9), "elixir_at_play": float(b[9]) / max(plays, 1e-9),
+                     "full_elixir_s": float(b[10]) / 20, "dmg_dealt": float(b[11]), "dmg_taken": float(b[12])}
+    return out
+
+
+def behaviour_line(rec: dict, names: list[str]) -> str:
+    """One log line per opponent kind: plays per game of each card, elixir leaked, placements."""
+    parts = []
+    for k, v in sorted(rec.items()):
+        if not k.startswith("beh_"):
+            continue
+        o = v["own"]
+        cards = " ".join(f"{n[:6]} {c:.1f}" for n, c in zip(names, o["cards"]))
+        line = (f"{k[4:]}(n={v['n']}): {cards} | full-elixir {o['full_elixir_s']:.0f}s at-play {o['elixir_at_play']:.1f} "
+                f"enemy-half {o['enemy_half']:.2f} dmg {o['dmg_dealt']:.2f}/{o['dmg_taken']:.2f}")
+        if k == "beh_bot":
+            b = v["opp"]
+            line += f" || bot: {b['plays']:.1f} plays, full-elixir {b['full_elixir_s']:.0f}s"
+        parts.append(line)
+    return "\n    ".join(parts)
+
+
+def count_illegal(masks: np.ndarray, slot: np.ndarray, tile: np.ndarray, n_tiles: int) -> int:
+    """Actions the masks forbid (inference sanity check: should always be 0)."""
+    if len(slot) == 0:
+        return 0
+    bad = (slot < 0) | (slot > 4) | (tile < 0) | (tile >= n_tiles)
+    ok = ~bad
+    r = np.nonzero(ok)[0]
+    s, t = slot[r], tile[r]
+    legal = masks[r, s] > 0
+    play = s > 0
+    legal[play] &= masks[r[play], 5 + (s[play] - 1) * n_tiles + t[play]] > 0
+    return int(bad.sum() + (~legal).sum())
 
 
 def make_autocast(device: torch.device):
@@ -177,7 +232,7 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
             mb = perm[start:start + args.minibatch]
             o = obs_all[mb].float()
             with autocast():
-                logp, ent_s, ent_t = actor.evaluate(o, d["slot_mask"][mb], d["tile_mask"][mb], d["slot"][mb], d["tile"][mb])
+                logp, ent_s, ent_t, ent_c = actor.evaluate(o, d["slot_mask"][mb], d["tile_mask"][mb], d["slot"][mb], d["tile"][mb])
                 v = critic(o).float()
             ratio = torch.exp(logp - d["logp"][mb])
             a = d["adv"][mb]
@@ -188,10 +243,14 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
             vl = 0.5 * torch.max((v - r) ** 2, (vc - r) ** 2).mean()
             ent = ent_s.mean() + ent_t.mean()
             # separate entropy weights: the slot choice (when / which card) collapsed far faster than the tile
-            loss = pg + args.vf * vl - args.ent_slot * ent_s.mean() - args.ent_tile * ent_t.mean()
+            loss = pg + args.vf * vl - args.ent_slot * ent_s.mean() - args.ent_tile * ent_t.mean() - args.ent_card * ent_c.mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             gn = torch.nn.utils.clip_grad_norm_(params, args.max_grad)
+            if not bool(torch.isfinite(loss) & torch.isfinite(gn)):
+                logs["skipped"].append(torch.ones((), device=device))  # one bad batch must not poison the weights
+                continue
+            logs["skipped"].append(torch.zeros((), device=device))
             opt.step()
             with torch.no_grad():
                 plays = (d["slot"][mb] > 0).sum().clamp(min=1)
@@ -199,6 +258,7 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
                 logs["loss_v"].append(vl.detach())
                 logs["entropy_slot"].append(ent_s.mean().detach())
                 logs["entropy_tile"].append(ent_t.sum().detach() / plays)
+                logs["entropy_card"].append(ent_c.mean().detach())
                 logs["approx_kl"].append(((ratio - 1) - torch.log(ratio)).mean().detach())
                 logs["clipfrac"].append(((ratio - 1).abs() > args.clip).float().mean().detach())
                 logs["grad_norm"].append(gn.detach())
@@ -299,7 +359,9 @@ class GraphedInfer:
             sm[n:].zero_()
             sm[n:, 0] = 1
         g.replay()
-        return out[:n]
+        # a copy: `out` is the graph's static buffer, and the split path above replays the same graph for
+        # its second half (returning the view let the second half overwrite the first's actions)
+        return out[:n].clone()
 
 
 def cpu_state(m: torch.nn.Module) -> dict:
@@ -355,7 +417,7 @@ def main(argv=None):
     rng = random.Random(args.seed)
 
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
-               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror}
+               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror, "crownCoef": args.crown_coef}
     pool = EnvPool(args.workers, args.envs, args.seed, env_cfg)
     spec = pool.spec
     (out / "spec.json").write_text(json.dumps(spec))
@@ -403,6 +465,7 @@ def main(argv=None):
     stream_last: dict[tuple[int, int], int | None] = {}
     ep_nets: dict[tuple[int, int], list] = {}
     stats = Stats()
+    beh_win, beh_win_n = {}, defaultdict(int)
     metrics_f = open(out / "metrics.jsonl", "a")
 
     def shape_coef() -> float:
@@ -432,6 +495,7 @@ def main(argv=None):
             gid, team, ep = int(row[0]), int(row[1]), int(row[2])
             outcome, term, shape, ticks, ep_ticks = float(row[3]), float(row[4]), float(row[5]), float(row[6]), float(row[7])
             crowns, opp_crowns = (float(row[8]), float(row[9])) if len(row) > 9 else (0.0, 0.0)
+            beh = row[11:]
             nets = ep_nets.get((gid, ep))
             if nets is None or nets[team] not in ("L", "E"):
                 continue
@@ -441,7 +505,7 @@ def main(argv=None):
                 stream_last[(gid, team)] = None
             opp = nets[1 - team]
             name = "self" if opp == "L" else opp if isinstance(opp, str) else "league"
-            stats.record(name, outcome, ep_ticks, crowns, opp_crowns)
+            stats.record(name, outcome, ep_ticks, crowns, opp_crowns, beh)
             if isinstance(opp, int):
                 league.record(opp, outcome)
             ended.add((gid, ep))
@@ -479,6 +543,7 @@ def main(argv=None):
                 tp2 = time.time()
                 timing["p_infer_s"] += tp2 - tp1
                 slot[li_rows], tile[li_rows] = s_np, t_np
+                stats.illegal += count_illegal(frame.masks[li_rows], s_np, t_np, n_tiles)
                 keep = np.array([nets_r[r] == "L" for r in li_rows], dtype=bool)  # benchmark games are not stored
                 li_rows, s_np, t_np, lp_np, v_np = li_rows[keep], s_np[keep], t_np[keep], lp_np[keep], v_np[keep]
                 # the chosen card's tile mask, gathered on the host (zeros for a wait)
@@ -556,6 +621,16 @@ def main(argv=None):
               f"proc {timing['process_s']:.1f}s (book {timing['p_bookkeep_s']:.1f} infer {timing['p_infer_s']:.1f} "
               f"store {timing['p_store_s']:.1f} opp {timing['p_opp_s']:.1f}) upd {rec.get('update_s', 0):.1f}s rec/frame "
               f"{timing['records'] / max(1, timing['frames']):.0f}", flush=True)
+        if rec.get("illegal_actions"):
+            print(f"  WARNING {rec['illegal_actions']} illegal actions sampled this update", flush=True)
+        for k, v in stats.beh.items():  # behaviour over the last 10 updates, printed then
+            beh_win[k] = beh_win.get(k, 0) + v
+            beh_win_n[k] += stats.beh_n[k]
+        if update % 10 == 0 and beh_win:
+            print("  behaviour " + behaviour_line({f"beh_{k}": {**behaviour(v / beh_win_n[k]), "n": beh_win_n[k]}
+                                                  for k, v in beh_win.items()}, spec["env"]["decks"][0]), flush=True)
+            beh_win.clear()
+            beh_win_n.clear()
         stats.reset()
         timing.clear()
         if update % args.ckpt_every == 0:

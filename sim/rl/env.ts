@@ -7,9 +7,9 @@
 // between its decision points, discounted per tick (gamma^k for the k-th tick after the decision),
 // so the trainer works on a semi-MDP: transition (s, a, R, k ticks, s').
 
-import { Battle, Bot } from '../core/src/index.ts';
+import { Battle, Bot, ELIXIR_ONE } from '../core/src/index.ts';
 import type { GameData } from '../core/src/index.ts';
-import { type CycleInfo, CycleTracker, Encoder } from './obs.ts';
+import { type CycleInfo, CycleTracker, Encoder, TILES_H } from './obs.ts';
 
 export type Ctrl = 'py' | 'bot' | 'random' | 'none';
 
@@ -19,6 +19,8 @@ export interface EnvConfig {
   deckSwap: boolean;
   /** Mirror match: both teams play decks[0]. */
   mirror?: boolean;
+  /** Terminal reward += crownCoef * (own crowns - opponent crowns) / 3 (on top of win +1 / loss -1). */
+  crownCoef?: number;
   decisionTicks: number;
   /** Per-tick discount used for the reward sums handed to the trainer. */
   gamma: number;
@@ -75,6 +77,13 @@ export class XRng {
   int(n: number): number { return Math.floor(this.next() * n); }
 }
 
+/**
+ * Per-team behaviour of an episode, for monitoring only (not in the reward or the observation):
+ * [plays of deck card 0..7, plays in the enemy half, elixir at play (sum), ticks at full elixir,
+ *  crown-tower damage dealt, crown-tower damage taken (fractions of max hp, summed over the 3 towers)].
+ */
+export const BEH_F = 13;
+
 export interface EpisodeEnd {
   team: number;
   outcome: number; // +1 win, -1 loss, 0 draw, from this team's side
@@ -90,6 +99,7 @@ export class RlEnv {
   private readonly tracker = new CycleTracker();
   get cycle(): [CycleInfo, CycleInfo] { return this.tracker.cycle; }
   private towerHp: number[] = [0, 0, 0, 0, 0, 0];
+  readonly beh: [Float64Array, Float64Array] = [new Float64Array(BEH_F), new Float64Array(BEH_F)];
   episode = 0;
   seed = 0;
   /** Successful plays of the episode, [tick, team, slot, x, y] (recorded when cfg.replayDir is set). */
@@ -118,13 +128,26 @@ export class RlEnv {
     this.b = new Battle(this.data, { seed, decks: [cfg.decks[this.deckOf[0]], cfg.decks[this.deckOf[1]]], level: cfg.level });
     this.seed = seed;
     this.plays = [];
-    if (cfg.replayDir) {
-      // every play (trainer, bot, random) goes through Battle.play: record the accepted ones with their tick
+    this.beh[0].fill(0);
+    this.beh[1].fill(0);
+    {
+      // every play (trainer, bot, random) goes through Battle.play: count the accepted ones (and record
+      // them with their tick for replays)
       const b = this.b;
       const play = b.play.bind(b);
+      const mid = TILES_H * 500;
       b.play = (team: number, slot: number, x: number, y: number) => {
+        const p = b.players[team];
+        const di = p.hand[slot] ?? -1;
+        const elixir = p.elixir;
         const err = play(team, slot, x, y);
-        if (err === null) this.plays.push([b.tick, team, slot, x, y]);
+        if (err === null) {
+          const s = this.beh[team];
+          if (di >= 0 && di < 8) s[di]++;
+          if ((y - mid) * (p.king.y - mid) < 0) s[8]++;
+          s[9] += elixir / ELIXIR_ONE;
+          if (cfg.replayDir) this.plays.push([b.tick, team, slot, x, y]);
+        }
         return err;
       };
     }
@@ -224,7 +247,14 @@ export class RlEnv {
         a.disc *= g;
       }
       for (let i = 0; i < 6; i++) this.towerHp[i] = hp[i];
+      for (let t = 0; t < 2; t++) if (b.players[t].elixir >= b.maxElixir) this.beh[t][10]++;
       if (b.result !== null || b.tick >= this.cfg.maxTicks) {
+        for (let t = 0; t < 2; t++) {
+          let dealt = 0, taken = 0;
+          for (let i = 0; i < 3; i++) { dealt += 1 - hp[(1 - t) * 3 + i]; taken += 1 - hp[t * 3 + i]; }
+          this.beh[t][11] = dealt;
+          this.beh[t][12] = taken;
+        }
         const w = b.result ? b.result.winner : -1;
         const ends: EpisodeEnd[] = [];
         for (let t = 0; t < 2; t++) {
@@ -232,7 +262,8 @@ export class RlEnv {
           const outcome = w < 0 ? 0 : w === t ? 1 : -1;
           // the terminal reward arrives with the last tick: discount of the tick before
           const a = this.acc[t];
-          a.term += (a.disc / g) * outcome;
+          const crowns = (b.players[t].crowns - b.players[1 - t].crowns) / 3;
+          a.term += (a.disc / g) * (outcome + (this.cfg.crownCoef ?? 0) * crowns);
           ends.push({ team: t, outcome, acc: a });
         }
         return ends;

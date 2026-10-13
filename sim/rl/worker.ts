@@ -7,7 +7,8 @@
 // After the handshake both sides exchange length-prefixed little-endian frames ([u32 bytes][payload]):
 //   trainer -> worker  Int32 [type, n, n x (env, team, slot, tile)]   type 1 = step, 2 = close
 //   worker -> trainer  Int32 [nDone, nRec]
-//                      Float32 nDone x DONE_F  [env, team, episode, outcome, term, shape, ticks, epTicks, crowns, opp crowns]
+//                      Float32 nDone x DONE_F  [env, team, episode, outcome, term, shape, ticks, epTicks, crowns, opp crowns,
+//                                               deck, own behaviour (BEH_F), opponent behaviour (BEH_F)] (env.ts BEH_F)
 //                      Float32 nRec x META_F   [env, team, episode, start, term, shape, ticks, opp]
 //                      Float32 nRec x floats   observations (obs.ts layout)
 //                      Uint8   nRec x maskBytes legal-action masks
@@ -19,13 +20,13 @@ import { mkdirSync, readSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadGameData } from '../core/src/node.ts';
-import { DEFAULT_ENV, type EnvConfig, RlEnv, XRng } from './env.ts';
+import { BEH_F, DEFAULT_ENV, type EnvConfig, RlEnv, XRng } from './env.ts';
 import {
   Encoder, F_AOE, F_CARD, F_GLOBAL, F_PEND, F_PRIV_CARD, F_PRIV_GLOBAL, F_PROJ, F_UNIT, ID_AOE, ID_CARD, ID_PEND, ID_PROJ, ID_UNIT,
   makeVocab, MAX_AOE, MAX_PEND, MAX_PROJ, MAX_UNITS, N_CARDS, N_SLOTS, N_TILES, TILES_H, TILES_W,
 } from './obs.ts';
 
-export const DONE_F = 10;
+export const DONE_F = 11 + 2 * BEH_F;
 export const META_F = 8;
 const OPP_CODE = { py: 0, bot: 1, random: 2, none: 3 } as const;
 
@@ -41,7 +42,7 @@ export function spec(enc: Encoder, cfg: EnvConfig): Record<string, unknown> {
     sizes: {
       TILES_W, TILES_H, N_TILES, N_SLOTS, MAX_UNITS, MAX_PROJ, MAX_AOE, N_CARDS, MAX_PEND,
       F_GLOBAL, F_UNIT, ID_UNIT, F_PROJ, ID_PROJ, F_AOE, ID_AOE, F_CARD, ID_CARD, F_PEND, ID_PEND, F_PRIV_CARD, F_PRIV_GLOBAL,
-      DONE_F, META_F,
+      DONE_F, META_F, BEH_F,
     },
     vocab: enc.vocab,
     env: cfg,
@@ -87,7 +88,7 @@ export class Worker {
         for (const end of ends) {
           const pl = env.b.players;
           dones.push(i, end.team, env.episode, end.outcome, end.acc.term, end.acc.shape, end.acc.ticks, env.b.tick,
-            pl[end.team].crowns, pl[1 - end.team].crowns);
+            pl[end.team].crowns, pl[1 - end.team].crowns, env.deckOf[end.team], ...env.beh[end.team], ...env.beh[1 - end.team]);
         }
         if (this.cfg.replayDir) {
           mkdirSync(this.cfg.replayDir, { recursive: true });

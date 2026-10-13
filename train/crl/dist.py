@@ -27,7 +27,7 @@ from .envpool import EnvPool
 from .league import League
 from .model import ModelConfig, param_count
 from .rollout import Rollout
-from .train import OPP_NAMES, GraphedInfer, Stats, build_nets, cpu_state, make_autocast, ppo_update
+from .train import OPP_NAMES, GraphedInfer, Stats, behaviour, behaviour_line, build_nets, count_illegal, cpu_state, make_autocast, ppo_update
 
 MAX_OUTSTANDING = 2  # rollouts a collector may have in flight before it waits for new weights
 
@@ -169,7 +169,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
     torch.set_num_threads(1)
     rng = random.Random(args.seed * 7919 + cid)
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
-               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror}
+               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror, "crownCoef": args.crown_coef}
     pool = EnvPool(n_workers, args.envs, args.seed * 101 + cid, env_cfg)
     n_tiles = spec["sizes"]["N_TILES"]
     rollout = max(1024, args.rollout // args.collectors)
@@ -235,6 +235,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
             gid, team, ep = int(row[0]), int(row[1]), int(row[2])
             outcome, term, shape, ticks, ep_ticks = float(row[3]), float(row[4]), float(row[5]), float(row[6]), float(row[7])
             crowns, opp_crowns = float(row[8]), float(row[9])
+            beh = row[11:]
             nets = ep_nets.get((gid, ep))
             if nets is None or nets[team] not in ("L", "E"):
                 continue
@@ -244,7 +245,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
                 stream_last[(gid, team)] = None
             opp = nets[1 - team]
             name = "self" if opp == "L" else opp if isinstance(opp, str) else "league"
-            stats.record(name, outcome, ep_ticks, crowns, opp_crowns)
+            stats.record(name, outcome, ep_ticks, crowns, opp_crowns, beh)
             if isinstance(opp, int):
                 league_results.append((opp, outcome))
             ended.add((gid, ep))
@@ -284,6 +285,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
                 t2 = time.time()
                 timing["p_infer_s"] += t2 - t1
                 slot[li_rows], tile[li_rows] = s_np, t_np
+                stats.illegal += count_illegal(frame.masks[li_rows], s_np, t_np, n_tiles)
                 keep = np.array([nets_r[r] == "L" for r in li_rows], dtype=bool)  # benchmark games are not stored
                 li_rows, s_np, t_np, lp_np, v_np = li_rows[keep], s_np[keep], t_np[keep], lp_np[keep], v_np[keep]
                 start = 5 + np.clip(s_np - 1, 0, 3) * n_tiles
@@ -370,7 +372,9 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
             sent += 1
             stats_q.put(("stats", cid, {"games": dict(stats.games), "wins": dict(stats.wins), "dominant": dict(stats.dominant),
                                         "crowns": dict(stats.crowns), "lost": dict(stats.lost), "ep_ticks": list(stats.ep_ticks),
-                                        "decisions": stats.decisions}, dict(timing), list(league_results)))
+                                        "decisions": stats.decisions, "illegal": stats.illegal,
+                                        "beh": {k: v.tolist() for k, v in stats.beh.items()}, "beh_n": dict(stats.beh_n)},
+                         dict(timing), list(league_results)))
             stats.reset()
             timing.clear()
             league_results.clear()
@@ -425,6 +429,7 @@ def main(args) -> None:
 
     send_opponents()
     stats = Stats()
+    beh_win, beh_win_n = {}, defaultdict(int)
     timing = defaultdict(float)
     metrics_f = open(out / "metrics.jsonl", "a")
     t_last = time.time()
@@ -440,6 +445,10 @@ def main(args) -> None:
                         getattr(stats, f)[k] += v
                 stats.ep_ticks.extend(st["ep_ticks"])
                 stats.decisions += st["decisions"]
+                stats.illegal += st.get("illegal", 0)
+                for k, v in st.get("beh", {}).items():
+                    stats.beh[k] = stats.beh.get(k, 0) + np.asarray(v)
+                    stats.beh_n[k] += st["beh_n"][k]
                 total_decisions += st["decisions"]
                 for k, v in tm.items():
                     timing[k] += v
@@ -478,6 +487,16 @@ def main(args) -> None:
                   f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | per collector frame: wait "
                   f"{1000 * timing['wait_s'] / nf:.0f}ms proc {1000 * timing['process_s'] / nf:.0f}ms; upd {rec['update_s']:.1f}s "
                   f"n={rec['transitions']}", flush=True)
+            if rec.get("illegal_actions"):
+                print(f"  WARNING {rec['illegal_actions']} illegal actions sampled this update", flush=True)
+            for k, v in stats.beh.items():  # behaviour over the last 10 updates, printed then
+                beh_win[k] = beh_win.get(k, 0) + v
+                beh_win_n[k] += stats.beh_n[k]
+            if update % 10 == 0 and beh_win:
+                print("  behaviour " + behaviour_line({f"beh_{k}": {**behaviour(v / beh_win_n[k]), "n": beh_win_n[k]}
+                                                      for k, v in beh_win.items()}, spec["env"]["decks"][0]), flush=True)
+                beh_win.clear()
+                beh_win_n.clear()
             stats.reset()
             timing.clear()
             if update % args.ckpt_every == 0:

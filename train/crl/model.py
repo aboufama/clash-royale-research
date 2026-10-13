@@ -266,12 +266,16 @@ class Actor(nn.Module):
         return torch.gather(masks, 1, start.unsqueeze(1) + ar.unsqueeze(0)).bool()
 
     def evaluate(self, obs: torch.Tensor, slot_mask: torch.Tensor, tile_mask: torch.Tensor, slot: torch.Tensor, tile: torch.Tensor):
-        """log p(slot, tile) and entropies under the current weights (training)."""
+        """log p(slot, tile) and the slot, tile and card-given-play entropies under the current weights (training)."""
         tok, kpm, glob, slot_tok = self.trunk(obs)
         sl = masked_logits(self.slot_logits(glob, slot_tok).float(), slot_mask.bool())
         slp = torch.log_softmax(sl, -1)
         logp = slp.gather(1, slot.unsqueeze(1)).squeeze(1)
         ent_slot = -(slp.exp() * slp).sum(-1)
+        # which card, given a play: its entropy is separate from the wait / play choice (a slot-entropy
+        # bonus mostly buys random elixir spending; this one keeps every card in use)
+        clp = torch.log_softmax(sl[:, 1:], -1)
+        ent_card = -(clp.exp() * clp).sum(-1)
         ent_tile = torch.zeros_like(ent_slot)
         play = slot > 0
         if play.any():
@@ -281,7 +285,7 @@ class Actor(nn.Module):
             tlp = torch.log_softmax(tl, -1)
             logp = logp.index_add(0, r, tlp.gather(1, tile[r].unsqueeze(1)).squeeze(1))
             ent_tile = ent_tile.index_add(0, r, -(tlp.exp() * tlp).sum(-1))
-        return logp, ent_slot, ent_tile
+        return logp, ent_slot, ent_tile, ent_card
 
 
 class Critic(nn.Module):
