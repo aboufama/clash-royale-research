@@ -21,6 +21,11 @@ export interface EnvConfig {
   mirror?: boolean;
   /** Terminal reward += crownCoef * (own crowns - opponent crowns) / 3 (on top of win +1 / loss -1). */
   crownCoef?: number;
+  /**
+   * Wait lengths in ticks for a py team's wait (slot 0): the action's tile field picks one (0 = the next
+   * decision tick). A longer wait ends early when the opponent commits a card or the team's elixir is full.
+   */
+  waitTicks?: number[];
   decisionTicks: number;
   /** Per-tick discount used for the reward sums handed to the trainer. */
   gamma: number;
@@ -107,6 +112,9 @@ export class RlEnv {
   /** A py team that was asked this round and has not acted yet. */
   readonly waiting: [boolean, boolean] = [false, false];
   readonly started: [boolean, boolean] = [false, false];
+  /** A chosen wait: no decision before this tick (unless interrupted), and the opponent's commits then. */
+  readonly waitUntil: [number, number] = [0, 0];
+  private readonly waitOppCommits: [number, number] = [0, 0];
   private randState = 1;
 
   readonly data: GameData;
@@ -165,6 +173,7 @@ export class RlEnv {
       this.acc[t].reset();
       this.waiting[t] = false;
       this.started[t] = false;
+      this.waitUntil[t] = 0;
     }
     this.tracker.reset(this.b);
     this.readTowers(this.towerHp);
@@ -196,14 +205,28 @@ export class RlEnv {
   decides(t: number): boolean {
     if (this.ctrl[t] !== 'py' || this.b.result !== null) return false;
     if (this.b.tick % this.cfg.decisionTicks !== 0) return false;
+    if (this.b.tick < this.waitUntil[t]) {
+      // a chosen wait runs on unless the opponent committed a card or the elixir bar is full
+      const opp = this.tracker.cycle[1 - t].commits !== this.waitOppCommits[t];
+      const full = this.b.players[t].elixir >= this.b.maxElixir;
+      if (!opp && !full) return false;
+      this.waitUntil[t] = 0;
+    }
     for (let s = 0; s < 4; s++) if (Encoder.playable(this.b, t, s)) return true;
     return false;
   }
 
-  /** Apply a py team's action (slot 0 = wait, 1..4 = hand slot; tile = canonical tile). */
+  /** Apply a py team's action (slot 0 = wait, its tile = the wait length index; 1..4 = hand slot, tile = canonical tile). */
   act(t: number, slot: number, tile: number): void {
     this.waiting[t] = false;
-    if (slot <= 0) return;
+    if (slot <= 0) {
+      const w = this.cfg.waitTicks;
+      if (w && tile > 0 && tile < w.length) {
+        this.waitUntil[t] = this.b.tick + w[tile];
+        this.waitOppCommits[t] = this.tracker.cycle[1 - t].commits;
+      }
+      return;
+    }
     const { x, y } = Encoder.tileWorld(t, tile);
     this.b.play(t, slot - 1, x, y);
   }

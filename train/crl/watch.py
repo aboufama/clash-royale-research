@@ -24,6 +24,8 @@ BANDS = (("back", 0, 8), ("mid", 8, 14), ("bridge", 14, 18), ("enemy", 18, 32)) 
 
 def run(actor: Actor, opp: str, games: int, workers: int, envs: int, seed: int, replay_dir: Path | None, greedy: bool) -> dict:
     cfg = {"mirror": True, "botProb": 1.0 if opp == "bot" else 0.0, "botLevel": 3}
+    if actor.n_wait:  # a model with a wait head chooses wait lengths (train.py --wait-ticks default)
+        cfg["waitTicks"] = [5, 10, 20, 40, 80][:actor.n_wait]
     if replay_dir is not None:
         replay_dir.mkdir(parents=True, exist_ok=True)
         cfg["replayDir"] = str(replay_dir)

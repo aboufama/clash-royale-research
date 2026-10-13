@@ -27,7 +27,7 @@ from .envpool import EnvPool
 from .league import League
 from .model import ModelConfig, param_count
 from .rollout import Rollout
-from .train import OPP_NAMES, GraphedInfer, Stats, behaviour, behaviour_line, build_nets, count_illegal, cpu_state, make_autocast, ppo_update
+from .train import OPP_NAMES, GraphedInfer, Stats, behaviour, behaviour_line, build_nets, count_illegal, load_actor, wait_ticks, cpu_state, make_autocast, ppo_update
 
 MAX_OUTSTANDING = 2  # rollouts a collector may have in flight before it waits for new weights
 
@@ -102,9 +102,17 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, coord_q
     opt = torch.optim.Adam(list(actor.parameters()) + list(critic.parameters()), lr=args.lr, eps=1e-5)
     if resume:
         ck = torch.load(resume, map_location=device)
-        actor.load_state_dict(ck["actor"])
+        added = load_actor(actor, ck["actor"])
         critic.load_state_dict(ck["critic"])
-        opt.load_state_dict(ck["opt"])
+        if added:  # see train.learner_main
+            head = list(actor.wait_dur.parameters())
+            ids = {id(p) for p in head}
+            opt = torch.optim.Adam([p for p in actor.parameters() if id(p) not in ids] + list(critic.parameters()),
+                                   lr=args.lr, eps=1e-5)
+            opt.load_state_dict(ck["opt"])
+            opt.add_param_group({"params": head})
+        else:
+            opt.load_state_dict(ck["opt"])
     actor.eval()
     critic.eval()
     version = 0
@@ -169,7 +177,8 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
     torch.set_num_threads(1)
     rng = random.Random(args.seed * 7919 + cid)
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
-               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror, "crownCoef": args.crown_coef}
+               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror, "crownCoef": args.crown_coef,
+               **({"waitTicks": wait_ticks(args)} if args.wait_options else {})}
     pool = EnvPool(n_workers, args.envs, args.seed * 101 + cid, env_cfg)
     n_tiles = spec["sizes"]["N_TILES"]
     rollout = max(1024, args.rollout // args.collectors)
@@ -202,7 +211,7 @@ def collector_main(cid: int, args, spec: dict, mcfg: ModelConfig, n_workers: int
 
     def load_opponent(sid: int, path: str):
         m, _ = build_nets(spec, mcfg, device)
-        m.load_state_dict(torch.load(path, map_location=device)["actor"])
+        load_actor(m, torch.load(path, map_location=device)["actor"], absent_bias=20.0)
         m.eval()
         m.enc.trim_tokens = False
         for p_ in m.parameters():
@@ -391,7 +400,8 @@ def main(args) -> None:
     spec = probe.spec
     probe.close()
     (out / "spec.json").write_text(json.dumps(spec))
-    mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.tile_dim, 4, args.critic_d_model, args.critic_layers)
+    mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.tile_dim, 4, args.critic_d_model, args.critic_layers,
+                       args.wait_options)
     template, _ = build_nets(spec, mcfg, torch.device("cpu"))
     print(f"actor {param_count(template) / 1e6:.2f} M params; {args.collectors} collectors x "
           f"~{args.workers // args.collectors} workers x {args.envs} envs; learner on {args.learner_device}", flush=True)

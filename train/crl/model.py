@@ -30,6 +30,7 @@ class ModelConfig:
     tile_heads: int = 4
     critic_d_model: int = 192
     critic_layers: int = 3
+    wait_options: int = 0  # wait lengths the agent chooses between (sim/rl/env.ts waitTicks); 0 = one fixed wait
 
 
 class Layout:
@@ -197,6 +198,19 @@ class Actor(nn.Module):
         self.slot_wait = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, 1))
         self.tile_q = nn.Sequential(nn.Linear(2 * d, d), nn.GELU(), nn.Linear(d, cfg.tile_dim))
         self.empty = nn.Parameter(torch.zeros(d))
+        self.n_wait = cfg.wait_options
+        if self.n_wait:
+            self.wait_dur = nn.Linear(d, self.n_wait)
+            self.reset_wait_head()
+
+    def reset_wait_head(self, bias: float = 3.0) -> None:
+        """A new (or absent) wait head prefers the shortest wait (p ~ 0.8 at bias 3 with 5 options): an agent
+        trained with one fixed wait keeps its timing while it learns when longer waits pay."""
+        if self.n_wait:
+            with torch.no_grad():
+                self.wait_dur.weight.zero_()
+                self.wait_dur.bias.zero_()
+                self.wait_dur.bias[0] = bias
 
     def trunk(self, obs: torch.Tensor):
         x = self.lay.unpack(obs)
@@ -230,6 +244,12 @@ class Actor(nn.Module):
         logp = torch.log_softmax(sl, -1).gather(1, slot.unsqueeze(1)).squeeze(1)
         tile = torch.zeros_like(slot)
         play = slot > 0
+        if self.n_wait and (~play).any():
+            r = (~play).nonzero().squeeze(1)
+            wl = self.wait_dur(glob[r]).float()
+            w = wl.argmax(-1) if greedy else sample_logits(wl)
+            tile[r] = w
+            logp[r] = logp[r] + torch.log_softmax(wl, -1).gather(1, w.unsqueeze(1)).squeeze(1)
         if play.any():
             r = play.nonzero().squeeze(1)
             tl = self.tile_logits(tok[r], kpm[r], glob[r], slot_tok[r], slot[r]).float()
@@ -255,8 +275,15 @@ class Actor(nn.Module):
         tile = tl.argmax(-1) if greedy else sample_logits(tl)
         tlp = torch.log_softmax(tl, -1).gather(1, tile.unsqueeze(1)).squeeze(1)
         play = slot > 0
-        logp = logp + torch.where(play, tlp, torch.zeros_like(tlp))
-        tile = torch.where(play, tile, torch.zeros_like(tile))
+        if self.n_wait:
+            wl = self.wait_dur(glob).float()
+            w = wl.argmax(-1) if greedy else sample_logits(wl)
+            wlp = torch.log_softmax(wl, -1).gather(1, w.unsqueeze(1)).squeeze(1)
+        else:
+            w = torch.zeros_like(tile)
+            wlp = torch.zeros_like(tlp)
+        logp = logp + torch.where(play, tlp, wlp)
+        tile = torch.where(play, tile, w)
         return torch.stack([slot.float(), tile.float(), logp], 1)
 
     def chosen_tile_mask(self, masks: torch.Tensor, slot: torch.Tensor) -> torch.Tensor:
@@ -293,13 +320,19 @@ class Actor(nn.Module):
             floor_card = torch.where(k >= 2, (torch.relu(math.log(card_floor) - cld) * legal).sum(-1), floor_card)
         ent_tile = torch.zeros_like(ent_slot)
         play = slot > 0
+        if self.n_wait:
+            wl = torch.log_softmax(self.wait_dur(glob).float(), -1)
+            wlp = wl.gather(1, tile.clamp(0, self.n_wait - 1).unsqueeze(1)).squeeze(1)
+            logp = logp + torch.where(play, torch.zeros_like(wlp), wlp)
+            # the wait head's entropy rides in ent_tile on wait rows (a small bonus keeps longer waits explored)
+            ent_tile = torch.where(play, ent_tile, -(wl.exp() * wl).sum(-1))
         if play.any():
             # the tile head (576 queries per row) runs only for rows that played a card
             r = play.nonzero().squeeze(1)
             tl = masked_logits(self.tile_logits(tok[r], kpm[r], glob[r], slot_tok[r], slot[r]).float(), tile_mask[r].bool())
             tlp = torch.log_softmax(tl, -1)
             logp = logp.index_add(0, r, tlp.gather(1, tile[r].unsqueeze(1)).squeeze(1))
-            ent_tile = ent_tile.index_add(0, r, -(tlp.exp() * tlp).sum(-1))
+            ent_tile = ent_tile.index_add(0, r, -(tlp.exp() * tlp).sum(-1))  # wait rows hold the wait entropy
         return logp, ent_slot, ent_tile, ent_card, floor_card
 
 

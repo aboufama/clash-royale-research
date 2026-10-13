@@ -66,6 +66,8 @@ def parse(argv=None):
     a("--epochs", type=int, default=2)
     a("--lr", type=float, default=3e-4)
     a("--lr-decay", action="store_true", help="linear decay to 0 over --total-decisions")
+    a("--wait-options", type=int, default=0, help="wait lengths the agent picks from (0 = one fixed wait of --decision-ticks)")
+    a("--wait-ticks", default="5,10,20,40,80", help="wait lengths in ticks for --wait-options (the first --wait-options of them)")
     a("--target-kl", type=float, default=0.0, help="adapt the lr each update toward this approx KL (0 = fixed lr)")
     a("--clip", type=float, default=0.2)
     a("--vclip", type=float, default=0.5)
@@ -199,6 +201,21 @@ def behaviour_line(rec: dict, names: list[str]) -> str:
     return "\n    ".join(parts)
 
 
+def wait_ticks(args) -> list[int]:
+    return [int(x) for x in args.wait_ticks.split(",")][:args.wait_options]
+
+
+def load_actor(actor, state: dict, absent_bias: float = 3.0) -> bool:
+    """Load an actor state; a state without the wait head (trained with one fixed wait) loads into an actor
+    with one, whose head is reset to prefer the shortest wait. Returns whether the head was absent."""
+    missing, unexpected = actor.load_state_dict(state, strict=False)
+    if unexpected or any(not k.startswith("wait_dur.") for k in missing):
+        raise RuntimeError(f"actor state mismatch: missing {missing}, unexpected {unexpected}")
+    if missing:
+        actor.reset_wait_head(absent_bias)
+    return bool(missing)
+
+
 def count_illegal(masks: np.ndarray, slot: np.ndarray, tile: np.ndarray, n_tiles: int) -> int:
     """Actions the masks forbid (inference sanity check: should always be 0)."""
     if len(slot) == 0:
@@ -271,7 +288,9 @@ def ppo_update(actor, critic, opt, data: dict, args, device: torch.device) -> di
                 logs["loss_pg"].append(pg.detach())
                 logs["loss_v"].append(vl.detach())
                 logs["entropy_slot"].append(ent_s.mean().detach())
-                logs["entropy_tile"].append(ent_t.sum().detach() / plays)
+                played_ = d["slot"][mb] > 0
+                logs["entropy_tile"].append((ent_t * played_).sum().detach() / plays)
+                logs["entropy_wait"].append((ent_t * ~played_).sum().detach() / (~played_).sum().clamp(min=1))
                 logs["entropy_card"].append(ent_c.mean().detach())
                 logs["card_floor_pen"].append(fl_c.mean().detach())
                 logs["ratio_max"].append(ratio.max().detach())
@@ -426,7 +445,7 @@ class OppSlots:
                 i = free[0]
                 if s.state is None:
                     s.state = torch.load(s.path, map_location="cpu")["actor"]
-                self.models[i].load_state_dict(s.state)
+                load_actor(self.models[i], s.state, absent_bias=20.0)  # a snapshot without the head: shortest wait
                 self.sid[i] = s.sid
             active.append((s, self.models[i]))
         return active
@@ -451,9 +470,20 @@ def learner_main(args, spec: dict, mcfg: ModelConfig, resume: str, in_q, out_q) 
     opt = torch.optim.Adam(list(actor.parameters()) + list(critic.parameters()), lr=args.lr, eps=1e-5)
     if resume:
         ck = torch.load(resume, map_location=device)
-        actor.load_state_dict(ck["actor"])
+        added = load_actor(actor, ck["actor"])
         critic.load_state_dict(ck["critic"])
-        opt.load_state_dict(ck["opt"])
+        if added:
+            # the checkpoint's optimizer state covers the networks without the new wait head: load it for
+            # those and give the head its own fresh group
+            head = list(actor.wait_dur.parameters())
+            ids = {id(p) for p in head}
+            opt = torch.optim.Adam([p for p in actor.parameters() if id(p) not in ids] + list(critic.parameters()),
+                                   lr=args.lr, eps=1e-5)
+            opt.load_state_dict(ck["opt"])
+            opt.add_param_group({"params": head})
+            print("  resumed without a wait head: added one preferring the shortest wait", flush=True)
+        else:
+            opt.load_state_dict(ck["opt"])
     actor.eval()
     critic.eval()
     out_q.put(("init", cpu_state(actor), cpu_state(critic)))
@@ -491,11 +521,13 @@ def main(argv=None):
     rng = random.Random(args.seed)
 
     env_cfg = {"decisionTicks": args.decision_ticks, "gamma": args.gamma, "botProb": args.bot_prob, "botLevel": args.bot_level,
-               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror, "crownCoef": args.crown_coef}
+               "randomProb": args.random_prob, "deckSwap": not args.no_deck_swap, "mirror": args.mirror, "crownCoef": args.crown_coef,
+               **({"waitTicks": wait_ticks(args)} if args.wait_options else {})}
     pool = EnvPool(args.workers, args.envs, args.seed, env_cfg)
     spec = pool.spec
     (out / "spec.json").write_text(json.dumps(spec))
-    mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.tile_dim, 4, args.critic_d_model, args.critic_layers)
+    mcfg = ModelConfig(args.d_model, args.layers, args.heads, 2, args.tile_dim, 4, args.critic_d_model, args.critic_layers,
+                       args.wait_options)
     # the collector's copies (behaviour policy); the learner process owns the trained ones
     actor, critic = build_nets(spec, mcfg, device)
     actor.eval()

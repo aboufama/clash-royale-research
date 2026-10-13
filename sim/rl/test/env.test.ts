@@ -106,3 +106,31 @@ test('a py-vs-py episode ends with opposite outcomes', () => {
   assert.equal(ends![0].outcome + ends![1].outcome, 0);
   assert.ok(env.b.result !== null);
 });
+
+test('a chosen wait holds the next decision until it runs out or the opponent commits a card', () => {
+  const data = loadGameData();
+  const cfg = { ...DEFAULT_ENV, deckSwap: false, waitTicks: [5, 10, 20, 40, 80] };
+  // run until team 0 decides, choose the 80-tick wait; team 1 waits (0) or plays its first card
+  const nextDecision = (oppPlays: boolean): number => {
+    const env = new RlEnv(data, cfg, new XRng(21));
+    env.reset();
+    while (!env.decides(0)) env.advance();
+    const start = env.b.tick;
+    env.act(0, 0, 4);
+    let played = false;
+    for (let guard = 0; guard < 400; guard++) {
+      env.advance();
+      if (env.decides(1)) {
+        let s = -1;
+        if (oppPlays && !played) for (let k = 0; k < 4; k++) if (Encoder.playable(env.b, 1, k)) { s = k; break; }
+        if (s >= 0) { env.act(1, s + 1, 5 * TILES_W + 4); played = true; } else env.act(1, 0, 0);
+      }
+      if (env.decides(0)) return env.b.tick - start;
+    }
+    return -1;
+  };
+  const quiet = nextDecision(false);
+  assert.ok(quiet >= 80, `next decision after ${quiet} ticks`);
+  const interrupted = nextDecision(true);
+  assert.ok(interrupted > 0 && interrupted < 80, `next decision after ${interrupted} ticks`);
+});

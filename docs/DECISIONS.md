@@ -500,3 +500,23 @@ change it.
   - Both follow the research notes (JueWu and OpenAI Five keep zero-sum shaping).
 - **Would change if:** the floor keeps the policy from dropping cards that are bad in some states.
   Then lower `--card-floor`; the floor is per state, so it costs at most 1 % of plays per card.
+
+## 2026-10-13 — A chosen wait length (delay head)
+
+- **Decision:** with `--wait-options N` the agent's wait is a choice of length (`--wait-ticks`,
+  default 5/10/20/40/80 ticks = 0.25–4 s), made by a small head on the trunk's global token. The
+  action's tile field carries the choice on waits, so the worker protocol is unchanged.
+  - A longer wait ends early when the opponent commits a card or the agent's elixir bar is full
+    (`sim/rl/env.ts` `waitTicks`).
+  - Old checkpoints and league snapshots load with the head set to prefer the shortest wait: about
+    80 % at bias 3, and always for snapshots.
+- **Why:** the agent decides every 0.25 s and waits on about 95 % of decisions. Saving elixir for a
+  Giant push then takes about 16 consecutive waits, which exploration rarely finds, and λ per
+  decision spans only seconds.
+  - **Evidence:** the update-1760 watch showed no combined pushes and 0.69 crowns per game against
+    the bot. The research notes rank a delay head (AlphaStar, TStarBot-X, TempoRL) as a top fix.
+- **What it is not:** the game has no such action. It is the agent's own temporal abstraction: a
+  player can always wait, and every play still goes through `Battle.play` at a decision tick.
+- **Would change if:** the head stays on the shortest wait after training (no gain), or the
+  interrupts prove too coarse. Then add an interrupt on own tower damage or on an enemy unit crossing
+  the bridge.
