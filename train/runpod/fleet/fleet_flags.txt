@@ -1,0 +1,9 @@
+crl-5090a|exp1|main|--crown-coef 1.0
+crl-b|x1|exploiter|--crown-coef 1.0
+crl-c|w5|main|--wait-options 5 --seed 52 --crown-coef 3.0
+crl-d|w2|main|--wait-options 5 --seed 32 --crown-coef 1.5 --shape-floor 0.2
+crl-e|e2|main|--seed 42 --crown-coef 2.0
+crl-f|w4|main|--wait-options 5 --seed 51 --crown-coef 1.0
+crl-g|g2|main|--seed 22 --crown-coef 2.0 --shape-floor 0.2
+crl-h|w3|main|--wait-options 5 --seed 41 --crown-coef 2.0
+crl-i|w1|main|--wait-options 5 --seed 31 --crown-coef 2.0

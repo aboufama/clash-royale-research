@@ -127,6 +127,44 @@ Regenerate data: `python3 -I tools/data/decode_assets.py && python3 -I tools/dat
 Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). See
 [train/README.md](train/README.md) and DECISIONS "Self-play RL setup".
 
+**PAUSED 2026-10-13 23:46 UTC at the owner's request.** All training is stopped. All 9 pods are
+stopped (status EXITED, no GPU billing) and keep their volumes, which hold every run's checkpoints,
+league and metrics.
+- **Local copies:** in `work/runpod/final_20261013/` (each run's `latest.pt`, `metrics.jsonl` and
+  `spec.json`). This container only, so it may be gone. The pod volumes are the authoritative copies.
+- **Nothing running:** no relays, watchers or check-ins.
+- **Final standings** (bot benchmark, last 100 updates of each run; the bar is 1+ crown and no tower lost):
+
+  | Run | Pod | Bar | Win | Crowns taken / lost | Notes |
+  |---|---|---|---|---|---|
+  | **w2** | `crl-d` | **26.2 %** | **36.5 %** | 0.65 / 0.89 | delay head, crown 1.5, shape 0.2 |
+  | w4 | `crl-f` | 24.8 % | 28.2 % | 0.39 / 0.87 | delay head, crown 1.0 |
+  | w5 | `crl-c` | 21.7 % | 32.0 % | 0.61 / 0.95 | delay head, crown 3.0 |
+  | exp1 | `crl-5090a` | 20.2 % | 29.8 % | 0.59 / 1.12 | main |
+  | e2 | `crl-e` | 10.4 % | 24.7 % | | |
+  | w3 | `crl-h` | 8.6 % | 14.7 % | | |
+  | w1 | `crl-i` | 7.6 % | 11.4 % | | |
+  | x1 | `crl-b` | 7.4 % | 23.8 % | | exploiter |
+  | g2 | `crl-g` | 6.4 % | 25.4 % | | |
+
+- **Leading policy:** `w2` (`work/runpod/final_20261013/crl-d_w2_latest.pt`). It is a delay-head
+  model, so `sim/viewer/src/agent.ts` must learn the wait-length output before it can go on Pages.
+  Pages still serves the update-830 agent.
+- **To resume:** `launch.py --pod <pod> resume-pod`, then `wait`. On each pod: verify CUDA,
+  `exec 'nvidia-cuda-mps-control -d'`, then `train/runpod/fleet/restart_same.sh` (flags in
+  `fleet/fleet_flags.txt`, fixed `--lr 2e-4`). Restart the relays with `train/runpod/relay.py` (see
+  the population notes below) and the watchers (`fleet/breakwatch.py`, `fleet/podwatch.py`).
+  - **If a stopped pod cannot get its GPU back:** rent a new pod (`fleet/grab4.sh`) and upload the
+    run's `latest.pt`.
+  - **If the pods are no longer needed:** `launch.py --pod <pod> terminate` deletes each one and
+    its volume. Fetch what you need first.
+- **Next ideas:**
+  - Keep the population training, re-seeding the worst runs from the best every couple of hours.
+  - Add a wait-length output to `agent.ts` and export `w2` to Pages.
+  - Log how often long waits are chosen.
+  - Interrupt a wait on own tower damage.
+  - Try a short engine lookahead at decision time.
+
 **Live run (2026-10-13).** RunPod pod `crl-5090a`: one RTX 5090 on community cloud, $0.69/hr,
 31-core CPU quota. Run directory `/workspace/crl/runs/exp1`. CUDA MPS runs on the pod; restart it after a CUDA fault.
 - **Driving it:** `train/runpod/launch.py --pod crl-5090a status|log|ls|fetch|upload|exec|stop|start|terminate`
