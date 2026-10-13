@@ -463,7 +463,7 @@ change it.
 - **Would change if:** a single run needs more than one pod's throughput (then distributed
   collectors with compressed rollouts), or GPU prices or CPU quotas change.
 
-## 2026-10-13 — Behaviour monitoring, and a KL floor on the card choice
+## 2026-10-13 — Behaviour monitoring, and a floor on the card choice
 
 - **Decision:** the environment reports per-episode behaviour for both sides:
   - card plays by deck index;
@@ -475,19 +475,28 @@ change it.
   The trainer logs these per opponent kind. `crl.watch` produces per-card tables, heatmaps and
   replays from a checkpoint.
 
-  The card choice gets `--card-kl`: a penalty on KL(uniform over the legal cards || p(card | play)).
+  Collapsed cards are lifted back by a one-off slot-head distillation (`crl.card_floor`), and
+  training keeps a hinge floor on p(card | play) (`--card-floor`).
 - **Why:** the win rate against the bot hid a collapse that the first behaviour report showed at once.
   - **The collapse:** the agent never played Giant, Fireball or Arrows. They stayed in hand all
     game with p(card | play) around 1e-9, so one hand slot cycled five cards.
   - **Why an entropy bonus fails:** its gradient is about p·log(1/p), so it cannot pull a
     probability back from 1e-9.
-  - **Why the KL works:** its gradient with respect to the logits is p − U. It stays O(1), acts as a
-    floor on every legal card, and leaves the policy free to prefer cards where the advantage says
-    so.
+- **What failed first:**
+  - **KL pull to uniform:** a penalty on KL(uniform || p(card | play)) on every row wrecked the
+    agent in ten updates (bot win rate from about 30 % to 0). It acts on the 95 % of rows that
+    wait, so it swamped the card choice's policy gradient and held the choice near uniform.
+  - **Hinge floor in PPO, applied cold:** it overshot the floor under Adam (to about 20 % in ten
+    steps) and moved p(wait) from 0.95 to 0.62 through the shared card head.
+- **What works:** the distillation fits only the slot head, on frozen trunk features, to a target
+  that keeps each state's p(wait) and the relative preferences among the other cards but lifts every
+  legal card to 3 % of the play probability. p(wait) was unchanged at 0.957 and the parked cards
+  rose to a median 4 %. During training the hinge is zero above its floor (1 %) and its gradient
+  reaches only the slot head.
 - **Also:**
   - The terminal reward counts crowns: `--crown-coef`, + coef · (crowns taken − lost) / 3. It stays
     zero-sum, so self-play is unchanged in kind.
   - `--shape-floor` keeps a small zero-sum tower-damage weight after the anneal.
   - Both follow the research notes (JueWu and OpenAI Five keep zero-sum shaping).
-- **Would change if:** the card floor keeps the policy from committing to good choices. Then lower
-  `--card-kl` or anneal it once every card has a learned use.
+- **Would change if:** the floor keeps the policy from dropping cards that are bad in some states.
+  Then lower `--card-floor`; the floor is per state, so it costs at most 1 % of plays per card.

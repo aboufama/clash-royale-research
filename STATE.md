@@ -133,7 +133,9 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   with `RUNPOD_API_KEY` set. Pod ids and control tokens are in `work/runpod/pods.json` (ignored, this
   container only). `create` makes the new pod the default, so always pass `--pod`.
 - **Current flags:** `--mirror --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048
-  --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --crown-coef 1.0 --card-kl 0.02`, single collector (28 workers).
+  --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --crown-coef 1.0 --card-floor 0.01`, single collector (28 workers).
+- **Second pod `crl-b`** (5090, 24-core quota): run `fresh1`, from scratch, with the same flags plus
+  `--card-floor 0.02 --lam 0.98 --shape-floor 0.1`. It tests a clean lineage against the continued one.
 - **Throughput:** 7.5–13k decisions/s. The simulation is CPU-bound, so value tracks the CPU quota.
 - **Cost:** about 13–19k decisions/s per $/hr, against about 2k for 2× H100 secure ($7.98/hr, 16–18k/s).
   Community stock is thin, and some hosts have a broken GPU (`cuInit` 999, `/dev/nvidia-uvm` I/O error).
@@ -145,8 +147,10 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
 - **Restarts:** stop, push, start with the same `--run`. It resumes from `latest.pt`, written every
   10 updates. A local backup copy lives in the scratchpad.
 - **History:** update 1–1273 on 2× H100 (pod `crl-2`, terminated after the balance ran out).
-  Update 1270 onward on the 5090. Update 1350 onward with behaviour monitoring. Update 1430 onward
-  with `--card-kl`.
+  Update 1270 onward on the 5090; update 1350 onward with behaviour monitoring.
+  The `--card-kl` attempt (updates 1431–1440) wrecked the agent; its checkpoint and metrics are kept
+  on the pod as `*_cardkl*`. The run restarted from the update-1350 checkpoint after `crl.card_floor`
+  surgery, with `--card-floor 0.01`.
 
 **Progress against the hard bot** (benchmark only; mirror and pure self-play since update 210):
 - **Wins:** 6 % at 220–259, 19 % at 320–379, then about 30–36 % from 700 to 1430.
@@ -159,9 +163,9 @@ cards; Giant, Fireball and Arrows stayed in hand all game.
 - **How collapsed:** p(card | play) for those three was about 1e-9, so an entropy bonus has no gradient.
 - **What it meant:** one hand slot cycled; the deck's only win condition (Giant) and both spells
   were never used.
-- **Fix:** `--card-kl` penalizes KL(uniform over legal cards || p(card | play)). Card entropy went
-  from about 0 to about 1 within two updates. Watch that the bot benchmark recovers and that
-  Giant, Fireball and Arrows become useful, not just played.
+- **Fix:** a slot-head distillation lifted those cards to a median 4 % of plays with p(wait)
+  unchanged. A 1 % hinge floor keeps them from collapsing again; see DECISIONS for what failed first.
+  Watch that Giant, Fireball and Arrows become useful, not just played.
 
 **Monitoring (do this often, not only the win rate).**
 - **Training log:** every 10 updates it prints per-card plays per game, seconds at full elixir,
