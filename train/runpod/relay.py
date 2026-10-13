@@ -44,10 +44,10 @@ def put(p: dict, path: str, data: bytes) -> None:
     launch.ctl(p, "PUT", f"/upload?path={path}", data, ctype="application/octet-stream", timeout=600)
 
 
-def once(main: tuple[dict, str], expl: tuple[dict, str], sent: dict) -> None:
+def once(main: tuple[dict, str], expl: tuple[dict, str], sent: dict, to_exploiter: bool = True) -> None:
     (mp, mrun), (xp, xrun) = main, expl
     # main -> exploiter: the newest league snapshot
-    newest = sh(mp, f"ls -t /workspace/crl/runs/{mrun}/league/ 2>/dev/null | head -1").strip().splitlines()
+    newest = sh(mp, f"ls -t /workspace/crl/runs/{mrun}/league/ 2>/dev/null | head -1").strip().splitlines() if to_exploiter else []
     if newest and newest[0].endswith(".pt") and newest[0] != sent.get("main"):
         data = get(mp, f"runs/{mrun}/league/{newest[0]}")
         put(xp, f"runs/{xrun}/import/main_{newest[0]}", data)
@@ -69,13 +69,14 @@ def main() -> None:
     ap.add_argument("--exploiter", required=True, help="pod:run of the exploiter")
     ap.add_argument("--every", type=float, default=1200)
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--one-way", action="store_true", help="only exploiter -> main (a second main that the exploiter does not target)")
     a = ap.parse_args()
     (mpod, mrun), (xpod, xrun) = a.main.split(":"), a.exploiter.split(":")
     state = launch.STATE.parent / f"relay_{mpod}_{xpod}.json"
     sent = json.loads(state.read_text()) if state.exists() else {}
     while True:
         try:
-            once((pod_of(mpod), mrun), (pod_of(xpod), xrun), sent)
+            once((pod_of(mpod), mrun), (pod_of(xpod), xrun), sent, not a.one_way)
             state.write_text(json.dumps(sent))
         except Exception as e:  # a pod restarting or the proxy hiccuping: try again next round
             print(f"{time.strftime('%H:%M:%S')} relay error: {e!r}", flush=True)
