@@ -134,8 +134,18 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   container only). `create` makes the new pod the default, so always pass `--pod`.
 - **Current flags:** `--mirror --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048
   --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --crown-coef 1.0 --card-floor 0.01`, single collector (28 workers).
-- **Second pod `crl-b`** (5090, 24-core quota): run `fresh1`, from scratch, with the same flags plus
-  `--card-floor 0.02 --lam 0.98 --shape-floor 0.1`. It tests a clean lineage against the continued one.
+- **Other pods:** none running (2026-10-13 ~19:40 UTC).
+  - **Supply problem:** most new community pods come up with `NVIDIA_VISIBLE_DEVICES=void` and
+    `/dev/nvidia-uvm` returning I/O errors (`cuInit` 999). One 5090 ran at 600 MHz under its power
+    cap, about 4× slow.
+  - **Planned runs:** `b1` (`crl.card_floor` checkpoint + `--lam 0.98 --shape-floor 0.1`) and an
+    exploiter: `--import-dir runs/x1/import --import-keep 2 --self-play-prob 0 --snapshot-every 100000`.
+    For the exploiter, the main run restarts with `--import-dir runs/exp1/import`, and
+    `train/runpod/relay.py --main crl-5090a:exp1 --exploiter <pod>:x1` exchanges the snapshots.
+  - **Renting pods:** verify every new pod right after `wait`: `cuInit` returns 0, and a bf16
+    matmul runs at ≥ 50 % of the max SM clock. Never run two `create` loops at once: they race on
+    `work/runpod/pods.json` and orphan pods. `GET /pods` through `launch.rest` lists every pod, and
+    `env.CRL_TOKEN` recovers a lost token.
 - **Throughput:** 7.5–13k decisions/s. The simulation is CPU-bound, so value tracks the CPU quota.
 - **Cost:** about 13–19k decisions/s per $/hr, against about 2k for 2× H100 secure ($7.98/hr, 16–18k/s).
   Community stock is thin, and some hosts have a broken GPU (`cuInit` 999, `/dev/nvidia-uvm` I/O error).
@@ -152,7 +162,11 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   on the pod as `*_cardkl*`. The run restarted from the update-1350 checkpoint after `crl.card_floor`
   surgery, with `--card-floor 0.01`.
 
-**Progress against the hard bot** (benchmark only; mirror and pure self-play since update 210):
+**Progress against the hard bot** (benchmark only; mirror and pure self-play since update 210).
+After the card-floor surgery at 1350 it fell to 7 % (1351–1380), then recovered to 14–23 % by
+1380–1470. The agent drifted back toward the five-card cycle by itself: Giant about 0.3 per game
+at the 1 % floor. The update-1400 watch showed fast 0-3 losses to the bot's one-lane Giant push,
+the case for the exploiter.
 - **Wins:** 6 % at 220–259, 19 % at 320–379, then about 30–36 % from 700 to 1430.
 - **Crowns per game:** 0.7–0.8 taken / 1.0–1.3 lost.
 - **The owner's bar:** at least 2 crowns without losing a tower, most or all of the time; the trainer
