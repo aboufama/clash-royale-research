@@ -134,17 +134,34 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   container only). `create` makes the new pod the default, so always pass `--pod`.
 - **Current flags:** `--mirror --envs 96 --active-opponents 2 --bot-prob 0.1 --epochs 1 --minibatch 2048
   --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005 --crown-coef 1.0 --card-floor 0.01`, single collector (28 workers).
-- **Pods (2026-10-13 20:30 UTC):**
-  - **`crl-b`:** secure RTX 4090, $0.89/hr, 13.6-core quota. Run `x1`, the main exploiter. It
-    starts from main's update-1500 checkpoint and plays only main's two newest snapshots:
-    `--self-play-prob 0 --snapshot-every 100000 --import-dir /workspace/crl/runs/x1/import --import-keep 2`.
-  - **`crl-c`:** secure RTX 4090, $0.89/hr, 31-core quota. Run `b1`, forked from main's update-1780
-    checkpoint with `--lam 0.98 --shape-floor 0.1`. It imports the exploiter's snapshots one way.
-  - **Shared flags:** every run uses `--target-kl 0.01` (KL-adaptive lr). The main run imports
-    from `/workspace/crl/runs/exp1/import`.
-  - **Relays** (local, scratchpad logs `relay.log` and `relay_c.log`):
-    `train/runpod/relay.py --main crl-5090a:exp1 --exploiter crl-b:x1 --every 1200` and
-    `relay.py --main crl-c:b1 --exploiter crl-b:x1 --one-way --every 1200`.
+- **Population (2026-10-13 21:08 UTC):** 9 pods, $7.81/hr, about 53k decisions/s in total.
+
+  | Pod | Run | Hardware | Role and flags |
+  |---|---|---|---|
+  | `crl-5090a` | `exp1` | community 5090 | main run |
+  | `crl-b` | `x1` | secure 4090 | exploiter: plays only main's newest 2 snapshots |
+  | `crl-c` | `b1` | secure 4090 | `--lam 0.98 --shape-floor 0.1` |
+  | `crl-d` | `d1` | secure 4090 | replicate, `--seed 11` |
+  | `crl-e` | `e1` | secure 4090 | `--crown-coef 2.0` |
+  | `crl-f` | `f1` | secure 4090 | `--shape-floor 0.2 --crown-coef 1.5` |
+  | `crl-g` | `g1` | secure 4090 | `--epochs 2` |
+  | `crl-h` | `h1` | secure 4090 | `--lam 0.98` |
+  | `crl-i` | `i1` | secure 4090 | `--self-play-prob 0.8` |
+
+  - **Shared settings:** every run except `x1` started from the update-1780 checkpoint
+    (scratchpad `backup/latest_1780.pt`). They share the main flags: `--mirror --envs 96
+    --active-opponents 2 --epochs 1 --minibatch 2048 --lr 4e-4 --ent-slot 0.03 --ent-tile 0.005
+    --crown-coef 1.0 --card-floor 0.01 --target-kl 0.01 --import-share 0.15 --bot-prob 0.1
+    --import-dir /workspace/crl/runs/<run>/import`.
+  - **Relays:** each run imports the exploiter's snapshots through a one-way relay (scratchpad
+    `relay_<pod>.log`). Only `exp1` sends snapshots to the exploiter.
+  - **Scratchpad tools:**
+    - `fleet.sh` / `grab4.sh` rent and verify pods one at a time.
+    - `popstat.sh` prints the last-100-update bot benchmark per run.
+    - `breakwatch.py` reports a run at ≥ 40 % bot wins or ≥ 5 % of games meeting the owner's bar,
+      over ≥ 250 games.
+  - **Plan:** every ~2 h, copy the best run's checkpoint into the worst (population-based
+    training), keeping each run's own flags.
   - **Community supply:** most new community pods come up with `NVIDIA_VISIBLE_DEVICES=void` and
     `/dev/nvidia-uvm` returning I/O errors (`cuInit` 999). One 5090 ran at 600 MHz under its power cap.
   - **Renting pods:** verify every new pod right after `wait`: `cuInit` returns 0, and a bf16
