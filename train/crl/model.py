@@ -265,8 +265,9 @@ class Actor(nn.Module):
         ar = torch.arange(n, device=masks.device)
         return torch.gather(masks, 1, start.unsqueeze(1) + ar.unsqueeze(0)).bool()
 
-    def evaluate(self, obs: torch.Tensor, slot_mask: torch.Tensor, tile_mask: torch.Tensor, slot: torch.Tensor, tile: torch.Tensor):
-        """log p(slot, tile), the slot, tile and card-given-play entropies, and the card choice's KL from uniform,
+    def evaluate(self, obs: torch.Tensor, slot_mask: torch.Tensor, tile_mask: torch.Tensor, slot: torch.Tensor, tile: torch.Tensor,
+                 card_floor: float = 0.0):
+        """log p(slot, tile), the slot, tile and card-given-play entropies, and the card floor penalty (below),
         under the current weights (training)."""
         tok, kpm, glob, slot_tok = self.trunk(obs)
         sl = masked_logits(self.slot_logits(glob, slot_tok).float(), slot_mask.bool())
@@ -277,12 +278,19 @@ class Actor(nn.Module):
         # bonus mostly buys random elixir spending; this one keeps every card in use)
         clp = torch.log_softmax(sl[:, 1:], -1)
         ent_card = -(clp.exp() * clp).sum(-1)
-        # KL(uniform over the legal cards || p(card | play)): unlike the entropy, its gradient (p - U) does
-        # not vanish when a card's probability has collapsed (1e-9 for three of the eight cards at update 1350)
-        legal = slot_mask[:, 1:].bool()
-        k = legal.sum(-1)
-        kl_card = torch.where(k >= 2, -(clp * legal).sum(-1) / k.clamp(min=1) - torch.log(k.clamp(min=1).float()),
-                              torch.zeros_like(ent_card))
+        # floor on p(card | play) for every legal card: sum of relu(log floor - log p). Its gradient does not
+        # vanish when a card's probability has collapsed (1e-9 for three of the eight cards at update 1350),
+        # unlike the entropy's, and it is 0 once every card is above the floor (a pull to uniform on every
+        # row, waits included, swamped the policy gradient and wrecked the agent in 10 updates)
+        # Its gradient reaches only the slot head (trunk features detached), so it cannot reshape the shared
+        # representation the rest of the policy and the tile head rely on.
+        floor_card = torch.zeros_like(ent_card)
+        if card_floor > 0:
+            legal = slot_mask[:, 1:].bool()
+            k = legal.sum(-1)
+            sld = masked_logits(self.slot_logits(glob.detach(), slot_tok.detach()).float(), slot_mask.bool())
+            cld = torch.log_softmax(sld[:, 1:], -1)
+            floor_card = torch.where(k >= 2, (torch.relu(math.log(card_floor) - cld) * legal).sum(-1), floor_card)
         ent_tile = torch.zeros_like(ent_slot)
         play = slot > 0
         if play.any():
@@ -292,7 +300,7 @@ class Actor(nn.Module):
             tlp = torch.log_softmax(tl, -1)
             logp = logp.index_add(0, r, tlp.gather(1, tile[r].unsqueeze(1)).squeeze(1))
             ent_tile = ent_tile.index_add(0, r, -(tlp.exp() * tlp).sum(-1))
-        return logp, ent_slot, ent_tile, ent_card, kl_card
+        return logp, ent_slot, ent_tile, ent_card, floor_card
 
 
 class Critic(nn.Module):

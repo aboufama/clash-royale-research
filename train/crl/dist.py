@@ -484,7 +484,7 @@ def main(args) -> None:
             nf = max(1, timing["frames"])
             print(f"upd {update} dec {total_decisions:.3g} {rec['decisions_per_s']:.0f}/s ev {rec['explained_var']:.2f} "
                   f"kl {rec.get('approx_kl', 0):.4f} ent {rec.get('entropy_slot', 0):.2f}/{rec.get('entropy_tile', 0):.2f} "
-                  f"card {rec.get('entropy_card', 0):.2f}/kl {rec.get('kl_card', 0):.2f} "
+                  f"card {rec.get('entropy_card', 0):.2f}/floor {rec.get('card_floor_pen', 0):.3f} "
                   f"play {rec['play_rate']:.2f} ep {rec.get('episode_s', 0):.0f}s {wr} | per collector frame: wait "
                   f"{1000 * timing['wait_s'] / nf:.0f}ms proc {1000 * timing['process_s'] / nf:.0f}ms; upd {rec['update_s']:.1f}s "
                   f"n={rec['transitions']}", flush=True)
