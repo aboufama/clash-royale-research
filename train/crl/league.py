@@ -76,11 +76,19 @@ class League:
                 self.pool.remove(s)
         return len(new)
 
-    def pick(self) -> list[Snapshot]:
-        """Choose up to n_active snapshots by PFSP weights (no models loaded)."""
+    def pick(self, import_share: float = 1.0) -> list[Snapshot]:
+        """Choose up to n_active snapshots by PFSP weights (no models loaded). Imported snapshots (an
+        exploiter's) get at most `import_share` of the total weight: PFSP alone gave them most of the
+        league games once they beat the agent, which pulled it away from the bot benchmark."""
         if not self.pool:
             return []
         weights = [(1.0 - s.winrate() + 0.05) ** self.pfsp_power for s in self.pool]
+        imp = [getattr(s, "imported", False) or "/import/" in s.path for s in self.pool]
+        wi = sum(w for w, f in zip(weights, imp) if f)
+        wo = sum(w for w, f in zip(weights, imp) if not f)
+        if wi > 0 and wo > 0 and wi / (wi + wo) > import_share:
+            k = import_share * wo / ((1.0 - import_share) * wi)
+            weights = [w * k if f else w for w, f in zip(weights, imp)]
         cand = list(range(len(self.pool)))
         picks: list[Snapshot] = []
         for _ in range(min(self.n_active, len(self.pool))):

@@ -92,6 +92,7 @@ def parse(argv=None):
     a("--pfsp-power", type=float, default=1.0)
     a("--import-dir", default="", help="add actor checkpoints dropped here (another run's snapshots) to the league")
     a("--import-keep", type=int, default=0, help="keep only the newest N imported snapshots in the league (0 = all)")
+    a("--import-share", type=float, default=1.0, help="cap on the imported snapshots' share of the league's PFSP weight")
     a("--opp-slots", type=int, default=8, help="model slots for league opponents (graphs captured once per slot)")
     a("--opp-every", type=int, default=10, help="updates between league opponent rotations (each running game keeps its "
                                               "opponent alive, so rotating every update piles up models and graph replays)")
@@ -532,7 +533,7 @@ def main(argv=None):
     use_graphs = device.type == "cuda" and not args.no_cuda_graphs
     infer = GraphedInfer(actor, critic, pool.floats, pool.mask_bytes, device, spec=spec) if use_graphs else None
     opp_slots = OppSlots(actor, args.opp_slots, pool.floats, pool.mask_bytes, device, spec, use_graphs)
-    league.active = opp_slots.load(league.pick(), set())
+    league.active = opp_slots.load(league.pick(args.import_share), set())
     stream_last: dict[tuple[int, int], int | None] = {}
     ep_nets: dict[tuple[int, int], list] = {}
     stats = Stats()
@@ -668,7 +669,7 @@ def main(argv=None):
                 league.active = []  # rotate now so the new snapshots play
         if update % args.opp_every == 0 or not league.active:
             referenced = {v for nets in ep_nets.values() for v in nets if isinstance(v, int)}
-            league.active = opp_slots.load(league.pick(), referenced)
+            league.active = opp_slots.load(league.pick(args.import_share), referenced)
         info = p["info"]
         rec = {"update": update, "decisions": total_decisions, "transitions": info["transitions"], "shape_coef": shape_coef(),
                "explained_var": info["explained_var"], "play_rate": info["play_rate"], "league": len(league.pool),
