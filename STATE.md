@@ -143,12 +143,34 @@ Setup: `sim/rl/` (environment) and `train/` (trainer, RunPod launcher, export). 
   | `crl-b` | `x1` | secure 4090 | exploiter, reset to main's update-2040 weights at 21:35 |
   | `crl-c` | `c2` | secure 4090 | from `e1` u1960, `--crown-coef 3.0` |
   | `crl-d` | `w2` | secure 4090 | from `e1` u1960, `--wait-options 5 --crown-coef 1.5 --shape-floor 0.2` (delay head) |
-  | `crl-e` | `e1` | secure 4090 | `--crown-coef 2.0` |
+  | `crl-e` | `e2` | secure 4090 | from `x1` u2192, `--crown-coef 2.0` |
   | `crl-f` | `f1` | secure 4090 | `--shape-floor 0.2 --crown-coef 1.5` |
   | `crl-g` | `g2` | secure 4090 | from `e1` u1960, `--crown-coef 2.0 --shape-floor 0.2` |
-  | `crl-h` | `h1` | secure 4090 | `--lam 0.98` |
+  | `crl-h` | `w3` | secure 4090 | from `w2` u2170, `--wait-options 5 --crown-coef 2.0` (delay head) |
   | `crl-i` | `w1` | secure 4090 | from `e1` u1960, `--wait-options 5 --crown-coef 2.0` (delay head) |
 
+  - **22:20 ranking and changes:**
+    - **Ranking** (bot win, last 100 updates):
+
+      | Run | Win | Crowns lost per game |
+      |---|---|---|
+      | x1 | 31.9 % | |
+      | w2 | 30.4 % | 0.92 |
+      | w1 | 29.7 % | 0.94 |
+      | f1 | 27.2 % | |
+      | g2 | 25.4 % | |
+      | exp1 | 24.3 % | |
+      | c2 | 23.2 % | |
+      | e1 | 20.0 % | |
+      | h1 | 12.6 % | |
+
+      The delay-head runs (w1, w2) lose the fewest crowns.
+    - **Bug:** the KL-adaptive lr had collapsed in several runs (h1 at 3e-5). Collapsed play rows
+      inflated the KL estimate; the per-row KL is now capped at 1. All runs restarted, which resets
+      the lr scale.
+    - **Population step:** h1 became `w3` (from w2, `--wait-options 5 --crown-coef 2.0`, seed 41) and
+      e1 became `e2` (from the exploiter x1, `--crown-coef 2.0`, seed 42).
+    - **Second resume of a delay-head run** failed on optimizer groups (fixed: `train.load_opt`).
   - **Ranking at 21:33** (bot win, last 100 updates, 1000–2500 games each):
 
     | Run | Win |
